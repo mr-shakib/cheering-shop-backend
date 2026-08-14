@@ -277,8 +277,24 @@ remove or disturb the existing one.
 6. Back on the service's **General** tab, set **Provider** to the new
    `mr-shakib` connection, then pick `cheering-shop-backend` and branch `main`.
 
-This gives you deploy-on-push, which is worth the extra two minutes if you will
-be iterating.
+**What "deploy-on-push" actually means:** the GitHub App can register a webhook
+on the repository. When you `git push`, GitHub notifies Dokploy, which pulls,
+rebuilds and restarts on its own — no clicking. There is usually an **Auto
+Deploy** toggle on the service to switch it on once connected.
+
+Option A cannot do this: with only a repository URL, Dokploy has no permission
+to install a webhook, and GitHub has no idea Dokploy exists.
+
+**Do this AFTER your first successful deploy, not before.** Option A is already
+enough to go live, and adding an auth integration mid-deployment just gives you
+two things to debug instead of one.
+
+**And think twice before auto-deploying `main` once real users exist.** Every
+push — including a typo or a half-finished refactor — would go straight to a
+server handling live orders, with no review gate. With a single replica, each
+deploy also restarts the API, so every commit costs a few seconds of downtime.
+The safer shape is a dedicated `production` branch you merge into deliberately,
+leaving `main` free for work in progress.
 
 #### Option C — Same account, repo just not granted
 
