@@ -30,10 +30,14 @@ make run         # http://localhost:8000/docs
 ```
 
 ```bash
-make test        # pytest
+make test        # pytest — 39 tests, real Postgres + Redis
+make smoke       # HTTP smoke test vs a local server (27 checks, full auth journey)
+make smoke-prod  # HTTP smoke test vs the live deployment (15 checks)
 make lint        # ruff + mypy
-make verify-db   # run the 21 schema invariant assertions
+make verify-db   # the 21 schema invariant assertions
 ```
+
+**Adding a module?** Read [docs/development-workflow.md](docs/development-workflow.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
 > so often already taken. Override with `POSTGRES_HOST_PORT` in `.env`.
