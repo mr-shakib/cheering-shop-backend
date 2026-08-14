@@ -138,13 +138,13 @@ contain no secrets — you only need to push it.
 ```bash
 $ cd "/home/mr-nacht/Workspace/CR Shop/backend"
 $ gh auth login          # only if you have never used gh here
-$ gh repo create cr-shop-backend --private --source=. --push
+$ gh repo create cheering-shop-backend --private --source=. --push
 ```
 
 **Without the GitHub CLI:**
 
 1. Browser → **<https://github.com/new>**
-2. **Repository name**: `cr-shop-backend`
+2. **Repository name**: `cheering-shop-backend`
 3. Select **Private**
 4. Leave *"Add a README"*, *".gitignore"* and *"license"* all **unchecked** —
    the repo already has content and those would cause a conflict.
@@ -153,7 +153,7 @@ $ gh repo create cr-shop-backend --private --source=. --push
 
    ```bash
    $ cd "/home/mr-nacht/Workspace/CR Shop/backend"
-   $ git remote add origin https://github.com/YOUR_GITHUB_USERNAME/cr-shop-backend.git
+   $ git remote add origin https://github.com/YOUR_GITHUB_USERNAME/cheering-shop-backend.git
    $ git branch -M main
    $ git push -u origin main
    ```
@@ -174,7 +174,7 @@ need rotating and the history rewriting.
 3. Tab → **Git Providers** (may be called *Git* or *Source Providers*)
 4. Click **GitHub** → **Connect / Install GitHub App**
 5. GitHub asks which repositories to grant access to. Choose **Only select
-   repositories** → pick `cr-shop-backend` → **Install**
+   repositories** → pick `cheering-shop-backend` → **Install**
 6. You are returned to Dokploy with GitHub shown as connected.
 
 ---
@@ -209,10 +209,10 @@ undecryptable and locks them out of their own accounts.
 1. Browser → `http://YOUR_VPS_IP:3000`
 2. Left sidebar → **Projects**
 3. Click **Create Project** (top right)
-   - **Name**: `cr-shop`
+   - **Name**: `cheering-shop`
    - **Description**: `Food delivery backend`
    - Click **Create**
-4. Click into the `cr-shop` project you just made
+4. Click into the `cheering-shop` project you just made
 5. Click **Create Service** → choose **Compose**
    *(not "Application" — Application builds a single container; this stack has
    four services)*
@@ -224,19 +224,85 @@ undecryptable and locks them out of their own accounts.
 
 ### 4.1 — Point it at your repository
 
-On the **General** tab:
+**If Dokploy already has a *different* GitHub account connected**, do not touch
+it. You have three ways forward; pick based on whether your repo is public.
+
+#### Option A — Public repo: use the plain **Git** provider (simplest)
+
+`mr-shakib/cheering-shop-backend` is public, so Dokploy can clone it with no
+credentials at all. This ignores the existing GitHub connection completely —
+nothing to disconnect, nothing to re-authorise.
+
+On the **General** tab, set **Provider / Source Type** to **Git** (it may be
+labelled *Custom Git*, *Git Repository*, or *Public Repository* — the one that
+asks for a URL rather than showing a repo dropdown):
 
 | Field | Value |
 |---|---|
-| Provider / Source Type | **GitHub** |
-| Repository | `YOUR_GITHUB_USERNAME/cr-shop-backend` |
+| Provider / Source Type | **Git** (not GitHub) |
+| Repository URL | `https://github.com/mr-shakib/cheering-shop-backend.git` |
 | Branch | `main` |
+| SSH Key / Auth | leave empty — the repo is public |
 | Compose Path | `./deploy/docker-compose.dokploy.yml` |
 
 Click **Save**.
 
-> **Compose Path is the field people get wrong.** It must be exactly
-> `./deploy/docker-compose.dokploy.yml`. Not `docker-compose.yml` (that is the
+Verified anonymous access at the time of writing:
+
+```
+git ls-remote https://github.com/mr-shakib/cheering-shop-backend.git
+ead21b7...  HEAD
+ead21b7...  refs/heads/main
+```
+
+**Trade-off:** no automatic deploy-on-push. You click **Deploy** after each
+push. If you want push-to-deploy, use Option B instead — or add Dokploy's
+webhook URL manually under the repo's *Settings → Webhooks* on GitHub.
+
+> If you later make the repository **private**, Option A stops working —
+> Dokploy will fail to clone. Switch to Option B at that point.
+
+#### Option B — Add a second GitHub connection
+
+Dokploy supports more than one Git provider at a time; adding yours does not
+remove or disturb the existing one.
+
+1. Left sidebar → **Settings** → **Git Providers**
+2. Click **Create / Add Provider** → **GitHub**
+3. Give it a distinguishing name, e.g. `mr-shakib`
+4. **Install GitHub App** → GitHub asks which account to install into. **Choose
+   your own account (`mr-shakib`)**, not the one already connected.
+5. Repositories → **Only select repositories** → `cheering-shop-backend` →
+   **Install**
+6. Back on the service's **General** tab, set **Provider** to the new
+   `mr-shakib` connection, then pick `cheering-shop-backend` and branch `main`.
+
+This gives you deploy-on-push, which is worth the extra two minutes if you will
+be iterating.
+
+#### Option C — Same account, repo just not granted
+
+Only if the already-connected GitHub account **is** `mr-shakib` and the repo
+simply is not in its allow-list:
+
+1. GitHub → <https://github.com/settings/installations>
+2. Find the **Dokploy** app → **Configure**
+3. Under *Repository access* → **Select repositories** → add
+   `cheering-shop-backend` → **Save**
+4. Return to Dokploy; the repo now appears in the dropdown.
+
+---
+
+### 4.2 — Set the Compose Path (all options)
+
+| Field | Value |
+|---|---|
+| Compose Path | `./deploy/docker-compose.dokploy.yml` |
+
+Click **Save**.
+
+> **This is the field people get wrong.** It must be exactly
+> `./deploy/docker-compose.dokploy.yml`. Not `docker-compose.yml` (the
 > development file, which publishes database ports to the internet) and not
 > `docker-compose.prod.yml` (that one runs Caddy, which will collide with
 > Dokploy's Traefik on ports 80/443).
@@ -430,7 +496,7 @@ If your Dokploy version has no Schedules tab, use a host cron instead:
 # on the VPS
 crontab -e
 # add this line, adjusting the path to where Dokploy checked out the repo:
-15 3 * * * /etc/dokploy/compose/cr-shop-backend/code/deploy/backup.sh >> /var/log/crshop-backup.log 2>&1
+15 3 * * * /etc/dokploy/compose/cheering-shop-backend/code/deploy/backup.sh >> /var/log/crshop-backup.log 2>&1
 ```
 
 Find the real path with: `find /etc/dokploy -name backup.sh 2>/dev/null`
