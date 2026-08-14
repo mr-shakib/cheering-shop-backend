@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# Explicit, because auto-discovery cannot choose between the several top-level
+# directories here (app, db, docs, migrations, tests). Only `app` ships.
+#
+# `include = ["app*"]`, NOT `packages = ["app"]`. The latter installs the
+# top-level package ONLY — app/core, app/models, app/workers and the rest are
+# silently left out of the wheel. That is invisible under uvicorn, which inserts
+# the working directory into sys.path and so finds the source tree anyway; but
+# `arq` does not, so the background worker dies with
+# "ModuleNotFoundError: No module named 'app.workers'" in the container while
+# the API appears perfectly healthy.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project]
+name = "cr-shop-backend"
+version = "0.1.0"
+description = "CR Shop — food delivery backend (FastAPI + PostgreSQL/PostGIS)"
+requires-python = ">=3.13"
+
+# Version floors below were resolved and import-tested against CPython 3.14.4.
+# Notable exclusion: passlib. It resolves but does NOT work here — bcrypt 5.0
+# removed the `__about__` attribute passlib 1.7.4 probes for, so CryptContext
+# raises MissingBackendError at runtime. argon2-cffi is used directly instead,
+# which is also OWASP's first-choice password KDF.
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.3",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "psycopg[binary,pool]>=3.3.4",   # psycopg3, not asyncpg — 3.14 wheel support
+    "alembic>=1.19.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "geoalchemy2>=0.20.0",           # PostGIS geography columns in the ORM
+    "redis>=5.3.1",                  # live rider position + dispatch (decision D2)
+    "pyjwt[crypto]>=2.13.0",
+    "argon2-cffi>=25.1.0",
+    "pyotp>=2.10.0",                 # TOTP 2FA (spec §1)
+    "arq>=0.28.0",                   # task queue for the 60s auto-decline (spec §9)
+    "structlog>=25.0.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# The SQLAlchemy async engine and the Redis connection pool are process-global
+# and bind to the event loop that created them. With pytest-asyncio's default
+# per-test loop, the second test to touch either one dies with
+# "RuntimeError: Event loop is closed". A session-scoped loop matches how the
+# application actually runs: one loop, long-lived pools.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true

@@ -1,0 +1,164 @@
+# CR Shop — Dokploy deployment.
+#
+# Use this file when the VPS already runs Dokploy. Use docker-compose.prod.yml
+# ONLY on a bare Ubuntu box with no Dokploy installed.
+#
+# THE DIFFERENCE THAT MATTERS: there is no Caddy service here, and nothing
+# publishes ports. Dokploy runs its own Traefik on :80/:443 — a second reverse
+# proxy cannot bind those ports, and trying is the most common way people break
+# a working Dokploy install.
+#
+# Routing and TLS are configured in the Dokploy UI (Service -> Domains), not
+# with hand-written Traefik labels. Dokploy generates the correct labels for its
+# own Traefik version, which is far less error-prone than guessing at them here.
+#
+# In Dokploy: Project -> Create Service -> Compose
+#   Compose Path:  ./deploy/docker-compose.dokploy.yml
+#   Then add environment variables, then attach a domain to the `api` service
+#   on port 8000.
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # Tuned for 8 GB (Hostinger KVM 2), leaving room for Dokploy's own stack —
+    # Traefik plus the Dokploy server and its Postgres use ~1 GB, so this is
+    # slightly more conservative than the bare-metal compose file.
+    command: >
+      postgres
+      -c shared_buffers=1536MB
+      -c effective_cache_size=4GB
+      -c maintenance_work_mem=384MB
+      -c work_mem=16MB
+      -c max_connections=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c wal_compression=on
+      -c log_min_duration_statement=1000
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction is load-bearing: Redis holds the arq job queue as well as live
+    # rider positions. An eviction policy would silently drop queued jobs under
+    # memory pressure — including the 60s vendor auto-decline tasks.
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 384mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      ENABLE_DOCS: ${ENABLE_DOCS:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      RIDER_PIN_PEPPER: ${RIDER_PIN_PEPPER}
+      OTP_PEPPER: ${OTP_PEPPER}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Traefik is the only peer permitted to set X-Forwarded-For. Docker's
+      # default bridge pools are in 172.16.0.0/12. Without this, every session
+      # records Traefik's IP and the per-IP login limit becomes one shared
+      # bucket for all users.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+    # `expose`, not `ports`: reachable by Traefik on the shared network, never
+    # published to the host.
+    expose:
+      - "8000"
+    command:
+      - sh
+      - -c
+      - >
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+        --workers 2 --proxy-headers
+        --forwarded-allow-ips="$${FORWARDED_ALLOW_IPS}"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    # BOTH networks: `internal` to reach postgres/redis, `dokploy-network` so
+    # Traefik can route to it. Omitting the second gives a 502 from Traefik.
+    networks: [internal, dokploy-network]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      RIDER_PIN_PEPPER: ${RIDER_PIN_PEPPER}
+      OTP_PEPPER: ${OTP_PEPPER}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "2"
+    # Overrides the image ENTRYPOINT so ONLY the api container runs migrations.
+    # If both ran `alembic upgrade`, they would race on the version table during
+    # every deploy.
+    entrypoint: ["arq"]
+    command: ["app.workers.tasks.WorkerSettings"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      api: {condition: service_started}
+    # No dokploy-network: the worker serves no HTTP and must not be routable.
+    networks: [internal]
+
+networks:
+  internal:
+    internal: true
+  # Created by Dokploy at install time. `external: true` means "attach to the
+  # existing one", not "create it" — if this errors with "network not found",
+  # Dokploy is not installed or the network has a different name; check with
+  # `docker network ls | grep dokploy`.
+  dokploy-network:
+    external: true
+
+volumes:
+  pgdata:
+  redisdata:

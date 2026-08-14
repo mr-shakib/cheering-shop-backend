@@ -1,0 +1,47 @@
+# Caddy obtains and renews Let's Encrypt certificates automatically. The only
+# prerequisite is that {$DOMAIN} already resolves to this server's IP — ACME
+# validation fails otherwise, so point DNS BEFORE starting this container.
+
+{
+	email {$ACME_EMAIL}
+	# Uncomment while testing to avoid Let's Encrypt's rate limits
+	# (5 failed issuances per hostname per hour will lock you out for an hour):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		# HSTS: browsers refuse plain HTTP to this host for a year. Only enable
+		# once you are certain TLS works — it is cached and hard to undo.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The API serves JSON, never HTML with scripts.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	# reverse_proxy handles WebSocket upgrades natively, which the two live
+	# channels (/ws/orders/{id}/live-tracking and /ws/vendor/live) depend on.
+	reverse_proxy api:8000 {
+		header_up X-Real-IP {remote_host}
+
+		# Live tracking sockets are long-lived; a short timeout would drop a
+		# customer's map mid-delivery.
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
+}

@@ -1,0 +1,166 @@
+# CR Shop — production stack for a single VPS (Hostinger KVM 2: 2 vCPU / 8 GB).
+#
+# Run from the repo root:
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production up -d
+#
+# THE MOST IMPORTANT DIFFERENCE from the development compose file: postgres and
+# redis publish NO ports. In development they are bound to localhost for psql
+# access; on a public VPS, `ports:` would expose them to the entire internet
+# through Docker's iptables rules — which bypass ufw. Containers reach each
+# other over the private `internal` network by service name.
+
+name: crshop
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Off-host backups restore faster from a consistent locale/encoding.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # Tuned for 8 GB RAM. Defaults assume a tiny machine and leave most of the
+    # box unused; these give Postgres a realistic share while leaving room for
+    # the API, worker, Redis and the OS.
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=5GB
+      -c maintenance_work_mem=512MB
+      -c work_mem=16MB
+      -c max_connections=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c wal_compression=on
+      -c log_min_duration_statement=1000
+      -c shared_preload_libraries=pg_stat_statements
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {memory: 3G}
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction is deliberate and load-bearing. Redis holds the arq job queue
+    # as well as live rider positions; under an eviction policy, memory pressure
+    # would silently DELETE queued jobs — including the 60s vendor auto-decline
+    # tasks. Better to fail a write loudly than to lose an order timeout.
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: {memory: 768M}
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: crshop-api:latest
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Caddy is the only peer allowed to set X-Forwarded-For. Docker's default
+      # bridge pools live in 172.16.0.0/12; narrow this if you pin a subnet.
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12"
+    # 2 workers for 2 vCPU. Each worker owns its own connection pool, so keep
+    # DB_POOL_SIZE modest: 2 x (10 + 5) + worker = ~35 of Postgres' 100.
+    command:
+      - sh
+      - -c
+      - >
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+        --workers 2 --proxy-headers
+        --forwarded-allow-ips="$${FORWARDED_ALLOW_IPS}"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    networks: [internal, web]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits: {memory: 2G}
+
+  worker:
+    image: crshop-api:latest
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    # Overrides the image ENTRYPOINT: only ONE process may run migrations.
+    # If the worker also ran `alembic upgrade`, it would race the api container
+    # on the version table during every deploy.
+    entrypoint: ["arq"]
+    command: ["app.workers.tasks.WorkerSettings"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      api: {condition: service_started}
+    networks: [internal]
+    deploy:
+      resources:
+        limits: {memory: 1G}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # The ONLY container that publishes ports.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # holds issued certificates — DO NOT delete
+      - caddy_config:/config
+    depends_on: [api]
+    networks: [web]
+    deploy:
+      resources:
+        limits: {memory: 256M}
+
+networks:
+  # No external access: postgres, redis and the worker are unreachable from
+  # outside the host, by construction rather than by firewall rule.
+  internal:
+    internal: true
+  web:
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

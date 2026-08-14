@@ -1,0 +1,62 @@
+services:
+  postgres:
+    # PostGIS is required, not optional — restaurant discovery and delivery
+    # geometry depend on it. A plain postgres image will fail migration 0001.
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: crshop
+      POSTGRES_PASSWORD: crshop
+      POSTGRES_DB: crshop
+    # Host port is configurable: 5432 is commonly already taken by another
+    # project's database. Container-to-container traffic still uses 5432.
+    ports: ["${POSTGRES_HOST_PORT:-5433}:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crshop"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    # Decision D2: owns live rider position and backs the arq task queue.
+    # Losing Redis stops live tracking and dispatch, so it is a hard dependency.
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports: ["${REDIS_HOST_PORT:-6379}:6379"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://crshop:crshop@postgres:5432/crshop
+      REDIS_URL: redis://redis:6379/0
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes: ["./app:/srv/app", "./migrations:/srv/migrations"]
+    entrypoint: ["docker-entrypoint.sh"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  worker:
+    # Runs the 60s vendor auto-decline sweep (spec §9) and the rating_avg
+    # recompute. Same image, different entrypoint.
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://crshop:crshop@postgres:5432/crshop
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: arq app.workers.tasks.WorkerSettings
+
+volumes:
+  pgdata:
+  redisdata:
