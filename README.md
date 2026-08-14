@@ -95,6 +95,11 @@ not just by service code. `db/verify_constraints.sql` proves it.
 
 ## Deploying
 
+**Step-by-step walkthrough: [deploy/GO-LIVE.md](deploy/GO-LIVE.md)** — Hostinger
+VPS + Dokploy, no domain required. Reference docs:
+[deploy/DOKPLOY.md](deploy/DOKPLOY.md) (Dokploy) ·
+[deploy/README.md](deploy/README.md) (bare Ubuntu).
+
 ```bash
 # 1. Pre-flight: the schema needs PG>=15 + these extensions. Check FIRST.
 psql "$DATABASE_URL" -c "SHOW server_version;" \

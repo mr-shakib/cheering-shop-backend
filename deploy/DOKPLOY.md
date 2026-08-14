@@ -1,5 +1,10 @@
 # Deploying CR Shop with Dokploy
 
+> **Just want to deploy?** Follow **[GO-LIVE.md](GO-LIVE.md)** — a click-by-click
+> walkthrough from nothing to a working HTTPS API, no domain purchase needed.
+> This file is the reference behind it: why each choice was made, and what to do
+> when something breaks.
+
 Use this guide when **Dokploy is already installed** on the VPS. For a bare
 Ubuntu box with nothing on it, use [README.md](README.md) instead.
 
