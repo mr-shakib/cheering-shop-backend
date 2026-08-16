@@ -70,9 +70,18 @@ class Settings(BaseSettings):
     TOTP_ENCRYPTION_KEY: str = Field(min_length=32)
 
     # --- OTP / auth policy -------------------------------------------------
-    OTP_LENGTH: int = 6
+    # 4 digits is 10,000 candidates — two orders of magnitude weaker than 6.
+    # What makes it safe is the attempt budget below, NOT the code length, so
+    # do not loosen those without shortening the TTL to compensate.
+    OTP_LENGTH: int = 4
     OTP_TTL_SECONDS: int = 300
-    OTP_MAX_ATTEMPTS: int = 5
+    # Guesses allowed against ONE code before it is burned.
+    OTP_MAX_ATTEMPTS: int = 3
+    # Guesses allowed against an identifier across ALL codes, per hour. This is
+    # the ceiling that actually bounds a brute-force run: 10/hour against 10,000
+    # candidates is ~0.1% per hour, and the attacker must also generate a fresh
+    # OTP email for each batch — which the victim sees.
+    OTP_VERIFY_MAX_PER_HOUR: int = 10
     OTP_RESEND_COOLDOWN_SECONDS: int = 60  # spec: 429 on /auth/otp/send
     LOGIN_MAX_ATTEMPTS: int = 10             # per identifier, per window
     LOGIN_WINDOW_SECONDS: int = 900          # 15 minutes

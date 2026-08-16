@@ -106,7 +106,10 @@ def signup_otp(code: str) -> tuple[str, str, str]:
     """(subject, html, text) for account verification."""
     minutes = _minutes()
     brand = settings.EMAIL_FROM_NAME
-    subject = f"{code} is your {brand} verification code"
+    # The code is deliberately NOT in the subject. Subject lines are rendered in
+    # lock-screen notification previews, so anyone holding the phone could read
+    # the code without unlocking it. Nothing is lost: OS autofill reads the body.
+    subject = f"Verify your {brand} account"
     html = _BASE.format(
         heading="Verify your account",
         intro="Enter this code to finish creating your account.",
@@ -128,7 +131,8 @@ def password_reset_otp(code: str) -> tuple[str, str, str]:
     """(subject, html, text) for password reset."""
     minutes = _minutes()
     brand = settings.EMAIL_FROM_NAME
-    subject = f"{code} is your {brand} password reset code"
+    # See the note in signup_otp — kept out of the subject on purpose.
+    subject = f"Reset your {brand} password"
     html = _BASE.format(
         heading="Reset your password",
         intro="Enter this code to choose a new password.",

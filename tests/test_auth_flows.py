@@ -75,12 +75,41 @@ async def test_otp_resend_is_rate_limited(client, cleanup_users):
     assert "Retry-After" in second.headers
 
 
-async def test_wrong_otp_is_rejected(client, cleanup_users):
+async def test_wrong_otp_is_rejected(client, cleanup_users, reset_limits):
     ident = _identifier()
     cleanup_users(ident)
     await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
-    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": "000000"})
+    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": "0000"})
     assert r.status_code == 400
+
+
+async def test_otp_is_four_digits(client, cleanup_users, reset_limits):
+    ident = _identifier()
+    cleanup_users(ident)
+    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    code = r.json()["data"]["debug_code"]
+    assert len(code) == 4 and code.isdigit(), f"expected a 4-digit code, got {code!r}"
+
+
+async def test_otp_guessing_is_capped_per_identifier(client, cleanup_users, reset_limits):
+    """The budget that actually protects a 4-digit code.
+
+    10,000 candidates means code length is not the defence — the per-identifier
+    hourly ceiling is. Without it an attacker requests a fresh code each minute
+    and grinds the space indefinitely.
+    """
+    from app.core.config import settings
+
+    ident = _identifier()
+    cleanup_users(ident)
+    await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+
+    statuses = []
+    for _ in range(settings.OTP_VERIFY_MAX_PER_HOUR + 3):
+        r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": "0000"})
+        statuses.append(r.status_code)
+
+    assert 429 in statuses, f"guessing was never rate limited: {statuses}"
 
 
 # ---------------------------------------------------------------------------
@@ -573,8 +602,11 @@ async def test_email_is_dispatched_for_email_identifiers(client, cleanup_users, 
     code = r.json()["data"]["debug_code"]
 
     assert sent["to"] == ident
-    assert code in sent["subject"], "subject does not carry the code"
     assert code in sent["html"] and code in sent["text"], "code missing from the body"
+    assert code not in sent["subject"], (
+        "the code is in the subject line — it would appear in lock-screen "
+        "notification previews, readable without unlocking the phone"
+    )
 
 
 async def test_password_reset_uses_a_different_template(client, cleanup_users, reset_limits, monkeypatch):

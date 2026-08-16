@@ -55,12 +55,15 @@ async def verify_otp(body: OtpVerifyRequest, request: Request, db: DbSession):
     """Spec #2. Marks the identifier verified and issues a session."""
     identifier = otp_service.normalise_identifier(body.identifier)
 
-    # The per-code attempt counter in otp_codes caps guesses against ONE code;
-    # this caps guessing across repeatedly reissued codes for one identifier.
+    # Two ceilings, because they stop different things. The `attempts` column in
+    # otp_codes caps guesses against ONE code; this caps guesses against the
+    # identifier across every code it is ever issued. Without the second, an
+    # attacker just requests a fresh code each minute and grinds indefinitely —
+    # which matters far more at 4 digits than it did at 6.
     await rate_limit.hit(
         rate_limit.otp_verify_key(identifier),
-        limit=settings.OTP_MAX_ATTEMPTS * 3,
-        window_seconds=settings.OTP_TTL_SECONDS,
+        limit=settings.OTP_VERIFY_MAX_PER_HOUR,
+        window_seconds=3600,
     )
 
     await otp_service.verify_and_consume(db, identifier, body.code, OtpPurpose.SIGNUP)

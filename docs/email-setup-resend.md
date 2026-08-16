@@ -258,6 +258,13 @@ record. For OTP emails, which are worthless if they land in spam, this matters.
 
 ## Operational notes
 
+**Codes are 4 digits, and the code is not in the subject line.** Subject lines
+appear in lock-screen notification previews, so a code there is readable by
+anyone holding the phone without unlocking it. OS autofill reads the body, so
+nothing is lost. Four digits means 10,000 candidates — the attempt budget
+(3 guesses per code, 10 per identifier per hour) is what makes that safe, not
+the length. Do not loosen those limits without shortening the TTL.
+
 **Delivery is sent inline, not queued.** I originally planned to push it onto
 `arq`, and changed course while implementing: an OTP is worthless five minutes
 after it is requested and the user is watching a spinner, so a queue adds a
