@@ -102,6 +102,13 @@ EMAIL_FROM_NAME=CR Shop
 In production — Dokploy → your service → **Environment** → add the same three
 lines → **Save** → **Deploy**.
 
+> **A variable in Dokploy's Environment tab does not automatically reach the
+> container.** Compose only passes what the service's `environment:` block
+> lists; the tab merely makes it available for `${VAR}` interpolation. These
+> three are already listed in `deploy/docker-compose.dokploy.yml`, but if you
+> add a *new* setting later, add it there too — otherwise the app silently
+> falls back to its default and your change looks ignored.
+
 > Never commit the key. `.env` is gitignored; the Dokploy value lives only in
 > Dokploy.
 

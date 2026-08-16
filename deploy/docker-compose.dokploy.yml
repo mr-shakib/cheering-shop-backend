@@ -76,6 +76,13 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    # ------------------------------------------------------------------
+    # IMPORTANT: a variable set in Dokploy's Environment tab is available for
+    # ${VAR} interpolation here, but the CONTAINER only receives what this
+    # block explicitly passes. Adding a setting to app/core/config.py and to
+    # Dokploy is NOT enough — it must also be listed below, or the app falls
+    # back to its default and the change looks silently ignored.
+    # ------------------------------------------------------------------
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
@@ -98,6 +105,17 @@ services:
       # records Traefik's IP and the per-IP login limit becomes one shared
       # bucket for all users.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      # Email delivery (Resend). See docs/email-setup-resend.md.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Cheering Shop}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-}
+      # Commonly tuned policy knobs, exposed so they can be changed from the
+      # Dokploy UI without a code change.
+      OTP_TTL_SECONDS: ${OTP_TTL_SECONDS:-300}
+      OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-60}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
+      VENDOR_AUTO_DECLINE_SECONDS: ${VENDOR_AUTO_DECLINE_SECONDS:-60}
     # `expose`, not `ports`: reachable by Traefik on the shared network, never
     # published to the host.
     expose:
@@ -137,6 +155,9 @@ services:
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
       DB_POOL_SIZE: "5"
       DB_MAX_OVERFLOW: "2"
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Cheering Shop}
     # Overrides the image ENTRYPOINT so ONLY the api container runs migrations.
     # If both ran `alembic upgrade`, they would race on the version table during
     # every deploy.
