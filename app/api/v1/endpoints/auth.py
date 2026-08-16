@@ -40,7 +40,7 @@ def _client_meta(request: Request) -> dict:
 @router.post("/otp/send", summary="Send signup OTP")
 async def send_otp(body: OtpSendRequest, db: DbSession):
     """Spec #1. Public. Rate limited — 429 inside the resend cooldown."""
-    identifier = otp_service.normalise_identifier(body.identifier)
+    identifier = otp_service.normalise_identifier(body.email)
     await auth_service.upsert_provisional_user(db, identifier, UserRole.CUSTOMER)
     code = await otp_service.send_otp(db, identifier, OtpPurpose.SIGNUP)
     await db.commit()
@@ -55,7 +55,7 @@ async def send_otp(body: OtpSendRequest, db: DbSession):
 @router.post("/otp/verify", summary="Verify OTP")
 async def verify_otp(body: OtpVerifyRequest, request: Request, db: DbSession):
     """Spec #2. Marks the identifier verified and issues a session."""
-    identifier = otp_service.normalise_identifier(body.identifier)
+    identifier = otp_service.normalise_identifier(body.email)
 
     # Two ceilings, because they stop different things. The `attempts` column in
     # otp_codes caps guesses against ONE code; this caps guesses against the
@@ -125,7 +125,7 @@ async def login(body: LoginRequest, request: Request, db: DbSession):
     A 401 alone is not a defence: without these, an unauthenticated attacker can
     try passwords as fast as the network allows.
     """
-    identifier = otp_service.normalise_identifier(body.identifier)
+    identifier = otp_service.normalise_identifier(body.email)
     ip = client_ip(request)
 
     await rate_limit.hit(
@@ -188,7 +188,7 @@ async def forgot_password(body: PasswordForgotRequest, db: DbSession):
     Always returns 200 with an identical message whether or not the account
     exists — anything else is an account-enumeration oracle.
     """
-    identifier = otp_service.normalise_identifier(body.identifier)
+    identifier = otp_service.normalise_identifier(body.email)
     user = await auth_service.find_by_identifier(db, identifier)
 
     payload: dict = {"message": "If an account exists, a reset code has been sent"}
@@ -207,7 +207,7 @@ async def reset_password(body: PasswordResetRequest, db: DbSession):
     Revokes every active session on success. A reset that leaves an attacker's
     existing session alive has not actually locked them out.
     """
-    identifier = otp_service.normalise_identifier(body.identifier)
+    identifier = otp_service.normalise_identifier(body.email)
     await otp_service.verify_and_consume(db, identifier, body.code, OtpPurpose.PASSWORD_RESET)
 
     user = await auth_service.find_by_identifier(db, identifier)

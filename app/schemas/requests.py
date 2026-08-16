@@ -7,18 +7,39 @@ their modules in Step 4 — inventing them now would be guessing at contracts.
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 Money = Annotated[Decimal, Field(ge=0, description="Whole taka; stored as paisa")]
 
 
-class OtpSendRequest(BaseModel):
+
+
+# The account identifier. Named `email` because that is what it holds today and
+# what a client developer expects to see — but `identifier` is still accepted so
+# nothing breaks for a client already sending it.
+#
+# When SMS delivery lands, `phone` joins this list rather than replacing it: a
+# breaking rename on already-shipped mobile clients is far more expensive than
+# carrying three aliases for one value.
+_IDENTIFIER_ALIASES = AliasChoices("email", "identifier", "phone")
+
+
+class _IdentifierBody(BaseModel):
+    """Base for every request that names an account."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    email: str = Field(
+        validation_alias=_IDENTIFIER_ALIASES,
+        description="Account email address (the `identifier` alias is also accepted)",
+    )
+
+
+class OtpSendRequest(_IdentifierBody):
     """POST /auth/otp/send"""
 
-    identifier: str = Field(description="Email address or phone number")
 
-
-class OtpVerifyRequest(BaseModel):
+class OtpVerifyRequest(_IdentifierBody):
     """POST /auth/otp/verify
 
     `password` is optional and is the ONLY point at which a brand-new account
@@ -28,16 +49,14 @@ class OtpVerifyRequest(BaseModel):
     trip instead of signup-then-immediately-reset.
     """
 
-    identifier: str
     code: str = Field(min_length=4, max_length=8)
     password: str | None = Field(default=None, min_length=8, max_length=128)
     full_name: str | None = Field(default=None, max_length=150)
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(_IdentifierBody):
     """POST /auth/login"""
 
-    identifier: str
     password: str = Field(min_length=8)
 
 
@@ -48,11 +67,11 @@ class Login2FARequest(BaseModel):
     code: str = Field(min_length=6, max_length=6)
 
 
-class PasswordForgotRequest(BaseModel):
-    identifier: str
+class PasswordForgotRequest(_IdentifierBody):
+    """POST /auth/password/forgot"""
 
 
-class PasswordResetRequest(BaseModel):
+class PasswordResetRequest(_IdentifierBody):
     """POST /auth/password/reset
 
     The spec shows a bare `token`. We use identifier + the OTP code issued by
@@ -61,7 +80,6 @@ class PasswordResetRequest(BaseModel):
     credential type with its own expiry and revocation rules.
     """
 
-    identifier: str
     code: str = Field(min_length=4, max_length=8)
     new_password: str = Field(min_length=8)
 

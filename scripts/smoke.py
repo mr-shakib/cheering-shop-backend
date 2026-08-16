@@ -97,7 +97,7 @@ def main() -> int:
         r.text[:200],
     )
 
-    r = client.post(f"{API}/auth/login", json={"identifier": "a@b.com", "password": "short"})
+    r = client.post(f"{API}/auth/login", json={"email": "a@b.com", "password": "short"})
     check("validation failure returns 400", r.status_code == 400)
     check(
         "validation errors are itemised",
@@ -108,7 +108,7 @@ def main() -> int:
     # --------------------------------------------------------------- security
     section("Security posture")
     ident = f"smoke-{uuid.uuid4().hex[:10]}@example.com"
-    r = client.post(f"{API}/auth/otp/send", json={"identifier": ident})
+    r = client.post(f"{API}/auth/otp/send", json={"email": ident})
     otp_ok = r.status_code == 200
     check("POST /auth/otp/send accepted", otp_ok, r.text[:200])
     data = r.json().get("data", {}) if otp_ok else {}
@@ -123,14 +123,14 @@ def main() -> int:
     else:
         check("debug_code available for local testing", debug_code is not None)
 
-    r = client.post(f"{API}/auth/otp/send", json={"identifier": ident})
+    r = client.post(f"{API}/auth/otp/send", json={"email": ident})
     check("resend is rate limited (429)", r.status_code == 429, f"got {r.status_code}")
     check("429 carries Retry-After", "retry-after" in {k.lower() for k in r.headers})
 
     codes = [
         client.post(
             f"{API}/auth/login",
-            json={"identifier": ident, "password": "WrongPassword1!"},
+            json={"email": ident, "password": "WrongPassword1!"},
         ).status_code
         for _ in range(12)
     ]
@@ -149,7 +149,7 @@ def main() -> int:
         skip("signup → login → 2FA → refresh", "OTP codes withheld in deployed environments")
         print(f"    {DIM}Run against a local server to exercise the full flow.{RESET}")
     else:
-        r = client.post(f"{API}/auth/otp/verify", json={"identifier": ident, "code": debug_code})
+        r = client.post(f"{API}/auth/otp/verify", json={"email": ident, "code": debug_code})
         ok = check("OTP verify issues a session", r.status_code == 200, r.text[:200])
         if ok:
             tokens = r.json()["data"]["tokens"]

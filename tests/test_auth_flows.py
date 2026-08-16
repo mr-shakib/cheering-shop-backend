@@ -22,11 +22,11 @@ def _identifier() -> str:
 async def _signup(client) -> tuple[str, dict]:
     """Complete the OTP signup flow, returning (identifier, token payload)."""
     ident = _identifier()
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     assert r.status_code == 200, r.text
     code = r.json()["data"]["debug_code"]
 
-    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    r = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": code})
     assert r.status_code == 200, r.text
     return ident, r.json()["data"]
 
@@ -50,15 +50,15 @@ async def test_otp_signup_issues_a_working_session(client, cleanup_users):
 async def test_otp_is_single_use(client, cleanup_users):
     ident = _identifier()
     cleanup_users(ident)
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     code = r.json()["data"]["debug_code"]
 
     assert (
-        await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+        await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": code})
     ).status_code == 200
 
     # Replaying an observed code must fail.
-    replay = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    replay = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": code})
     assert replay.status_code == 400
     assert replay.json()["error"]["code"] == "INVALID_OTP"
 
@@ -67,9 +67,9 @@ async def test_otp_resend_is_rate_limited(client, cleanup_users):
     """Spec §4 requires 429. Guards against SMS-pumping and victim spam."""
     ident = _identifier()
     cleanup_users(ident)
-    assert (await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})).status_code == 200
+    assert (await client.post(f"{V1}/auth/otp/send", json={"email": ident})).status_code == 200
 
-    second = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    second = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     assert second.status_code == 429
     assert second.json()["error"]["code"] == "RATE_LIMITED"
     assert "Retry-After" in second.headers
@@ -78,15 +78,15 @@ async def test_otp_resend_is_rate_limited(client, cleanup_users):
 async def test_wrong_otp_is_rejected(client, cleanup_users, reset_limits):
     ident = _identifier()
     cleanup_users(ident)
-    await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
-    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": "0000"})
+    await client.post(f"{V1}/auth/otp/send", json={"email": ident})
+    r = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": "0000"})
     assert r.status_code == 400
 
 
 async def test_otp_is_four_digits(client, cleanup_users, reset_limits):
     ident = _identifier()
     cleanup_users(ident)
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     code = r.json()["data"]["debug_code"]
     assert len(code) == 4 and code.isdigit(), f"expected a 4-digit code, got {code!r}"
 
@@ -102,11 +102,11 @@ async def test_otp_guessing_is_capped_per_identifier(client, cleanup_users, rese
 
     ident = _identifier()
     cleanup_users(ident)
-    await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    await client.post(f"{V1}/auth/otp/send", json={"email": ident})
 
     statuses = []
     for _ in range(settings.OTP_VERIFY_MAX_PER_HOUR + 3):
-        r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": "0000"})
+        r = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": "0000"})
         statuses.append(r.status_code)
 
     assert 429 in statuses, f"guessing was never rate limited: {statuses}"
@@ -123,10 +123,10 @@ async def test_login_rejects_unknown_and_wrong_password_identically(client, clea
     await _set_password(ident, "CorrectHorse1!")
 
     unknown = await client.post(
-        f"{V1}/auth/login", json={"identifier": _identifier(), "password": "CorrectHorse1!"}
+        f"{V1}/auth/login", json={"email": _identifier(), "password": "CorrectHorse1!"}
     )
     wrong = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "WrongPassword1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "WrongPassword1!"}
     )
 
     assert unknown.status_code == wrong.status_code == 401
@@ -152,7 +152,7 @@ async def test_email_matching_is_case_insensitive(client, cleanup_users):
     await _set_password(ident, "CorrectHorse1!")
 
     r = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident.upper(), "password": "CorrectHorse1!"}
+        f"{V1}/auth/login", json={"email": ident.upper(), "password": "CorrectHorse1!"}
     )
     assert r.status_code == 200, r.text
 
@@ -182,7 +182,7 @@ async def test_full_2fa_enrolment_and_login_interception(client, cleanup_users):
 
     # Login is now intercepted — no access token issued
     login = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "CorrectHorse1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "CorrectHorse1!"}
     )
     assert login.status_code == 200
     body = login.json()["data"]
@@ -292,13 +292,13 @@ async def test_password_reset_revokes_existing_sessions(client, cleanup_users):
     await _set_password(ident, "OldPassword1!")
     stolen_refresh = data["tokens"]["refresh_token"]
 
-    forgot = await client.post(f"{V1}/auth/password/forgot", json={"identifier": ident})
+    forgot = await client.post(f"{V1}/auth/password/forgot", json={"email": ident})
     assert forgot.status_code == 200
     code = forgot.json()["data"]["debug_code"]
 
     reset = await client.post(
         f"{V1}/auth/password/reset",
-        json={"identifier": ident, "code": code, "new_password": "BrandNewPass1!"},
+        json={"email": ident, "code": code, "new_password": "BrandNewPass1!"},
     )
     assert reset.status_code == 200, reset.text
     assert reset.json()["data"]["sessions_revoked"] >= 1
@@ -309,14 +309,14 @@ async def test_password_reset_revokes_existing_sessions(client, cleanup_users):
 
     assert (
         await client.post(
-            f"{V1}/auth/login", json={"identifier": ident, "password": "BrandNewPass1!"}
+            f"{V1}/auth/login", json={"email": ident, "password": "BrandNewPass1!"}
         )
     ).status_code == 200
 
 
 async def test_forgot_password_does_not_reveal_account_existence(client):
     """Identical response for a real and a non-existent identifier."""
-    unknown = await client.post(f"{V1}/auth/password/forgot", json={"identifier": _identifier()})
+    unknown = await client.post(f"{V1}/auth/password/forgot", json={"email": _identifier()})
     assert unknown.status_code == 200
     assert "debug_code" not in unknown.json()["data"]
     assert unknown.json()["data"]["message"] == "If an account exists, a reset code has been sent"
@@ -361,13 +361,13 @@ async def test_login_is_brute_force_limited_per_identifier(client, cleanup_users
     statuses = []
     for _ in range(settings.LOGIN_MAX_ATTEMPTS + 2):
         r = await client.post(
-            f"{V1}/auth/login", json={"identifier": ident, "password": "WrongPassword1!"}
+            f"{V1}/auth/login", json={"email": ident, "password": "WrongPassword1!"}
         )
         statuses.append(r.status_code)
 
     assert 429 in statuses, f"login never rate limited: {statuses}"
     blocked = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "CorrectHorse1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "CorrectHorse1!"}
     )
     assert blocked.status_code == 429, "correct password bypassed the lockout"
     assert "Retry-After" in blocked.headers
@@ -381,11 +381,11 @@ async def test_successful_login_clears_the_identifier_counter(client, cleanup_us
 
     for _ in range(3):
         await client.post(
-            f"{V1}/auth/login", json={"identifier": ident, "password": "WrongPassword1!"}
+            f"{V1}/auth/login", json={"email": ident, "password": "WrongPassword1!"}
         )
 
     ok_login = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "CorrectHorse1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "CorrectHorse1!"}
     )
     assert ok_login.status_code == 200
 
@@ -402,8 +402,8 @@ async def test_ip_counter_survives_a_successful_login(client, cleanup_users, res
     cleanup_users(ident)
     await _set_password(ident, "CorrectHorse1!")
 
-    await client.post(f"{V1}/auth/login", json={"identifier": ident, "password": "nope-nope-1!"})
-    await client.post(f"{V1}/auth/login", json={"identifier": ident, "password": "CorrectHorse1!"})
+    await client.post(f"{V1}/auth/login", json={"email": ident, "password": "nope-nope-1!"})
+    await client.post(f"{V1}/auth/login", json={"email": ident, "password": "CorrectHorse1!"})
 
     from app.core.client import client_ip  # noqa: F401  (documents the source of the key)
     from app.core.rate_limit import login_ip_key
@@ -423,12 +423,12 @@ async def test_signup_can_set_a_password_in_one_round_trip(client, cleanup_users
     was only reachable via /auth/password/reset, which itself needs an OTP."""
     ident = _identifier()
     cleanup_users(ident)
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     code = r.json()["data"]["debug_code"]
 
     r = await client.post(
         f"{V1}/auth/otp/verify",
-        json={"identifier": ident, "code": code, "password": "FirstPassword1!",
+        json={"email": ident, "code": code, "password": "FirstPassword1!",
               "full_name": "Test Person"},
     )
     assert r.status_code == 200, r.text
@@ -436,7 +436,7 @@ async def test_signup_can_set_a_password_in_one_round_trip(client, cleanup_users
 
     # The password works immediately — no reset flow required.
     login = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "FirstPassword1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "FirstPassword1!"}
     )
     assert login.status_code == 200, login.text
 
@@ -577,12 +577,12 @@ async def test_otp_send_survives_a_provider_outage(
 
     ident = _identifier()
     cleanup_users(ident)
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     assert r.status_code == 200, "a mail outage broke signup"
 
     # And the code still works, because storage succeeded.
     code = r.json()["data"]["debug_code"]
-    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    r = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": code})
     assert r.status_code == 200, r.text
 
 
@@ -602,7 +602,7 @@ async def test_email_is_dispatched_for_email_identifiers(
 
     ident = _identifier()
     cleanup_users(ident)
-    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     code = r.json()["data"]["debug_code"]
 
     assert sent["to"] == ident
@@ -629,7 +629,7 @@ async def test_password_reset_uses_a_different_template(
     cleanup_users(ident)
     monkeypatch.setattr(otp_service.email_service, "send_email", capture)
 
-    r = await client.post(f"{V1}/auth/password/forgot", json={"identifier": ident})
+    r = await client.post(f"{V1}/auth/password/forgot", json={"email": ident})
     assert r.status_code == 200
     assert "reset" in sent["subject"].lower()
     assert "password has not changed" in sent["text"].lower()
@@ -831,9 +831,9 @@ async def test_full_registration_journey(client, cleanup_users, reset_limits):
 
     # 1. request + verify the code
     code = (
-        await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+        await client.post(f"{V1}/auth/otp/send", json={"email": ident})
     ).json()["data"]["debug_code"]
-    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    r = await client.post(f"{V1}/auth/otp/verify", json={"email": ident, "code": code})
     assert r.status_code == 200, r.text
     tokens = r.json()["data"]["tokens"]
     auth = {"Authorization": f"Bearer {tokens['access_token']}"}
@@ -872,7 +872,7 @@ async def test_full_registration_journey(client, cleanup_users, reset_limits):
 
     # 5a. login with email + password
     r = await client.post(
-        f"{V1}/auth/login", json={"identifier": ident, "password": "MyFirstPass1!"}
+        f"{V1}/auth/login", json={"email": ident, "password": "MyFirstPass1!"}
     )
     assert r.status_code == 200, r.text
 
@@ -931,3 +931,31 @@ async def test_phone_number_cannot_be_stolen(client, cleanup_users, reset_limits
     )
     assert r.status_code == 409, r.text
     assert r.json()["error"]["code"] == "CONFLICT"
+
+
+async def test_identifier_alias_still_accepted(client, cleanup_users, reset_limits):
+    """`email` is the documented field, but `identifier` must keep working.
+
+    A shipped mobile client cannot be updated on our schedule. Breaking the old
+    field name would strand every install until users update — so both are
+    accepted, and `phone` is reserved for when SMS delivery lands.
+    """
+    ident = _identifier()
+    cleanup_users(ident)
+
+    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    assert r.status_code == 200, r.text
+    code = r.json()["data"]["debug_code"]
+
+    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    assert r.status_code == 200, r.text
+
+
+async def test_email_is_the_documented_field_name(client):
+    """OpenAPI must show `email`, not `identifier` — that was the whole point."""
+    r = await client.get("/openapi.json")
+    schema = r.json()["components"]["schemas"]["OtpSendRequest"]
+    assert "email" in schema["properties"], "OpenAPI does not document `email`"
+    assert "identifier" not in schema["properties"], (
+        "`identifier` is still the documented name; it should only be an alias"
+    )

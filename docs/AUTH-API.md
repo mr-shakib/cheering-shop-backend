@@ -118,7 +118,7 @@ You are **authenticated from step 2 onwards** — steps 3–5 all require the
 POST /api/v1/auth/otp/send
 Content-Type: application/json
 
-{ "identifier": "customer@example.com" }
+{ "email": "customer@example.com" }
 ```
 
 ```json
@@ -144,7 +144,7 @@ Show a countdown from the `Retry-After` value before re-enabling "Resend code".
 POST /api/v1/auth/otp/verify
 Content-Type: application/json
 
-{ "identifier": "customer@example.com", "code": "4821" }
+{ "email": "customer@example.com", "code": "4821" }
 ```
 
 ```json
@@ -255,7 +255,7 @@ Registration is now complete.
 ```http
 POST /api/v1/auth/login
 
-{ "identifier": "customer@example.com", "password": "MyFirstPass1!" }
+{ "email": "customer@example.com", "password": "MyFirstPass1!" }
 ```
 
 **Two possible success responses.** Check for `requires_2fa` before assuming
@@ -333,7 +333,7 @@ Returns tokens, or a `requires_2fa` challenge if 2FA is enabled.
 ```http
 POST /api/v1/auth/password/forgot
 
-{ "identifier": "customer@example.com" }
+{ "email": "customer@example.com" }
 ```
 
 ```json
@@ -350,7 +350,7 @@ POST /api/v1/auth/password/forgot
 POST /api/v1/auth/password/reset
 
 {
-  "identifier": "customer@example.com",
+  "email": "customer@example.com",
   "code": "4821",
   "new_password": "MyNewPass1!"
 }
@@ -611,9 +611,14 @@ key and clears any lockout. That is the recovery path for a device locked after
 
 Be aware of these when planning screens:
 
-1. **Email only.** `/auth/otp/send` accepts a phone number and returns `200`,
-   but **no SMS is sent** — no provider is connected yet. Registration must use
-   an email address for now.
+1. **Email only.** `/auth/otp/send` will accept a phone number and return
+   `200`, but **no SMS is sent** — no provider is connected yet. Registration
+   must use an email address for now.
+
+   The field is named **`email`**. For backward compatibility the server also
+   accepts `identifier` and `phone` as aliases for the same value, so no client
+   breaks when SMS support lands and `phone` becomes the documented name for
+   that path. **Use `email` today.**
 2. **Phone numbers are never verified.** `is_phone_verified` is always `false`.
    There is no verify-my-phone flow yet.
 3. **No email change flow.** The signup email is permanent.

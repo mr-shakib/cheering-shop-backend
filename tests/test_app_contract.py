@@ -33,7 +33,7 @@ async def test_missing_auth_returns_our_envelope_not_fastapis(client):
 
 
 async def test_validation_failure_uses_spec_error_shape(client):
-    r = await client.post("/api/v1/auth/login", json={"identifier": "a@b.com", "password": "short"})
+    r = await client.post("/api/v1/auth/login", json={"email": "a@b.com", "password": "short"})
     assert r.status_code == 400
     err = r.json()["error"]
     assert err["code"] == "VALIDATION_FAILED"
