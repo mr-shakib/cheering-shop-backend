@@ -38,6 +38,7 @@ make verify-db   # the 21 schema invariant assertions
 ```
 
 **Adding a module?** Read [docs/development-workflow.md](docs/development-workflow.md).
+**Setting up OTP email?** Read [docs/email-setup-resend.md](docs/email-setup-resend.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
 > so often already taken. Override with `POSTGRES_HOST_PORT` in `.env`.
