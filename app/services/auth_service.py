@@ -189,11 +189,34 @@ async def change_password(
 
 
 async def update_profile(
-    db: AsyncSession, user: User, full_name: str | None, avatar_url: str | None
+    db: AsyncSession,
+    user: User,
+    full_name: str | None,
+    avatar_url: str | None,
+    phone: str | None = None,
 ) -> User:
-    """Spec #13. PUT semantics: omitted fields are cleared, not preserved."""
+    """Spec #13. PUT semantics: omitted fields are cleared, not preserved.
+
+    Setting a phone number resets `is_phone_verified` — typing a number is not
+    evidence of owning it. `users.phone` is UNIQUE, so a number already
+    attached to another account raises 409 rather than a 500 from the
+    constraint.
+    """
     user.full_name = full_name
     user.avatar_url = avatar_url
+
+    normalised = phone.strip().replace(" ", "") if phone else None
+    if normalised != user.phone:
+        if normalised:
+            result = await db.execute(
+                select(User).where(User.phone == normalised, User.id != user.id)
+            )
+            if result.scalar_one_or_none() is not None:
+                raise ConflictError("That phone number is already in use")
+        user.phone = normalised
+        # A new number starts unverified, even if the old one was verified.
+        user.is_phone_verified = False
+
     await db.flush()
     return user
 

@@ -211,13 +211,22 @@ class PresignedUrlRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     """PUT /users/me/profile — spec #13.
 
-    PUT replaces the mutable profile fields entirely (spec §2). Email and phone
-    are deliberately absent: changing an identifier must re-verify it, which is
-    a different flow with its own OTP.
+    PUT replaces the mutable profile entirely (spec §2), so an omitted field is
+    cleared rather than preserved.
+
+    `phone` is settable but lands **unverified** (`is_phone_verified: false`).
+    A rider needs a number to call, so it must be capturable at registration,
+    but merely typing a number proves nothing — verifying it is a separate OTP
+    round trip. `email` is NOT settable here: it is the login identifier, and
+    changing it without re-verification would let anyone move an account to an
+    address they control.
     """
 
     full_name: str | None = Field(default=None, max_length=150)
     avatar_url: str | None = Field(default=None, max_length=2048)
+    phone: str | None = Field(
+        default=None, max_length=20, description="Contact number; stored unverified"
+    )
 
 
 class ChangePasswordRequest(BaseModel):

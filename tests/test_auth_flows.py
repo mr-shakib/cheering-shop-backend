@@ -815,3 +815,119 @@ async def test_security_headers_are_present(client):
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert "no-store" in r.headers.get("Cache-Control", ""), "API responses are cacheable"
+
+
+# ---------------------------------------------------------------------------
+# The registration journey exactly as the product describes it
+# ---------------------------------------------------------------------------
+async def test_full_registration_journey(client, cleanup_users, reset_limits):
+    """OTP -> password -> name & phone -> biometric -> login.
+
+    This is the flow the mobile app implements, tested end to end in the order
+    a real user walks it.
+    """
+    ident = _identifier()
+    cleanup_users(ident)
+
+    # 1. request + verify the code
+    code = (
+        await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    ).json()["data"]["debug_code"]
+    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    assert r.status_code == 200, r.text
+    tokens = r.json()["data"]["tokens"]
+    auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # 2. set the first password — must NOT sign the user out mid-registration
+    r = await client.post(
+        f"{V1}/users/me/password", json={"new_password": "MyFirstPass1!"}, headers=auth
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["sessions_revoked"] == 0, "registration was interrupted by a logout"
+
+    still_valid = await client.get(f"{V1}/users/me", headers=auth)
+    assert still_valid.status_code == 200, "the registration session was revoked"
+
+    # 3. name and phone
+    r = await client.put(
+        f"{V1}/users/me/profile",
+        json={"full_name": "Rahim Uddin", "phone": "+8801712345678"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    profile = r.json()["data"]
+    assert profile["full_name"] == "Rahim Uddin"
+    assert profile["phone"] == "+8801712345678"
+    assert profile["is_phone_verified"] is False, "a typed number must not count as verified"
+
+    # 4. optional biometric enrolment
+    private, public_b64 = _make_keypair("ES256")
+    device_id = f"device-{uuid.uuid4().hex[:10]}"
+    r = await client.post(
+        f"{V1}/auth/biometrics/enable",
+        json={"device_id": device_id, "public_key": public_b64, "algorithm": "ES256"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+
+    # 5a. login with email + password
+    r = await client.post(
+        f"{V1}/auth/login", json={"identifier": ident, "password": "MyFirstPass1!"}
+    )
+    assert r.status_code == 200, r.text
+
+    # 5b. or with the biometric
+    challenge = (
+        await client.post(f"{V1}/auth/biometrics/challenge", json={"device_id": device_id})
+    ).json()["data"]["challenge"]
+    r = await client.post(
+        f"{V1}/auth/biometrics/login",
+        json={"device_id": device_id, "signature": _sign(private, "ES256", challenge)},
+    )
+    assert r.status_code == 200, r.text
+    assert "access_token" in r.json()["data"]["tokens"]
+
+
+async def test_changing_password_keeps_the_caller_signed_in(client, cleanup_users, reset_limits):
+    """Other devices are dropped; the device doing the change gets fresh tokens."""
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    await client.post(f"{V1}/users/me/password", json={"new_password": "FirstPass1!"}, headers=auth)
+    r = await client.post(
+        f"{V1}/users/me/password",
+        json={"current_password": "FirstPass1!", "new_password": "SecondPass1!"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["sessions_revoked"] >= 1
+    assert body["tokens"] is not None, "caller was left without a usable session"
+
+    new_auth = {"Authorization": f"Bearer {body['tokens']['access_token']}"}
+    assert (await client.get(f"{V1}/users/me", headers=new_auth)).status_code == 200
+
+
+async def test_phone_number_cannot_be_stolen(client, cleanup_users, reset_limits):
+    """Two accounts must not claim the same number — 409, not a 500."""
+    ident_a, data_a = await _signup(client)
+    cleanup_users(ident_a)
+    ident_b, data_b = await _signup(client)
+    cleanup_users(ident_b)
+    phone = f"+88017{uuid.uuid4().int % 100000000:08d}"
+
+    r = await client.put(
+        f"{V1}/users/me/profile",
+        json={"full_name": "First", "phone": phone},
+        headers={"Authorization": f"Bearer {data_a['tokens']['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.put(
+        f"{V1}/users/me/profile",
+        json={"full_name": "Second", "phone": phone},
+        headers={"Authorization": f"Bearer {data_b['tokens']['access_token']}"},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "CONFLICT"
