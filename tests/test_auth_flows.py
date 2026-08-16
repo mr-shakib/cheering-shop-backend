@@ -558,7 +558,9 @@ async def test_logout_cannot_end_another_users_session(client, cleanup_users):
 # ---------------------------------------------------------------------------
 # Email delivery
 # ---------------------------------------------------------------------------
-async def test_otp_send_survives_a_provider_outage(client, cleanup_users, reset_limits, monkeypatch):
+async def test_otp_send_survives_a_provider_outage(
+    client, cleanup_users, reset_limits, monkeypatch
+):
     """A Resend outage must not take signup down with it.
 
     The code is already stored when delivery is attempted, so a failure is
@@ -584,7 +586,9 @@ async def test_otp_send_survives_a_provider_outage(client, cleanup_users, reset_
     assert r.status_code == 200, r.text
 
 
-async def test_email_is_dispatched_for_email_identifiers(client, cleanup_users, reset_limits, monkeypatch):
+async def test_email_is_dispatched_for_email_identifiers(
+    client, cleanup_users, reset_limits, monkeypatch
+):
     """The generated code must be the one that actually gets mailed."""
     from app.services import otp_service
 
@@ -609,7 +613,9 @@ async def test_email_is_dispatched_for_email_identifiers(client, cleanup_users, 
     )
 
 
-async def test_password_reset_uses_a_different_template(client, cleanup_users, reset_limits, monkeypatch):
+async def test_password_reset_uses_a_different_template(
+    client, cleanup_users, reset_limits, monkeypatch
+):
     """A reset email must not tell the user they are creating an account."""
     from app.services import otp_service
 
