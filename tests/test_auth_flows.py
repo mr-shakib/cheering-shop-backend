@@ -384,3 +384,214 @@ async def test_ip_counter_survives_a_successful_login(client, cleanup_users, res
     assert keys, "no per-IP counter was recorded"
     assert int(await get_redis().get(keys[0])) >= 2, "IP counter was wrongly cleared on success"
     assert login_ip_key  # referenced for clarity
+
+
+# ---------------------------------------------------------------------------
+# Signup completeness — the gaps that blocked a real phone user
+# ---------------------------------------------------------------------------
+async def test_signup_can_set_a_password_in_one_round_trip(client, cleanup_users, reset_limits):
+    """Before this, a new account could never obtain a password: set_password
+    was only reachable via /auth/password/reset, which itself needs an OTP."""
+    ident = _identifier()
+    cleanup_users(ident)
+    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    code = r.json()["data"]["debug_code"]
+
+    r = await client.post(
+        f"{V1}/auth/otp/verify",
+        json={"identifier": ident, "code": code, "password": "FirstPassword1!",
+              "full_name": "Test Person"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["user"]["full_name"] == "Test Person"
+
+    # The password works immediately — no reset flow required.
+    login = await client.post(
+        f"{V1}/auth/login", json={"identifier": ident, "password": "FirstPassword1!"}
+    )
+    assert login.status_code == 200, login.text
+
+
+async def test_get_me_returns_the_token_owner(client, cleanup_users):
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    r = await client.get(f"{V1}/users/me", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["email"] == ident
+    assert r.json()["data"]["role"] == "CUSTOMER"
+
+
+async def test_profile_update_replaces_fields(client, cleanup_users):
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    r = await client.put(
+        f"{V1}/users/me/profile",
+        json={"full_name": "Ada Lovelace", "avatar_url": "https://cdn/x.jpg"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["full_name"] == "Ada Lovelace"
+
+    # PUT semantics: an omitted field is cleared, not preserved.
+    r = await client.put(f"{V1}/users/me/profile", json={"full_name": "Ada"}, headers=auth)
+    assert r.json()["data"]["avatar_url"] is None
+
+
+async def test_change_password_requires_the_current_one(client, cleanup_users, reset_limits):
+    """A stolen access token alone must not let an attacker lock the owner out."""
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    # No password yet (OTP-only signup) — first set is allowed without a current.
+    r = await client.post(
+        f"{V1}/users/me/password", json={"new_password": "InitialPass1!"}, headers=auth
+    )
+    assert r.status_code == 200, r.text
+
+    # Now one exists, so changing it demands the current value.
+    r = await client.post(
+        f"{V1}/users/me/password", json={"new_password": "SecondPass1!"}, headers=auth
+    )
+    assert r.status_code == 400
+
+    r = await client.post(
+        f"{V1}/users/me/password",
+        json={"current_password": "WrongOne1!", "new_password": "SecondPass1!"},
+        headers=auth,
+    )
+    assert r.status_code == 401
+
+    r = await client.post(
+        f"{V1}/users/me/password",
+        json={"current_password": "InitialPass1!", "new_password": "SecondPass1!"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_logout_actually_revokes_the_session(client, cleanup_users):
+    """Without this, 'log out' only cleared local storage — the refresh token
+    stayed valid for 30 days on a stolen device."""
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    access = data["tokens"]["access_token"]
+    refresh = data["tokens"]["refresh_token"]
+
+    r = await client.post(
+        f"{V1}/auth/logout",
+        json={"refresh_token": refresh},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["sessions_revoked"] == 1
+
+    # The refresh token is dead.
+    r = await client.post(f"{V1}/auth/refresh", json={"refresh_token": refresh})
+    assert r.status_code == 401
+
+    # Idempotent — logging out twice is not an error.
+    r = await client.post(
+        f"{V1}/auth/logout",
+        json={"refresh_token": refresh},
+        headers={"Authorization": f"Bearer {access}"},
+    )
+    assert r.status_code == 200
+
+
+async def test_logout_cannot_end_another_users_session(client, cleanup_users):
+    """revoke_one is scoped by user_id, so a token you happen to hold is not
+    enough to sign somebody else out."""
+    ident_a, data_a = await _signup(client)
+    cleanup_users(ident_a)
+    ident_b, data_b = await _signup(client)
+    cleanup_users(ident_b)
+
+    r = await client.post(
+        f"{V1}/auth/logout",
+        json={"refresh_token": data_b["tokens"]["refresh_token"]},
+        headers={"Authorization": f"Bearer {data_a['tokens']['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["sessions_revoked"] == 0, "user A revoked user B's session"
+
+    # B's session still works.
+    r = await client.post(
+        f"{V1}/auth/refresh", json={"refresh_token": data_b["tokens"]["refresh_token"]}
+    )
+    assert r.status_code == 200, "user B was wrongly signed out"
+
+
+# ---------------------------------------------------------------------------
+# Email delivery
+# ---------------------------------------------------------------------------
+async def test_otp_send_survives_a_provider_outage(client, cleanup_users, reset_limits, monkeypatch):
+    """A Resend outage must not take signup down with it.
+
+    The code is already stored when delivery is attempted, so a failure is
+    recoverable by resending. Propagating the error would also make
+    /auth/password/forgot distinguish real accounts from fake ones — the exact
+    enumeration leak it is written to avoid.
+    """
+    from app.services import email_service, otp_service
+
+    async def boom(*_a, **_kw):
+        raise email_service.EmailDeliveryError("503: provider down")
+
+    monkeypatch.setattr(otp_service.email_service, "send_email", boom)
+
+    ident = _identifier()
+    cleanup_users(ident)
+    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    assert r.status_code == 200, "a mail outage broke signup"
+
+    # And the code still works, because storage succeeded.
+    code = r.json()["data"]["debug_code"]
+    r = await client.post(f"{V1}/auth/otp/verify", json={"identifier": ident, "code": code})
+    assert r.status_code == 200, r.text
+
+
+async def test_email_is_dispatched_for_email_identifiers(client, cleanup_users, reset_limits, monkeypatch):
+    """The generated code must be the one that actually gets mailed."""
+    from app.services import otp_service
+
+    sent: dict = {}
+
+    async def capture(to, subject, html, text):
+        sent.update(to=to, subject=subject, html=html, text=text)
+        return "msg_test"
+
+    monkeypatch.setattr(otp_service.email_service, "send_email", capture)
+
+    ident = _identifier()
+    cleanup_users(ident)
+    r = await client.post(f"{V1}/auth/otp/send", json={"identifier": ident})
+    code = r.json()["data"]["debug_code"]
+
+    assert sent["to"] == ident
+    assert code in sent["subject"], "subject does not carry the code"
+    assert code in sent["html"] and code in sent["text"], "code missing from the body"
+
+
+async def test_password_reset_uses_a_different_template(client, cleanup_users, reset_limits, monkeypatch):
+    """A reset email must not tell the user they are creating an account."""
+    from app.services import otp_service
+
+    sent: dict = {}
+
+    async def capture(to, subject, html, text):
+        sent.update(subject=subject, text=text)
+        return "msg_test"
+
+    ident, _ = await _signup(client)
+    cleanup_users(ident)
+    monkeypatch.setattr(otp_service.email_service, "send_email", capture)
+
+    r = await client.post(f"{V1}/auth/password/forgot", json={"identifier": ident})
+    assert r.status_code == 200
+    assert "reset" in sent["subject"].lower()
+    assert "password has not changed" in sent["text"].lower()

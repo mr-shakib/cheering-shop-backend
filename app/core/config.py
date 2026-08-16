@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_LIMIT: int = 20
     MAX_PAGE_LIMIT: int = 100
 
+    # --- Email delivery (Resend) -------------------------------------------
+    # Empty RESEND_API_KEY disables sending: codes are logged instead of mailed,
+    # so local development works with no third-party account. A DEPLOYED
+    # environment with no key is a misconfiguration — see check_email_config().
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "onboarding@resend.dev"
+    EMAIL_FROM_NAME: str = "CR Shop"
+    EMAIL_TIMEOUT_SECONDS: float = 10.0
+    EMAIL_REPLY_TO: str = ""
+
     # --- Object storage (spec §2: presigned S3 uploads) --------------------
     S3_BUCKET: str = ""
     S3_REGION: str = "ap-south-1"
@@ -128,6 +138,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
+
+    @property
+    def email_enabled(self) -> bool:
+        return bool(self.RESEND_API_KEY)
 
     @property
     def docs_enabled(self) -> bool:

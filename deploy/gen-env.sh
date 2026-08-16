@@ -32,6 +32,11 @@ RIDER_PIN_PEPPER=$(gen)
 OTP_PEPPER=$(gen)
 TOTP_ENCRYPTION_KEY=$(gen)
 
+# Email delivery — paste your Resend key and verified sender.
+RESEND_API_KEY=
+EMAIL_FROM=noreply@yourdomain.com
+EMAIL_FROM_NAME=Cheering Shop
+
 DB_POOL_SIZE=10
 DB_MAX_OVERFLOW=5
 FORWARDED_ALLOW_IPS=172.16.0.0/12
@@ -47,4 +52,8 @@ It encrypts stored 2FA secrets. Changing it later makes every enrolled user's
 ENABLE_DOCS is set to true so your frontend team can use /docs while
 integrating. Set it to false before real users exist: it publishes your whole
 API surface.
+
+RESEND_API_KEY is intentionally blank — paste yours in, along with the sender
+address on your VERIFIED Resend domain. Without it, OTP codes are generated
+and logged but never delivered, so nobody can sign up.
 WARN

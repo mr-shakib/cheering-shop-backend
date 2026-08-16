@@ -137,3 +137,29 @@ async def revoke_all_for_user(db: AsyncSession, user_id: uuid.UUID) -> int:
         .returning(RefreshToken.id)
     )
     return len(result.fetchall())
+
+
+async def revoke_one(db: AsyncSession, refresh_token: str, user_id: uuid.UUID) -> bool:
+    """Revoke a single session — the logout path.
+
+    Scoped to `user_id` so a caller cannot end somebody else's session by
+    presenting a token they happen to have obtained.
+
+    Returns True if a live session was ended. A token that was already revoked,
+    or belongs to another user, returns False rather than raising: logout should
+    be idempotent, and telling a caller "that token isn't yours" is information
+    they should not get.
+    """
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == hash_refresh_token(refresh_token),
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return False
+    row.revoked_at = datetime.now(UTC)
+    await db.flush()
+    return True

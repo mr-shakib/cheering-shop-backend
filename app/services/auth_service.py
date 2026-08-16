@@ -144,6 +144,37 @@ async def set_password(db: AsyncSession, user: User, new_password: str) -> None:
     await db.flush()
 
 
+async def change_password(
+    db: AsyncSession, user: User, new_password: str, current_password: str | None
+) -> None:
+    """Change the password of an already-authenticated user.
+
+    If the account HAS a password, the current one is required — an access token
+    alone must not let an attacker lock the owner out. If it has none (an
+    OTP-only signup), this is the user setting one for the first time and there
+    is nothing to verify against.
+    """
+    if user.password_hash is not None:
+        if not current_password:
+            raise ValidationError("Current password is required")
+        if not verify_password(current_password, user.password_hash):
+            raise UnauthorizedError(
+                "Current password is incorrect", code=ErrorCode.INVALID_CREDENTIALS
+            )
+    await set_password(db, user, new_password)
+    log.info("password_changed", user_id=str(user.id))
+
+
+async def update_profile(
+    db: AsyncSession, user: User, full_name: str | None, avatar_url: str | None
+) -> User:
+    """Spec #13. PUT semantics: omitted fields are cleared, not preserved."""
+    user.full_name = full_name
+    user.avatar_url = avatar_url
+    await db.flush()
+    return user
+
+
 # ---------------------------------------------------------------------------
 # TOTP 2FA
 # ---------------------------------------------------------------------------

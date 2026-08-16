@@ -15,6 +15,7 @@ from app.core.database import check_database, dispose_engine
 from app.core.errors import register_exception_handlers
 from app.core.redis import check_redis, close_redis
 from app.core.responses import ok
+from app.services.email_service import check_email_config
 
 log = structlog.get_logger()
 
@@ -109,6 +110,11 @@ async def readiness() -> JSONResponse:
                 "status": "error",
                 **({"detail": str(exc)} if settings.ENVIRONMENT == "local" else {}),
             }
+
+    # Email is reported but does NOT gate readiness: a mail outage must not pull
+    # the whole node out of the load balancer when browsing and ordering still
+    # work perfectly well.
+    checks["email"] = check_email_config()
 
     return JSONResponse(
         status_code=200 if healthy else 503,

@@ -15,6 +15,7 @@ from app.schemas.requests import (
     BiometricsEnableRequest,
     Login2FARequest,
     LoginRequest,
+    LogoutRequest,
     OtpSendRequest,
     OtpVerifyRequest,
     PasswordForgotRequest,
@@ -69,9 +70,39 @@ async def verify_otp(body: OtpVerifyRequest, request: Request, db: DbSession):
         raise ValidationError("No account exists for this identifier")
 
     await auth_service.mark_identifier_verified(db, user, identifier)
+
+    # Optional, and the only moment a new account can gain a password. Without
+    # it the user would have to immediately run the forgot-password flow just to
+    # make /auth/login usable.
+    if body.password:
+        await auth_service.set_password(db, user, body.password)
+    if body.full_name:
+        user.full_name = body.full_name
+
     tokens = await token_service.issue_token_pair(db, user, **_client_meta(request))
     await db.commit()
     return ok({"tokens": tokens.model_dump(), "user": auth_service.to_profile(user).model_dump()})
+
+
+@router.post("/logout", summary="End a session [EXTENDED]")
+async def logout(body: LogoutRequest, user: CurrentUser, db: DbSession):
+    """**[EXTENDED] — not in the specification.**
+
+    §1 mandates refresh tokens but defines no way to revoke one. Without this, a
+    user tapping "log out" only clears local storage: the refresh token stays
+    valid for 30 days, so a stolen phone keeps a working session.
+
+    Idempotent — logging out twice is not an error.
+    """
+    if body.all_devices:
+        count = await token_service.revoke_all_for_user(db, user.id)
+    else:
+        if not body.refresh_token:
+            raise ValidationError("refresh_token is required unless all_devices is true")
+        count = int(await token_service.revoke_one(db, body.refresh_token, user.id))
+
+    await db.commit()
+    return ok({"message": "Signed out", "sessions_revoked": count})
 
 
 @router.post("/login", summary="Password login")

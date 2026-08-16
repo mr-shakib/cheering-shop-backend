@@ -21,6 +21,7 @@ from app.core.redis import get_redis
 from app.core.security import generate_otp, hash_otp, verify_otp
 from app.models.enums import OtpPurpose
 from app.models.user import OtpCode
+from app.services import email_service
 
 log = structlog.get_logger()
 
@@ -35,11 +36,41 @@ def normalise_identifier(identifier: str) -> str:
     return value.lower() if "@" in value else value.replace(" ", "")
 
 
-async def send_otp(db: AsyncSession, identifier: str, purpose: OtpPurpose) -> str:
-    """Generate, store and (in Step 4b) dispatch an OTP.
+def _is_email(identifier: str) -> bool:
+    return "@" in identifier
 
-    Returns the plaintext code. In non-local environments the caller must NOT
-    include it in the response — it goes to SES/Twilio only.
+
+async def _deliver(identifier: str, code: str, purpose: OtpPurpose) -> None:
+    """Dispatch the code over whichever channel the identifier implies.
+
+    Delivery failures are logged and swallowed. Two reasons: the code is already
+    stored (so a retry via resend works), and propagating a provider error to
+    `/auth/password/forgot` would reveal whether the account exists — the exact
+    enumeration leak that endpoint is written to prevent.
+    """
+    if not _is_email(identifier):
+        # SMS is a separate provider decision; see docs/email-setup-resend.md.
+        log.warning("otp_sms_not_configured", purpose=purpose.value)
+        return
+
+    builder = (
+        email_service.password_reset_otp
+        if purpose is OtpPurpose.PASSWORD_RESET
+        else email_service.signup_otp
+    )
+    subject, html, text = builder(code)
+    try:
+        await email_service.send_email(identifier, subject, html, text)
+    except Exception as exc:
+        log.error("otp_delivery_failed", purpose=purpose.value, error=str(exc))
+
+
+async def send_otp(db: AsyncSession, identifier: str, purpose: OtpPurpose) -> str:
+    """Generate, store and dispatch an OTP.
+
+    Returns the plaintext code so local/test callers can echo it. A DEPLOYED
+    caller must never include it in the response — it goes to the user's inbox
+    only. See `settings.expose_debug_secrets`.
     """
     identifier = normalise_identifier(identifier)
     redis = get_redis()
@@ -65,6 +96,8 @@ async def send_otp(db: AsyncSession, identifier: str, purpose: OtpPurpose) -> st
 
     await redis.setex(key, settings.OTP_RESEND_COOLDOWN_SECONDS, "1")
     log.info("otp_issued", purpose=purpose.value, identifier_hint=identifier[-4:])
+
+    await _deliver(identifier, code, purpose)
     return code
 
 

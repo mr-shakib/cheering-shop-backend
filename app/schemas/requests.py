@@ -19,10 +19,19 @@ class OtpSendRequest(BaseModel):
 
 
 class OtpVerifyRequest(BaseModel):
-    """POST /auth/otp/verify"""
+    """POST /auth/otp/verify
+
+    `password` is optional and is the ONLY point at which a brand-new account
+    can acquire one. Without it, `/auth/login` is unreachable for a new user:
+    the only other path to `set_password` is `/auth/password/reset`, which
+    itself needs an OTP. Supplying it here turns signup into a single round
+    trip instead of signup-then-immediately-reset.
+    """
 
     identifier: str
     code: str = Field(min_length=4, max_length=8)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=150)
 
 
 class LoginRequest(BaseModel):
@@ -173,3 +182,38 @@ class PresignedUrlRequest(BaseModel):
 
     file_type: str = Field(description="MIME type, e.g. image/jpeg")
     file_name: str | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """PUT /users/me/profile — spec #13.
+
+    PUT replaces the mutable profile fields entirely (spec §2). Email and phone
+    are deliberately absent: changing an identifier must re-verify it, which is
+    a different flow with its own OTP.
+    """
+
+    full_name: str | None = Field(default=None, max_length=150)
+    avatar_url: str | None = Field(default=None, max_length=2048)
+
+
+class ChangePasswordRequest(BaseModel):
+    """POST /users/me/password — [EXTENDED].
+
+    Requires the current password even though the caller is authenticated: a
+    stolen access token must not be enough to lock the real owner out of their
+    own account.
+    """
+
+    current_password: str | None = Field(
+        default=None, description="Required when the account already has a password"
+    )
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class LogoutRequest(BaseModel):
+    """POST /auth/logout — [EXTENDED]."""
+
+    refresh_token: str | None = Field(
+        default=None, description="Session to end. Omit when using all_devices."
+    )
+    all_devices: bool = Field(default=False, description="Revoke every active session")

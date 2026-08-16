@@ -251,14 +251,20 @@ record. For OTP emails, which are worthless if they land in spam, this matters.
 
 ## Operational notes
 
-**Delivery must not block the HTTP response.** Sending is queued through `arq`,
-so a slow or failing provider cannot make `/auth/otp/send` hang. The endpoint
-returns as soon as the code is stored.
+**Delivery is sent inline, not queued.** I originally planned to push it onto
+`arq`, and changed course while implementing: an OTP is worthless five minutes
+after it is requested and the user is watching a spinner, so a queue adds a
+failure mode with no upside — a stopped worker would mean every signup silently
+receives nothing while the API returns 200. A 10-second timeout bounds the
+latency instead. Bulk mail (receipts, summaries) should still go through arq
+when it arrives.
 
 **Failures are logged, never surfaced.** If Resend rejects a send, the API still
-returns `200 OK`. Telling a caller "that address doesn't exist" would turn the
-endpoint into an account-enumeration oracle — exactly the leak
-`/auth/password/forgot` is written to avoid.
+returns `200 OK` and the stored code stays valid, so a resend recovers. Telling
+a caller "that address doesn't exist" would turn the endpoint into an
+account-enumeration oracle — exactly the leak `/auth/password/forgot` is written
+to avoid. There is a test (`test_otp_send_survives_a_provider_outage`) that
+fails the build if this regresses.
 
 **Rate limits still apply.** The 60-second resend cooldown protects your Resend
 quota as well as your users' inboxes.

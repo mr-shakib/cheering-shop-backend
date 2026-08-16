@@ -71,6 +71,27 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "redeem one. Without this, every user is logged out when their access "
         "token expires and must re-enter their password.",
     ),
+    (
+        "POST",
+        "/auth/logout",
+        "Spec §1 mandates refresh tokens but defines no way to revoke one. "
+        "Without this, tapping 'log out' only clears local storage while the "
+        "refresh token stays valid for 30 days on a stolen device.",
+    ),
+    (
+        "GET",
+        "/users/me",
+        "A mobile client restoring a saved token needs to resolve who it "
+        "belongs to before rendering. Decoding the JWT client-side cannot "
+        "reveal whether the profile changed since the token was issued.",
+    ),
+    (
+        "POST",
+        "/users/me/password",
+        "The spec only offers password reset via OTP. A signed-in user "
+        "changing their own password should not have to pretend they forgot "
+        "it, and doing so would consume an OTP send for no reason.",
+    ),
 ]
 
 PREFIX = "/api/v1"
