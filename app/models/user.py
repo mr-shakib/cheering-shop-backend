@@ -19,7 +19,12 @@ from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, CreatedAtMixin, TimestampMixin, UUIDPrimaryKey
-from app.models.enums import DevicePlatformType, OtpPurposeType, UserRoleType
+from app.models.enums import (
+    BiometricAlgorithmType,
+    DevicePlatformType,
+    OtpPurposeType,
+    UserRoleType,
+)
 from app.models.types import CIText
 
 
@@ -81,6 +86,12 @@ class BiometricCredential(Base, UUIDPrimaryKey, CreatedAtMixin):
     device_id: Mapped[str] = mapped_column(String(255), nullable=False)
     device_name: Mapped[str | None] = mapped_column(String(120))
     public_key: Mapped[str] = mapped_column(Text, nullable=False)
+    algorithm: Mapped[str] = mapped_column(
+        BiometricAlgorithmType, nullable=False, server_default=text("'ES256'")
+    )
+    failed_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (UniqueConstraint("user_id", "device_id", name="uq_biometric_user_device"),)

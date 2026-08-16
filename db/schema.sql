@@ -38,6 +38,9 @@ CREATE TYPE otp_purpose       AS ENUM ('SIGNUP', 'LOGIN', 'PASSWORD_RESET');
 CREATE TYPE discount_type     AS ENUM ('PERCENTAGE', 'FIXED');
 CREATE TYPE device_platform   AS ENUM ('IOS', 'ANDROID', 'WEB');
 CREATE TYPE actor_type        AS ENUM ('CUSTOMER', 'VENDOR', 'RIDER', 'ADMIN', 'SYSTEM');
+-- Signature algorithms a device can enrol with. iOS Secure Enclave is P-256
+-- (ES256) only; Android Keystore can do either.
+CREATE TYPE biometric_algorithm AS ENUM ('ES256', 'ED25519');
 
 -- ---------------------------------------------------------------------
 -- Shared trigger: maintain updated_at
@@ -101,7 +104,9 @@ CREATE TABLE biometric_credentials (
     user_id       uuid        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     device_id     varchar(255) NOT NULL,
     device_name   varchar(120),
-    public_key    text        NOT NULL,
+    public_key    text        NOT NULL,   -- base64 DER SubjectPublicKeyInfo
+    algorithm     biometric_algorithm NOT NULL DEFAULT 'ES256',
+    failed_attempts smallint  NOT NULL DEFAULT 0,
     created_at    timestamptz NOT NULL DEFAULT now(),
     last_used_at  timestamptz,
     CONSTRAINT uq_biometric_user_device UNIQUE (user_id, device_id)

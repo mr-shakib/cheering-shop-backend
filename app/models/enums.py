@@ -67,6 +67,11 @@ class DevicePlatform(enum.StrEnum):
     WEB = "WEB"
 
 
+class BiometricAlgorithm(enum.StrEnum):
+    ES256 = "ES256"      # ECDSA P-256 + SHA-256 — iOS Secure Enclave
+    ED25519 = "ED25519"  # Android Keystore / software keys
+
+
 class ActorType(enum.StrEnum):
     CUSTOMER = "CUSTOMER"
     VENDOR = "VENDOR"
@@ -91,6 +96,7 @@ OtpPurposeType = pg_enum(OtpPurpose, "otp_purpose")
 DiscountTypeType = pg_enum(DiscountType, "discount_type")
 DevicePlatformType = pg_enum(DevicePlatform, "device_platform")
 ActorTypeType = pg_enum(ActorType, "actor_type")
+BiometricAlgorithmType = pg_enum(BiometricAlgorithm, "biometric_algorithm")
 
 # Order states in which a customer may still cancel (spec §4).
 CANCELLABLE_STATUSES = {OrderStatus.PENDING}

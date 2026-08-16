@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -65,6 +66,17 @@ async def upsert_provisional_user(db: AsyncSession, identifier: str, role: UserR
 
     The account exists but is unverified and has no password, so it cannot be
     logged into until an OTP is redeemed.
+
+    SELECT-then-INSERT is a race: two simultaneous first-time signups for the
+    same address both see nothing, both insert, and the loser hits the unique
+    index on users.email — a 500 for a user who merely double-tapped "send
+    code". The insert runs in a SAVEPOINT so that violation can be caught
+    without poisoning the surrounding transaction, then the winner's row is
+    read back.
+
+    Doing this in application code rather than ON CONFLICT because the target
+    index differs by identifier type (email vs phone), and the constraint is
+    the authority either way.
     """
     existing = await find_by_identifier(db, identifier)
     if existing is not None:
@@ -75,8 +87,19 @@ async def upsert_provisional_user(db: AsyncSession, identifier: str, role: UserR
         email=identifier if _is_email(identifier) else None,
         phone=None if _is_email(identifier) else identifier,
     )
-    db.add(user)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(user)
+            await db.flush()
+    except IntegrityError:
+        # Someone else created it microseconds ago. The savepoint rolled back,
+        # so the session is still usable and their row is now visible.
+        log.info("provisional_user_race_resolved", identifier_hint=identifier[-4:])
+        winner = await find_by_identifier(db, identifier)
+        if winner is None:  # pragma: no cover - would mean a different constraint
+            raise
+        return winner
+
     log.info("provisional_user_created", user_id=str(user.id), role=role.value)
     return user
 
@@ -240,7 +263,12 @@ async def disable_totp(db: AsyncSession, user: User, code: str) -> None:
 # Biometrics
 # ---------------------------------------------------------------------------
 async def enable_biometrics(
-    db: AsyncSession, user: User, device_id: str, public_key: str, device_name: str | None
+    db: AsyncSession,
+    user: User,
+    device_id: str,
+    public_key: str,
+    device_name: str | None,
+    algorithm: str = "ES256",
 ) -> None:
     """Spec #7: register a device-bound public key.
 
@@ -258,6 +286,10 @@ async def enable_biometrics(
     if existing is not None:
         existing.public_key = public_key
         existing.device_name = device_name
+        existing.algorithm = algorithm
+        # Re-enrolling clears a lockout: the user proved themselves with a real
+        # session to get here.
+        existing.failed_attempts = 0
     else:
         db.add(
             BiometricCredential(
@@ -265,6 +297,7 @@ async def enable_biometrics(
                 device_id=device_id,
                 device_name=device_name,
                 public_key=public_key,
+                algorithm=algorithm,
             )
         )
 

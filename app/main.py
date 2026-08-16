@@ -13,6 +13,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import check_database, dispose_engine
 from app.core.errors import register_exception_handlers
+from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.redis import check_redis, close_redis
 from app.core.responses import ok
 from app.services.email_service import check_email_config
@@ -62,6 +63,11 @@ app = FastAPI(
     redoc_url="/redoc" if settings.docs_enabled else None,
     openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
+
+# Middleware runs in reverse registration order for responses, so these are
+# added before CORS: security headers apply to CORS preflights too.
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestContextMiddleware)
 
 if settings.CORS_ORIGINS:
     app.add_middleware(

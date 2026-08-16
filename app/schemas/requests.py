@@ -79,9 +79,33 @@ class TotpEnableRequest(BaseModel):
 
 
 class BiometricsEnableRequest(BaseModel):
-    device_id: str
-    device_name: str | None = None
-    public_key: str = Field(description="Device-bound public key for challenge verification")
+    """POST /auth/biometrics/enable
+
+    `public_key` is base64-encoded DER SubjectPublicKeyInfo. `algorithm` must
+    match how the device will sign: iOS Secure Enclave can only do ES256.
+    """
+
+    device_id: str = Field(max_length=255)
+    device_name: str | None = Field(default=None, max_length=120)
+    public_key: str = Field(description="base64 DER SubjectPublicKeyInfo")
+    algorithm: Literal["ES256", "ED25519"] = "ES256"
+
+
+class BiometricChallengeRequest(BaseModel):
+    """POST /auth/biometrics/challenge — [EXTENDED]."""
+
+    device_id: str = Field(max_length=255)
+
+
+class BiometricLoginRequest(BaseModel):
+    """POST /auth/biometrics/login — [EXTENDED].
+
+    `signature` is base64 of the signature over the raw UTF-8 challenge string:
+    DER-encoded for ES256, raw 64 bytes for ED25519.
+    """
+
+    device_id: str = Field(max_length=255)
+    signature: str = Field(description="base64 signature over the challenge")
 
 
 class AddressCreateRequest(BaseModel):

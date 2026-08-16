@@ -87,6 +87,20 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "POST",
+        "/auth/biometrics/challenge",
+        "Spec #7/#8 enrol and un-enrol a device key but define no endpoint "
+        "that uses it, so biometric enrolment wrote a key nothing could read. "
+        "This issues the nonce the device signs.",
+    ),
+    (
+        "POST",
+        "/auth/biometrics/login",
+        "The other half of biometric login: verifies the signed challenge "
+        "against the enrolled public key and issues a session. Without it the "
+        "entire biometrics feature is inert.",
+    ),
+    (
+        "POST",
         "/users/me/password",
         "The spec only offers password reset via OTP. A signed-in user "
         "changing their own password should not have to pretend they forgot "

@@ -633,3 +633,185 @@ async def test_password_reset_uses_a_different_template(
     assert r.status_code == 200
     assert "reset" in sent["subject"].lower()
     assert "password has not changed" in sent["text"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Biometric login — real signatures, no mocks
+# ---------------------------------------------------------------------------
+def _make_keypair(algorithm: str):
+    """Stand in for a Secure Enclave / Keystore key pair."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+
+    if algorithm == "ES256":
+        private = ec.generate_private_key(ec.SECP256R1())
+    else:
+        private = ed25519.Ed25519PrivateKey.generate()
+
+    spki = private.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return private, base64.b64encode(spki).decode()
+
+
+def _sign(private, algorithm: str, challenge: str) -> str:
+    import base64
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    message = challenge.encode()
+    if algorithm == "ES256":
+        sig = private.sign(message, ec.ECDSA(hashes.SHA256()))
+    else:
+        sig = private.sign(message)
+    return base64.b64encode(sig).decode()
+
+
+@pytest.mark.parametrize("algorithm", ["ES256", "ED25519"])
+async def test_biometric_login_round_trip(client, cleanup_users, algorithm):
+    """Enrol a device key, sign a challenge with it, and get a real session.
+
+    ES256 is what the iOS Secure Enclave produces; ED25519 covers Android
+    Keystore. Both must work or the feature only ships on one platform.
+    """
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    private, public_b64 = _make_keypair(algorithm)
+    device_id = f"device-{uuid.uuid4().hex[:10]}"
+
+    r = await client.post(
+        f"{V1}/auth/biometrics/enable",
+        json={"device_id": device_id, "device_name": "Test Phone",
+              "public_key": public_b64, "algorithm": algorithm},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+
+    # Step 1: challenge (no session required — that is the point)
+    r = await client.post(f"{V1}/auth/biometrics/challenge", json={"device_id": device_id})
+    assert r.status_code == 200, r.text
+    challenge = r.json()["data"]["challenge"]
+
+    # Step 2: sign it and log in
+    r = await client.post(
+        f"{V1}/auth/biometrics/login",
+        json={"device_id": device_id, "signature": _sign(private, algorithm, challenge)},
+    )
+    assert r.status_code == 200, r.text
+    assert "access_token" in r.json()["data"]["tokens"]
+    assert r.json()["data"]["user"]["email"] == ident
+
+
+async def test_biometric_challenge_is_single_use(client, cleanup_users):
+    """A captured signature must not be replayable."""
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    private, public_b64 = _make_keypair("ES256")
+    device_id = f"device-{uuid.uuid4().hex[:10]}"
+    await client.post(
+        f"{V1}/auth/biometrics/enable",
+        json={"device_id": device_id, "public_key": public_b64, "algorithm": "ES256"},
+        headers=auth,
+    )
+
+    challenge = (
+        await client.post(f"{V1}/auth/biometrics/challenge", json={"device_id": device_id})
+    ).json()["data"]["challenge"]
+    signature = _sign(private, "ES256", challenge)
+
+    first = await client.post(
+        f"{V1}/auth/biometrics/login", json={"device_id": device_id, "signature": signature}
+    )
+    assert first.status_code == 200
+
+    replay = await client.post(
+        f"{V1}/auth/biometrics/login", json={"device_id": device_id, "signature": signature}
+    )
+    assert replay.status_code == 401, "a captured signature was replayable"
+
+
+async def test_biometric_rejects_a_wrong_key(client, cleanup_users):
+    """Signing with a different private key must not authenticate."""
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    _, enrolled_pub = _make_keypair("ES256")
+    attacker_private, _ = _make_keypair("ES256")
+    device_id = f"device-{uuid.uuid4().hex[:10]}"
+    await client.post(
+        f"{V1}/auth/biometrics/enable",
+        json={"device_id": device_id, "public_key": enrolled_pub, "algorithm": "ES256"},
+        headers=auth,
+    )
+
+    challenge = (
+        await client.post(f"{V1}/auth/biometrics/challenge", json={"device_id": device_id})
+    ).json()["data"]["challenge"]
+
+    r = await client.post(
+        f"{V1}/auth/biometrics/login",
+        json={"device_id": device_id, "signature": _sign(attacker_private, "ES256", challenge)},
+    )
+    assert r.status_code == 401
+
+
+async def test_biometric_does_not_bypass_2fa(client, cleanup_users):
+    """A biometric proves the device, not a second factor.
+
+    If enrolling a device skipped 2FA, anyone who could enrol would have found a
+    way around it entirely.
+    """
+    ident, data = await _signup(client)
+    cleanup_users(ident)
+    auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
+
+    secret = (await client.post(f"{V1}/auth/2fa/generate", headers=auth)).json()["data"]["secret"]
+    await client.post(
+        f"{V1}/auth/2fa/enable", json={"code": pyotp.TOTP(secret).now()}, headers=auth
+    )
+
+    private, public_b64 = _make_keypair("ES256")
+    device_id = f"device-{uuid.uuid4().hex[:10]}"
+    await client.post(
+        f"{V1}/auth/biometrics/enable",
+        json={"device_id": device_id, "public_key": public_b64, "algorithm": "ES256"},
+        headers=auth,
+    )
+
+    challenge = (
+        await client.post(f"{V1}/auth/biometrics/challenge", json={"device_id": device_id})
+    ).json()["data"]["challenge"]
+    r = await client.post(
+        f"{V1}/auth/biometrics/login",
+        json={"device_id": device_id, "signature": _sign(private, "ES256", challenge)},
+    )
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body.get("requires_2fa") is True, "biometric login bypassed 2FA"
+    assert "tokens" not in body
+
+
+async def test_request_id_is_returned_for_tracing(client):
+    """Production incidents need a handle to search on."""
+    r = await client.get("/health")
+    assert "X-Request-ID" in r.headers
+
+    supplied = "trace-abc-123"
+    r = await client.get("/health", headers={"X-Request-ID": supplied})
+    assert r.headers["X-Request-ID"] == supplied, "inbound trace id was not honoured"
+
+
+async def test_security_headers_are_present(client):
+    r = await client.get("/api/v1/restaurants")
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+    assert r.headers.get("X-Frame-Options") == "DENY"
+    assert "no-store" in r.headers.get("Cache-Control", ""), "API responses are cacheable"

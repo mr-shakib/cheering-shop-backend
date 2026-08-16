@@ -12,6 +12,8 @@ from app.core.errors import ValidationError
 from app.core.responses import ok
 from app.models.enums import OtpPurpose, UserRole
 from app.schemas.requests import (
+    BiometricChallengeRequest,
+    BiometricLoginRequest,
     BiometricsEnableRequest,
     Login2FARequest,
     LoginRequest,
@@ -23,7 +25,7 @@ from app.schemas.requests import (
     RefreshRequest,
     TotpEnableRequest,
 )
-from app.services import auth_service, otp_service, token_service
+from app.services import auth_service, biometric_service, otp_service, token_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -222,10 +224,49 @@ async def reset_password(body: PasswordResetRequest, db: DbSession):
 async def enable_biometrics(body: BiometricsEnableRequest, user: CurrentUser, db: DbSession):
     """Spec #7."""
     await auth_service.enable_biometrics(
-        db, user, body.device_id, body.public_key, body.device_name
+        db, user, body.device_id, body.public_key, body.device_name, body.algorithm
     )
     await db.commit()
     return ok({"message": "Biometric login enabled", "device_id": body.device_id})
+
+
+@router.post("/biometrics/challenge", summary="Get a biometric challenge [EXTENDED]")
+async def biometric_challenge(body: BiometricChallengeRequest):
+    """**[EXTENDED]** — step 1 of biometric login.
+
+    Unauthenticated by design: the point is to sign in without a session. It
+    leaks nothing — the response is random bytes whether or not the device is
+    enrolled, so it cannot be used to probe which devices exist.
+    """
+    challenge, ttl = await biometric_service.issue_challenge(body.device_id)
+    return ok({"challenge": challenge, "expires_in": ttl})
+
+
+@router.post("/biometrics/login", summary="Log in with a biometric [EXTENDED]")
+async def biometric_login(body: BiometricLoginRequest, request: Request, db: DbSession):
+    """**[EXTENDED]** — step 2 of biometric login.
+
+    Spec #7 and #8 enrol and un-enrol a device key, but the specification never
+    defines an endpoint that *uses* it, so biometric enrolment wrote a key
+    nothing could ever read. This verifies the signed challenge and issues a
+    normal session.
+
+    If the account has 2FA enabled, a 2FA challenge is returned instead of
+    tokens — a biometric proves the device, not a second factor, and skipping
+    it would make enrolling a device a way to bypass 2FA.
+    """
+    user = await biometric_service.authenticate(db, body.device_id, body.signature)
+
+    if user.is_2fa_enabled:
+        await db.commit()
+        return ok(auth_service.issue_2fa_challenge(user))
+
+    from datetime import UTC, datetime
+
+    user.last_login_at = datetime.now(UTC)
+    tokens = await token_service.issue_token_pair(db, user, **_client_meta(request))
+    await db.commit()
+    return ok({"tokens": tokens.model_dump(), "user": auth_service.to_profile(user).model_dump()})
 
 
 @router.delete("/biometrics/disable", summary="Disable biometric login")

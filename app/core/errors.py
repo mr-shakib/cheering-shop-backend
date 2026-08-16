@@ -165,8 +165,14 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Log the real error; return an opaque one. Stack traces and driver
         # messages must never reach a client.
         log.exception("unhandled_exception", path=request.url.path, error=str(exc))
-        return AppError(
+        response = AppError(
             "An unexpected error occurred",
             code=ErrorCode.INTERNAL_ERROR,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         ).to_response()
+        # Give the caller something to quote in a bug report that we can grep
+        # for. The id reveals nothing on its own.
+        request_id = getattr(request.state, "request_id", None)
+        if request_id:
+            response.headers["X-Request-ID"] = request_id
+        return response
