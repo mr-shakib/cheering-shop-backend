@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     addresses,
+    admin,
     auth,
     cart,
     comms,
@@ -44,6 +45,9 @@ api_router.include_router(comms.router)
 
 # Vendor operations
 api_router.include_router(vendor.router)
+
+# Administration
+api_router.include_router(admin.router)
 
 # System
 api_router.include_router(uploads.router)

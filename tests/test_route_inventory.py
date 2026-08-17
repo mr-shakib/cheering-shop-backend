@@ -101,6 +101,25 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "POST",
+        "/auth/register/vendor",
+        "The spec defines a VENDOR role and a permission matrix but every "
+        "signup path it describes creates a CUSTOMER, so there was no way to "
+        "create a vendor account at all — the vendor app had no front door.",
+    ),
+    (
+        "GET",
+        "/admin/restaurants/pending",
+        "Vendor registration is gated on approval; without a queue an "
+        "administrator cannot see who is waiting.",
+    ),
+    (
+        "POST",
+        "/admin/restaurants/{id}/verify",
+        "The other half of the approval gate. Without it a registered vendor "
+        "waits forever and can never appear in customer discovery.",
+    ),
+    (
+        "POST",
         "/users/me/password",
         "The spec only offers password reset via OTP. A signed-in user "
         "changing their own password should not have to pretend they forgot "

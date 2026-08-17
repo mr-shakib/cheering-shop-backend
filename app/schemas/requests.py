@@ -36,7 +36,19 @@ class _IdentifierBody(BaseModel):
 
 
 class OtpSendRequest(_IdentifierBody):
-    """POST /auth/otp/send"""
+    """POST /auth/otp/send
+
+    `role` decides what kind of account the provisional user gets. Only the two
+    self-service roles are accepted: RIDER and ADMIN accounts are created by an
+    administrator, never by whoever happens to hit this endpoint.
+
+    A role is fixed at creation. If the address already exists under a different
+    role, registration returns 409 rather than silently switching it — the
+    composite role-guard foreign keys make a live role change unsafe once the
+    account owns anything.
+    """
+
+    role: Literal["CUSTOMER", "VENDOR"] = "CUSTOMER"
 
 
 class OtpVerifyRequest(_IdentifierBody):
@@ -268,3 +280,36 @@ class LogoutRequest(BaseModel):
         default=None, description="Session to end. Omit when using all_devices."
     )
     all_devices: bool = Field(default=False, description="Revoke every active session")
+
+
+class RestaurantDetails(BaseModel):
+    """The storefront created alongside a vendor account."""
+
+    name: str = Field(min_length=2, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    phone: str | None = Field(default=None, max_length=20)
+    address_line: str = Field(min_length=5, max_length=500)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    cuisine_types: list[str] = Field(default_factory=list, max_length=10)
+
+
+class VendorRegisterRequest(_IdentifierBody):
+    """POST /auth/register/vendor — [EXTENDED].
+
+    One call: redeem the OTP, create the VENDOR account, and create its
+    restaurant. Splitting these would leave a vendor account with no storefront
+    if the second call failed, which nothing else in the system can repair.
+    """
+
+    code: str = Field(min_length=4, max_length=8)
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str = Field(min_length=2, max_length=150, description="Owner's name")
+    restaurant: RestaurantDetails
+
+
+class VerifyRestaurantRequest(BaseModel):
+    """POST /admin/restaurants/{id}/verify — [EXTENDED]."""
+
+    is_verified: bool = Field(description="True to approve, false to suspend")
+    note: str | None = Field(default=None, max_length=500)

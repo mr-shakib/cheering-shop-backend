@@ -60,3 +60,27 @@ class TotpProvisioning(BaseModel):
 
     secret: str
     qr_code_url: str = Field(description="otpauth:// URI for the authenticator app")
+
+
+class RestaurantSummary(BaseModel):
+    """The vendor's own view of their storefront."""
+
+    id: str
+    name: str
+    slug: str
+    status: str
+    is_verified: bool = Field(
+        description="False until an administrator approves it; unapproved "
+        "restaurants are invisible to customers"
+    )
+    latitude: float
+    longitude: float
+    address_line: str | None = None
+    cuisine_types: list[str] = Field(default_factory=list)
+
+
+class VendorRegistrationResult(BaseModel):
+    tokens: TokenPair
+    user: UserProfile
+    restaurant: RestaurantSummary
+    next_step: str

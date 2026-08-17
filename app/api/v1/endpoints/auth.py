@@ -24,8 +24,15 @@ from app.schemas.requests import (
     PasswordResetRequest,
     RefreshRequest,
     TotpEnableRequest,
+    VendorRegisterRequest,
 )
-from app.services import auth_service, biometric_service, otp_service, token_service
+from app.services import (
+    auth_service,
+    biometric_service,
+    otp_service,
+    token_service,
+    vendor_service,
+)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -41,7 +48,9 @@ def _client_meta(request: Request) -> dict:
 async def send_otp(body: OtpSendRequest, db: DbSession):
     """Spec #1. Public. Rate limited — 429 inside the resend cooldown."""
     identifier = otp_service.normalise_identifier(body.email)
-    await auth_service.upsert_provisional_user(db, identifier, UserRole.CUSTOMER)
+    # Only CUSTOMER and VENDOR reach here — the schema rejects RIDER and ADMIN,
+    # which are created by an administrator rather than self-service.
+    await auth_service.upsert_provisional_user(db, identifier, UserRole(body.role))
     code = await otp_service.send_otp(db, identifier, OtpPurpose.SIGNUP)
     await db.commit()
 
@@ -164,6 +173,48 @@ async def login_2fa(body: Login2FARequest, request: Request, db: DbSession):
     tokens = await token_service.issue_token_pair(db, user, **_client_meta(request))
     await db.commit()
     return ok({"tokens": tokens.model_dump(), "user": auth_service.to_profile(user).model_dump()})
+
+
+@router.post(
+    "/register/vendor", status_code=status.HTTP_201_CREATED,
+    summary="Register a vendor + restaurant [EXTENDED]",
+)
+async def register_vendor(body: VendorRegisterRequest, request: Request, db: DbSession):
+    """**[EXTENDED] — not in the specification.**
+
+    The spec defines four roles and a permission matrix, but every signup path
+    it describes creates a CUSTOMER. There was literally no way to create a
+    VENDOR account, so the entire vendor application had no front door.
+
+    Call `POST /auth/otp/send` with `role: "VENDOR"` first, then pass the code
+    here along with the restaurant details. Account and storefront are created
+    in one transaction — splitting them would leave a vendor with no restaurant
+    and nothing in the system able to repair that.
+
+    The restaurant starts **unverified and CLOSED**. The vendor can sign in and
+    build their menu immediately; customers cannot see it until an administrator
+    approves it via `POST /admin/restaurants/{id}/verify`.
+    """
+    email = otp_service.normalise_identifier(body.email)
+    await otp_service.verify_and_consume(db, email, body.code, OtpPurpose.SIGNUP)
+
+    user, restaurant = await vendor_service.register_vendor(
+        db, email, body.password, body.full_name, body.restaurant
+    )
+    tokens = await token_service.issue_token_pair(db, user, **_client_meta(request))
+    await db.commit()
+
+    return ok(
+        {
+            "tokens": tokens.model_dump(),
+            "user": auth_service.to_profile(user).model_dump(),
+            "restaurant": vendor_service.to_summary(restaurant).model_dump(),
+            "next_step": (
+                "Your restaurant is awaiting approval. You can add your menu now; "
+                "customers will see you once an administrator approves it."
+            ),
+        }
+    )
 
 
 @router.post("/refresh", summary="Exchange a refresh token [EXTENDED]")

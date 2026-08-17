@@ -18,6 +18,13 @@ os.environ.setdefault("RIDER_PIN_PEPPER", "p" * 64)
 os.environ.setdefault("OTP_PEPPER", "o" * 64)
 os.environ.setdefault("TOTP_ENCRYPTION_KEY", "k" * 64)
 
+# FORCED, not setdefault. `Settings` also reads .env, and a developer with a
+# real RESEND_API_KEY there would otherwise have the whole suite firing live
+# requests at Resend on every OTP — burning the 100/day free-tier quota, adding
+# a network round trip per test, and failing anyway because Resend rejects
+# @example.com recipients. Tests must not touch a third party.
+os.environ["RESEND_API_KEY"] = ""
+
 import uuid  # noqa: E402
 
 import pytest  # noqa: E402
@@ -97,14 +104,24 @@ async def cleanup_users():
 
     yield register
 
-    from sqlalchemy import delete, or_
+    from sqlalchemy import delete, or_, select
 
     from app.core.database import SessionLocal
+    from app.models.restaurant import Restaurant
     from app.models.user import OtpCode, User
 
     async with SessionLocal() as session:
         for ident in identifiers:
             await session.execute(delete(OtpCode).where(OtpCode.identifier == ident))
+            # restaurants.owner_id is ON DELETE RESTRICT — a vendor who owns a
+            # storefront cannot be deleted until it is. That is correct
+            # behaviour (it protects order history), so the fixture unwinds in
+            # the same order the application would have to.
+            result = await session.execute(
+                select(User.id).where(or_(User.email == ident, User.phone == ident))
+            )
+            for (user_id,) in result.all():
+                await session.execute(delete(Restaurant).where(Restaurant.owner_id == user_id))
             await session.execute(
                 delete(User).where(or_(User.email == ident, User.phone == ident))
             )
@@ -143,3 +160,23 @@ async def reset_limits():
     await _clear()
     yield
     await _clear()
+
+
+@pytest.fixture
+async def clear_cooldowns():
+    """Clear the OTP resend cooldown on demand.
+
+    A few tests legitimately need two codes for one address in quick
+    succession — registering as a customer then attempting a vendor signup, for
+    example. The 60-second cooldown is correct behaviour, so rather than weaken
+    it, those tests skip it explicitly.
+    """
+    from app.core.redis import get_redis
+
+    async def _clear():
+        redis = get_redis()
+        keys = [k async for k in redis.scan_iter("otp:cooldown:*")]
+        if keys:
+            await redis.delete(*keys)
+
+    return _clear

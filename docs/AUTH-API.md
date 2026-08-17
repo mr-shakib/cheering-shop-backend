@@ -604,6 +604,77 @@ key and clears any lockout. That is the recovery path for a device locked after
 | GET | `/users/me/security` | ✓ | 2FA / biometric state |
 | PUT | `/users/me/profile` | ✓ | Name, phone, avatar |
 | POST | `/users/me/password` | ✓ | Set or change password |
+| POST | `/auth/register/vendor` | — | Register a vendor + restaurant |
+| GET | `/admin/restaurants/pending` | admin | Approval queue |
+| POST | `/admin/restaurants/{id}/verify` | admin | Approve or suspend |
+
+---
+
+## 11. Vendor registration
+
+> **User story**
+> *As a restaurant owner, I want to register my restaurant so I can start
+> taking orders.*
+
+```
+1. Enter email       → POST /auth/otp/send   { "email": ..., "role": "VENDOR" }
+2. Code + password + restaurant details
+                     → POST /auth/register/vendor      ── tokens ──
+3. Build the menu    (available immediately)
+4. Wait for approval (an administrator verifies the restaurant)
+5. Open the store    → PATCH /vendor/store/status
+```
+
+**Note `role: "VENDOR"` on step 1** — without it the account is created as a
+customer, and roles are fixed at creation.
+
+```http
+POST /api/v1/auth/register/vendor
+
+{
+  "email": "owner@restaurant.com",
+  "code": "4821",
+  "password": "VendorPass1!",
+  "full_name": "Karim Ahmed",
+  "restaurant": {
+    "name": "Karim's Kitchen",
+    "description": "Authentic Bengali cuisine",
+    "phone": "+8801712345678",
+    "address_line": "House 12, Road 8, Dhanmondi, Dhaka",
+    "latitude": 23.7936,
+    "longitude": 90.4064,
+    "cuisine_types": ["Bengali", "Biryani"]
+  }
+}
+```
+
+`201 Created`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "tokens": { "access_token": "...", "refresh_token": "..." },
+    "user": { "role": "VENDOR", "email": "owner@restaurant.com" },
+    "restaurant": { "id": "...", "slug": "karims-kitchen",
+                    "is_verified": false, "status": "CLOSED" },
+    "next_step": "Your restaurant is awaiting approval..."
+  }
+}
+```
+
+> **`is_verified: false` is expected.** The vendor is signed in and can build
+> their menu immediately, but customers cannot see the restaurant until an
+> administrator approves it. Show the `next_step` message and a pending badge.
+
+| Situation | Response | `error.code` |
+|---|---|---|
+| Email already a **customer** account | `409` | `CONFLICT` |
+| Account already has a restaurant | `409` | `CONFLICT` |
+| `role` of `ADMIN` or `RIDER` on step 1 | `400` | `VALIDATION_FAILED` |
+
+Rider and admin accounts are **not** self-service — they are created by an
+administrator.
 
 ---
 
