@@ -131,3 +131,27 @@ def test_otp_debug_exposure_is_allowlisted_not_just_non_production(environment, 
         TOTP_ENCRYPTION_KEY="w" * 40,
     )
     assert s.expose_debug_secrets is exposed
+
+
+async def test_docs_ui_actually_loads(client):
+    """The interactive docs must render, not 500.
+
+    Regression guard. The security-headers middleware exempts /docs from the
+    strict CSP so Swagger UI can load its own JS — and the first spelling of
+    that exemption used `MutableHeaders.pop()`, which does not exist, turning
+    every docs request into a 500. `/openapi.json` kept working, so the schema
+    looked healthy while the page was dead.
+    """
+    for path in ("/docs", "/redoc"):
+        r = await client.get(path)
+        assert r.status_code == 200, f"{path} returned {r.status_code}"
+        assert "text/html" in r.headers.get("content-type", "")
+        assert "Content-Security-Policy" not in r.headers, (
+            f"{path} carries a CSP that will block Swagger UI's scripts"
+        )
+
+
+async def test_api_responses_still_carry_a_strict_csp(client):
+    """The docs exemption must not have widened to the whole API."""
+    r = await client.get("/api/v1/restaurants")
+    assert "default-src 'none'" in r.headers.get("Content-Security-Policy", "")

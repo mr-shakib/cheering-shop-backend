@@ -79,17 +79,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     second way would silently lose them.
     """
 
+    # Swagger UI and ReDoc load their own JavaScript and CSS from a CDN, which
+    # `default-src 'none'` forbids. They are decided BEFORE the header is set
+    # rather than removed afterwards: Starlette's MutableHeaders has no .pop(),
+    # so the obvious "set then remove" spelling raises AttributeError and turns
+    # every docs request into a 500.
+    CSP_EXEMPT_PATHS = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
+
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
 
-        # This API returns JSON, never HTML with scripts, so the policy can be
-        # maximally restrictive without breaking anything.
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault(
-            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
-        )
+
+        # This API returns JSON, never HTML with scripts, so everywhere else the
+        # policy can be maximally restrictive.
+        if request.url.path not in self.CSP_EXEMPT_PATHS:
+            response.headers.setdefault(
+                "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+            )
         # Browsers should not cache authenticated payloads.
         if request.url.path.startswith(settings.API_V1_PREFIX):
             response.headers.setdefault("Cache-Control", "no-store")
@@ -101,9 +110,5 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
             )
-
-        # The docs UI needs to load its own JS/CSS, so exempt it.
-        if request.url.path in {"/docs", "/redoc"}:
-            response.headers.pop("Content-Security-Policy", None)
 
         return response
