@@ -52,7 +52,9 @@ def _documented() -> set[tuple[str, str]]:
     """Rows of the doc's endpoint summary table."""
     return {
         (m.group(1), _normalise(m.group(2)))
-        for m in re.finditer(r"^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`", DOC.read_text(), re.M)
+        for m in re.finditer(
+            r"^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`", DOC.read_text(), re.M
+        )
     }
 
 
