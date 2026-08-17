@@ -18,8 +18,11 @@ There is one escape hatch, and it is narrow. The test sender
 `onboarding@resend.dev` **can only send to the email address registered on your
 Resend account.** Send to any other recipient and the API returns a 403.
 
-**You do not currently own a domain.** `srv1128440.hstgr.cloud` belongs to
-Hostinger — you cannot add DNS records to it, so it cannot be verified.
+**Resolved:** `cheeringshop.online` is verified in Resend and mail sends from
+`noreply@cheeringshop.online`. The two-phase note below is kept because it
+explains *why* a verified domain is required — the free Hostinger hostname
+(`srvXXXXXX.hstgr.cloud`) belongs to Hostinger, so DNS records cannot be added
+to it and it can never be verified.
 
 That splits the work into two phases:
 

@@ -34,7 +34,7 @@ smoke:  ## Smoke-test a locally running server (full auth journey)
 	.venv/bin/python scripts/smoke.py http://localhost:8000
 
 smoke-prod:  ## Smoke-test the live deployment
-	.venv/bin/python scripts/smoke.py https://srv1128440.hstgr.cloud
+	.venv/bin/python scripts/smoke.py https://api.cheeringshop.online
 
 dev:  ## One command: start services, migrate, run the API
 	$(MAKE) up

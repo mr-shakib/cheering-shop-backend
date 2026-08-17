@@ -3,8 +3,12 @@
 **For the mobile/frontend team.** Covers customer signup and login, vendor
 registration, and administrator approval.
 
-Base URL: `https://srv1128440.hstgr.cloud/api/v1`
-Interactive docs: `https://srv1128440.hstgr.cloud/docs`
+Base URL: `https://api.cheeringshop.online/api/v1`
+Interactive docs: `https://api.cheeringshop.online/docs`
+
+> The server also answers on `https://srv1128440.hstgr.cloud` during the
+> migration. **Use the `api.cheeringshop.online` address** — the other one will
+> be retired once every client has moved.
 
 Everything below is implemented, deployed and covered by tests. The rest of the
 API (restaurants, cart, orders, vendor) returns `501 NOT_IMPLEMENTED` with the

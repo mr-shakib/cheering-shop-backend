@@ -2,7 +2,7 @@
 """End-to-end smoke test against a running CR Shop API.
 
     ./scripts/smoke.py                                  # local (default)
-    ./scripts/smoke.py https://srv1128440.hstgr.cloud   # production
+    ./scripts/smoke.py https://api.cheeringshop.online   # production
 
 Complements `pytest`, which runs against the code on your machine. This drives a
 REAL deployment over HTTP — so it also exercises the reverse proxy, TLS, the

@@ -30,7 +30,7 @@ make migrate
 make test
 ```
 
-39 tests. No mocked database — several behaviours under test (case-insensitive
+79 tests. No mocked database — several behaviours under test (case-insensitive
 email via `citext`, the 2FA CHECK constraint, OTP single-use) are enforced *by
 Postgres*, and a mock would happily let a broken implementation pass.
 
@@ -66,7 +66,7 @@ withholding, so a misconfigured `ENVIRONMENT` fails the run.
 
 ### 4. By hand, in the browser
 
-<https://srv1128440.hstgr.cloud/docs> — the interactive Swagger UI. Every
+<https://api.cheeringshop.online/docs> — the interactive Swagger UI. Every
 endpoint with its real request schema. Try `POST /auth/otp/send`, then
 **Authorize** with the returned token to call protected routes.
 
@@ -76,7 +76,8 @@ endpoint with its real request schema. Try `POST /auth/otp/send`, then
 
 ## Adding a new module
 
-The loop, using Users & Addresses (#13–18) as the example.
+The loop, using Users & Addresses (#13–18) as the example — it is the next
+module to build, and its routes are already stubbed.
 
 ### Step 1 — Start the environment
 
@@ -174,10 +175,11 @@ These fail the build rather than letting a mistake through:
 
 | Test | Prevents |
 |---|---|
-| `test_route_inventory.py` | The API drifting from the spec's 47 endpoints, or undocumented routes appearing |
-| `test_schema_parity.py` | `db/schema.sql` and migration 0001 diverging |
-| `test_migration_drift.py` | Models and database disagreeing |
-| `test_app_contract.py` | The response envelope, RBAC, or money conversion regressing |
+| `test_route_inventory.py` | The API drifting from the spec's 47 endpoints, or an undocumented route appearing without a written justification |
+| `test_schema_parity.py` | `db/schema.sql` describing something the migrations do not actually produce — it builds both and diffs the structures |
+| `test_migration_drift.py` | ORM models and the migrated database disagreeing (`alembic check`) |
+| `test_docs_accuracy.py` | `docs/AUTH-API.md` going stale — every implemented endpoint documented, nothing documented that is a 501, and the 13 constants it quotes matching the code |
+| `test_app_contract.py` | The response envelope, RBAC, money conversion, or the docs UI regressing |
 
 ---
 
