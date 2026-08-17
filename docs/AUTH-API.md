@@ -1,6 +1,7 @@
 # Cheering Shop — Authentication API
 
-**For the mobile/frontend team.**
+**For the mobile/frontend team.** Covers customer signup and login, vendor
+registration, and administrator approval.
 
 Base URL: `https://srv1128440.hstgr.cloud/api/v1`
 Interactive docs: `https://srv1128440.hstgr.cloud/docs`
@@ -23,6 +24,8 @@ correct response shape, so you can build against those contracts too.
 8. [Biometric setup](#8-biometric-setup) — the crypto contract
 9. [Error reference](#9-error-reference)
 10. [Endpoint summary](#10-endpoint-summary)
+11. [Vendor registration](#11-vendor-registration) — restaurant owners
+12. [Roles](#12-roles) — who can create what
 
 ---
 
@@ -120,6 +123,10 @@ Content-Type: application/json
 
 { "email": "customer@example.com" }
 ```
+
+> Customer signup needs nothing else. Restaurant owners add
+> `"role": "VENDOR"` here — see [§11](#11-vendor-registration). The role is
+> fixed at creation and cannot be changed later.
 
 ```json
 { "success": true, "data": { "message": "OTP sent" } }
@@ -678,6 +685,31 @@ administrator.
 
 ---
 
+## 12. Roles
+
+The system has four roles. **A role is fixed when the account is created** and
+cannot be changed afterwards — the database enforces this with composite
+foreign keys, so an account that owns a restaurant cannot quietly become a
+customer.
+
+| Role | How an account is created | Status |
+|---|---|---|
+| `CUSTOMER` | Self-service — `/auth/otp/send` (default) | ✅ available |
+| `VENDOR` | Self-service — `role: "VENDOR"`, then admin approval | ✅ available |
+| `ADMIN` | Server shell only (`scripts/create_admin.py`) | ✅ available |
+| `RIDER` | **Not yet implemented** | ❌ blocked |
+
+Practical consequence for your UI: **one email address is one role.** Someone
+who signed up as a customer and later wants to run a restaurant must use a
+different address. Say so plainly at the point of failure — the `409` message
+already explains it, so surface `error.message` rather than a generic string.
+
+The access token carries the role, and `GET /users/me` returns it. Use it to
+decide which app shell to render if you ship a single binary for customers and
+vendors.
+
+---
+
 ## Known limitations
 
 Be aware of these when planning screens:
@@ -693,10 +725,20 @@ Be aware of these when planning screens:
 2. **Phone numbers are never verified.** `is_phone_verified` is always `false`.
    There is no verify-my-phone flow yet.
 3. **No email change flow.** The signup email is permanent.
-4. **No account deletion.** Required before App Store / Play Store submission —
-   flag this early if you have a submission date.
-5. **Everything outside auth returns 501.** Restaurants, cart, orders and vendor
-   endpoints are routed and documented but not implemented.
+4. **No account deletion.** Apple and Google both **require** an in-app
+   deletion path for any app that offers account creation — submission gets
+   rejected without it. Flag this early if you have a store date.
+5. **No rider accounts.** There is no way to create a `RIDER`, so the rider app
+   has no signup. Delivery assignment and live tracking depend on it.
+6. **No push notification registration.** Spec §9 lists `POST /users/me/devices`
+   for FCM tokens; it is not built. No order-status pushes, and no vendor alert
+   when the tablet app is backgrounded.
+7. **No 2FA recovery codes.** A user who loses their authenticator is
+   permanently locked out — recovery currently needs manual database access.
+   Consider hiding the 2FA toggle until this exists.
+8. **Everything outside auth returns 501.** Restaurants, cart, orders and vendor
+   *operations* are routed and documented but not implemented. Vendor
+   *registration* (§11) is implemented.
 
 ---
 
