@@ -125,6 +125,241 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "changing their own password should not have to pretend they forgot "
         "it, and doing so would consume an OTP send for no reason.",
     ),
+    # --- Vendor partner applications ---------------------------------------
+    # The partner app's registration flow (business info → location → owner →
+    # documents → review) needs an application record an administrator can
+    # review; POST /auth/register/vendor creates the account but throws the
+    # form away.
+    (
+        "POST",
+        "/vendor/applications",
+        "The application form collects business type, category, NID, area, "
+        "documents and payout details — none of which registration could "
+        "accept, so the admin approved storefronts with nothing to review.",
+    ),
+    (
+        "GET",
+        "/vendor/applications/{id}",
+        "The success screen promises a decision in 2-3 business days; without "
+        "a status endpoint the applicant's only option is to email support "
+        "with their reference number.",
+    ),
+    (
+        "POST",
+        "/vendor/applications/uploads",
+        "POST /uploads/presigned-url requires a session and an applicant has "
+        "no account yet, so the Document step of the form had no way to "
+        "upload the NID, shop photo or trade licence it asks for.",
+    ),
+    (
+        "GET",
+        "/admin/vendor-applications",
+        "The review queue. /admin/restaurants/pending lists storefronts but "
+        "not the identity, documents or payout details a decision needs.",
+    ),
+    (
+        "GET",
+        "/admin/vendor-applications/{id}",
+        "The screen a decision is made on: everything the form submitted, "
+        "including NID, document URLs and payout account.",
+    ),
+    (
+        "POST",
+        "/admin/vendor-applications/{id}/approve",
+        "Approving must do three things at once — mark the application, "
+        "verify the restaurant, and email the owner their sign-in steps — or "
+        "an approved vendor is never told they can sell.",
+    ),
+    (
+        "POST",
+        "/admin/vendor-applications/{id}/reject",
+        "The other half of the decision. Records the reason and emails it to "
+        "the applicant; without it a rejected application just sits PENDING "
+        "forever.",
+    ),
+    # --- Vendor operations -------------------------------------------------
+    # The spec's twelve vendor routes cannot run a restaurant on their own.
+    # These close the gaps; each one names the specific thing that was
+    # impossible without it.
+    (
+        "GET",
+        "/vendor/profile",
+        "The public GET /restaurants/{id} filters on is_active AND is_verified, "
+        "so between registering and being approved a vendor could not read "
+        "their own restaurant from anywhere in the API.",
+    ),
+    (
+        "PATCH",
+        "/vendor/profile",
+        "Registration was the only write to a restaurant row, so nothing set "
+        "there could ever be changed: no logo, no delivery fee, no minimum "
+        "order, not even a typo in the address.",
+    ),
+    (
+        "GET",
+        "/vendor/menu",
+        "The public menu endpoint hides inactive categories and unavailable "
+        "items, so an item switched off because it sold out vanished from the "
+        "very screen the vendor needs to switch it back on.",
+    ),
+    (
+        "POST",
+        "/vendor/menu/categories",
+        "POST /vendor/menu/items requires a category_id and no endpoint in the "
+        "spec produced one, so an approved vendor could not add a single dish "
+        "to their menu. This is the hard blocker.",
+    ),
+    (
+        "PATCH",
+        "/vendor/menu/categories/{id}",
+        "Categories could be created and never renamed, reordered or "
+        "deactivated. Deactivating is also the only reversible alternative to "
+        "a delete that cascades into every item.",
+    ),
+    (
+        "DELETE",
+        "/vendor/menu/categories/{id}",
+        "A menu accumulates seasonal sections that have to go somewhere. "
+        "Refuses while the category still holds items, because the cascade "
+        "would destroy rows that order history points at.",
+    ),
+    (
+        "PATCH",
+        "/vendor/menu/reorder",
+        "Four tables carry a sort_order column that no endpoint could write, "
+        "so menus were frozen in creation order and a vendor could not put "
+        "their signature dish at the top.",
+    ),
+    (
+        "GET",
+        "/vendor/menu/items/{id}",
+        "Creating an item returned its id and nothing could read it back, so "
+        "an edit screen had no way to load the item it was editing.",
+    ),
+    (
+        "PATCH",
+        "/vendor/menu/items/{id}",
+        "Items could be created and toggled available, but never repriced, "
+        "renamed, re-photographed or moved between categories — a menu that "
+        "was write-once in everything but availability.",
+    ),
+    (
+        "DELETE",
+        "/vendor/menu/items/{id}",
+        "Nothing could remove a dish. menu_items.deleted_at existed from the "
+        "first migration with no endpoint to write it, so discontinued items "
+        "stayed on the menu permanently.",
+    ),
+    (
+        "GET",
+        "/vendor/orders/{id}",
+        "The spec defines a queue and no way to read a row of it: a vendor "
+        "could see that an order existed but not its items, chosen variants, "
+        "add-ons or notes, which is everything needed to cook it.",
+    ),
+    (
+        "GET",
+        "/vendor/reviews",
+        "restaurants.rating_avg is a single number with nothing behind it. A "
+        "vendor whose rating drops needs to read what customers actually said "
+        "in order to do anything about it.",
+    ),
+    # --- Vendor app screens (ui/full vendor) --------------------------------
+    (
+        "GET",
+        "/vendor/dashboard",
+        "The app's two landing tabs (Order header, Overview) would need five "
+        "endpoints per app-resume on a kitchen tablet's connection; this is "
+        "those five queries in one response.",
+    ),
+    (
+        "GET",
+        "/vendor/performance",
+        "The Performance & ratings screen: acceptance rate, on-time rate and "
+        "weekly rejections exist nowhere else in the API.",
+    ),
+    (
+        "GET",
+        "/vendor/reviews/summary",
+        "The Feedback header needs the star histogram; the paginated review "
+        "list cannot produce it without fetching every page.",
+    ),
+    (
+        "GET",
+        "/vendor/reports/csv",
+        "The Report screen's CSV download. Returns text/csv, not the JSON "
+        "envelope — the response is a file.",
+    ),
+    (
+        "GET",
+        "/vendor/earnings",
+        "The Earnings & payouts screen: available balance and recent per-order "
+        "credits. The balance is derived from delivered orders minus payouts, "
+        "so no other endpoint could substitute.",
+    ),
+    (
+        "GET",
+        "/vendor/payouts",
+        "Payout History. Every withdrawal with its status and receipt "
+        "reference.",
+    ),
+    (
+        "POST",
+        "/vendor/payouts",
+        "The Withdraw Money button. Without it, earnings could be displayed "
+        "but never leave the platform.",
+    ),
+    (
+        "GET",
+        "/vendor/promotions",
+        "The Promotions card list with live redemption and spend stats.",
+    ),
+    (
+        "POST",
+        "/vendor/promotions",
+        "The New Promotion form. promo_codes existed but nothing let a vendor "
+        "create a restaurant-scoped offer.",
+    ),
+    (
+        "GET",
+        "/vendor/promotions/{id}",
+        "Promotion Details: stats plus the 7-day redemptions chart.",
+    ),
+    (
+        "PATCH",
+        "/vendor/promotions/{id}",
+        "Pause promotion / End promotion early. A live offer nobody can stop "
+        "is a budget hole.",
+    ),
+    (
+        "GET",
+        "/vendor/hours",
+        "The Business Hour screen had nowhere to read the week from.",
+    ),
+    (
+        "PUT",
+        "/vendor/hours",
+        "Saving the Business Hour screen. Informational until a scheduler "
+        "exists — documented as such.",
+    ),
+    (
+        "GET",
+        "/admin/payouts",
+        "The transfer work queue. A payout recorded as PROCESSING needs a "
+        "human to see it before money can actually move.",
+    ),
+    (
+        "POST",
+        "/admin/payouts/{id}/complete",
+        "Records that the transfer was executed; the vendor's history shows "
+        "COMPLETED from this.",
+    ),
+    (
+        "POST",
+        "/admin/payouts/{id}/fail",
+        "A bounced transfer. Marking FAILED is itself the refund — the "
+        "balance formula excludes failed rows.",
+    ),
 ]
 
 PREFIX = "/api/v1"

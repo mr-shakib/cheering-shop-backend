@@ -10,9 +10,12 @@ Interactive docs: `https://api.cheeringshop.online/docs`
 > migration. **Use the `api.cheeringshop.online` address** — the other one will
 > be retired once every client has moved.
 
-Everything below is implemented, deployed and covered by tests. The rest of the
-API (restaurants, cart, orders, vendor) returns `501 NOT_IMPLEMENTED` with the
-correct response shape, so you can build against those contracts too.
+Everything below is implemented, deployed and covered by tests. **Vendor
+operations — storefront, menu, order queue, handoff, analytics — are documented
+separately in [VENDOR-API.md](VENDOR-API.md)** and are also implemented. The
+remainder of the API (restaurants, discovery, cart, orders) returns
+`501 NOT_IMPLEMENTED` with the correct response shape, so you can build against
+those contracts too.
 
 ---
 
@@ -615,9 +618,16 @@ key and clears any lockout. That is the recovery path for a device locked after
 | GET | `/users/me/security` | ✓ | 2FA / biometric state |
 | PUT | `/users/me/profile` | ✓ | Name, phone, avatar |
 | POST | `/users/me/password` | ✓ | Set or change password |
-| POST | `/auth/register/vendor` | — | Register a vendor + restaurant |
-| GET | `/admin/restaurants/pending` | admin | Approval queue |
+| POST | `/auth/register/vendor` | — | Register a vendor + restaurant (fast path) |
+| POST | `/vendor/applications` | — | Submit a partner application |
+| GET | `/vendor/applications/{no}` | — | Application status (`?email=` required) |
+| POST | `/vendor/applications/uploads` | — | Upload URL for application documents |
+| GET | `/admin/restaurants/pending` | admin | Approval queue (restaurants) |
 | POST | `/admin/restaurants/{id}/verify` | admin | Approve or suspend |
+| GET | `/admin/vendor-applications` | admin | Application review queue |
+| GET | `/admin/vendor-applications/{id}` | admin | Application detail |
+| POST | `/admin/vendor-applications/{id}/approve` | admin | Approve an application |
+| POST | `/admin/vendor-applications/{id}/reject` | admin | Reject with a reason |
 
 ---
 
@@ -627,6 +637,132 @@ key and clears any lockout. That is the recovery path for a device locked after
 > *As a restaurant owner, I want to register my restaurant so I can start
 > taking orders.*
 
+There are **two ways in**, sharing one account model:
+
+- **The partner application** (§11.1) — what the Partner app's registration
+  screens implement: a five-step form, an application number, a human review,
+  then credentials. No password is collected up front.
+- **The fast path** (§11.2) — one call with a password, tokens back
+  immediately. Useful for tooling and for teams not shipping the application
+  form UI.
+
+Either way the restaurant starts **unverified and CLOSED**, and customers
+cannot see it until an administrator approves it.
+
+### 11.1 The partner application
+
+The flow behind the *Become a partner* screens:
+
+```
+1. Owner Information  → POST /auth/otp/send   { "email": ..., "role": "VENDOR" }
+                        (the code arrives by email — keep it for step 3)
+2. Document step      → POST /vendor/applications/uploads   per file,
+                        then PUT the bytes to upload_url
+3. Review & Submit    → POST /vendor/applications            ── application_no ──
+4. Wait 2–3 days      → GET /vendor/applications/{no}?email=...
+5. Approved email     → POST /auth/password/forgot + /auth/password/reset
+6. Sign in            → POST /auth/login, then PATCH /vendor/store/status
+```
+
+Submission (step 3) — the nested blocks mirror the form's steps:
+
+```http
+POST /api/v1/vendor/applications
+
+{
+  "otp_code": "3314",
+  "business": {
+    "name": "Kolpatha Restaurant",
+    "business_type": "RESTAURANT",        // RESTAURANT | GROCERY | PHARMACY
+    "business_category": "Street Food",
+    "branch_count": 1,
+    "cuisine_types": ["Fast Food"]
+  },
+  "location": {
+    "address_line": "Road 12, House 42, Nikunja 2, Dhaka",
+    "area": "Nikunja 2",
+    "latitude": 23.8481,
+    "longitude": 90.4148
+  },
+  "owner": {
+    "full_name": "Hamid Islam",
+    "email": "contact@hamidislam.com",
+    "phone": "+8801712447567",
+    "national_id": "454654644564"
+  },
+  "documents": {
+    "shop_image":    "https://…/applications/…/a1.jpg",
+    "owner_nid":     "https://…/applications/…/b2.jpg",
+    "menu_list":     "https://…/applications/…/c3.jpg",
+    "trade_license": "https://…/applications/…/d4.pdf"   // optional
+  },
+  "payout": {
+    "method": "BKASH",                    // BANK | BKASH | NAGAD | ROCKET
+    "account_name": "Hamid Islam",
+    "account_number": "01712447567",
+    "bank_name": null,                    // BANK only
+    "branch_name": null
+  },
+  "agreed_to_terms": true
+}
+```
+
+`201 Created`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "application_no": "PTN-88291",
+    "status": "PENDING",
+    "restaurant_id": "…",
+    "submitted_at": "2026-08-19T10:15:00Z",
+    "message": "Application submitted! We'll review it and get back to you within 2–3 business days by email."
+  }
+}
+```
+
+Show `application_no` on the success screen and store it — the status
+endpoint needs it, and support will ask for it.
+
+Things to know:
+
+- **No tokens are returned.** The account exists but has no password, so it
+  cannot be signed into. Approval emails the owner instructions to set one
+  via the §4 forgot-password flow; nothing stops them doing that earlier.
+- **Documents upload before submission.** `POST /vendor/applications/uploads`
+  is the unauthenticated twin of `POST /uploads/presigned-url`: same
+  presigned-PUT mechanics, PDF allowed on top of the image types (trade
+  licences are scans), keys under `applications/…`. Rate limited per IP.
+- **Status checks need the reference AND the email.** A wrong email is the
+  same `404` as a wrong reference, so the reference space cannot be walked.
+  `review_note` appears only on a `REJECTED` application — it carries the
+  reason, which is also emailed.
+- **Decisions are final.** A rejected applicant who fixes the problem applies
+  again with a different email today, or replies to the rejection email —
+  see Known limitations.
+
+| Situation | Response | `error.code` |
+|---|---|---|
+| Wrong or expired `otp_code` | `400` | `INVALID_OTP` |
+| `agreed_to_terms` not `true` (OTP is **not** burned) | `400` | `VALIDATION_FAILED` |
+| Email already a customer account | `409` | `CONFLICT` |
+| Email already has an application (the message carries its `application_no`) | `409` | `CONFLICT` |
+| Phone already on another account | `409` | `CONFLICT` |
+| More than 5 submissions/hour from one IP | `429` | `RATE_LIMITED` |
+
+**For the admin console:** `GET /admin/vendor-applications` is the review
+queue (oldest first, `?status=PENDING` by default), the `{id}` detail carries
+everything above plus the document URLs, and
+`POST /admin/vendor-applications/{id}/approve` / `…/reject` decide it. Approval
+verifies the restaurant and emails the owner their sign-in steps; rejection
+emails the `note` as the reason, so write it for the applicant.
+
+### 11.2 The fast path
+
+**Note `role: "VENDOR"` on step 1** — without it the account is created as a
+customer, and roles are fixed at creation.
+
 ```
 1. Enter email       → POST /auth/otp/send   { "email": ..., "role": "VENDOR" }
 2. Code + password + restaurant details
@@ -635,9 +771,6 @@ key and clears any lockout. That is the recovery path for a device locked after
 4. Wait for approval (an administrator verifies the restaurant)
 5. Open the store    → PATCH /vendor/store/status
 ```
-
-**Note `role: "VENDOR"` on step 1** — without it the account is created as a
-customer, and roles are fixed at creation.
 
 ```http
 POST /api/v1/auth/register/vendor
@@ -733,16 +866,18 @@ Be aware of these when planning screens:
    deletion path for any app that offers account creation — submission gets
    rejected without it. Flag this early if you have a store date.
 5. **No rider accounts.** There is no way to create a `RIDER`, so the rider app
-   has no signup. Delivery assignment and live tracking depend on it.
+   has no signup. Delivery assignment and live tracking depend on it — and so
+   does the vendor handoff, which cannot complete without an assigned rider.
 6. **No push notification registration.** Spec §9 lists `POST /users/me/devices`
    for FCM tokens; it is not built. No order-status pushes, and no vendor alert
    when the tablet app is backgrounded.
 7. **No 2FA recovery codes.** A user who loses their authenticator is
    permanently locked out — recovery currently needs manual database access.
    Consider hiding the 2FA toggle until this exists.
-8. **Everything outside auth returns 501.** Restaurants, cart, orders and vendor
-   *operations* are routed and documented but not implemented. Vendor
-   *registration* (§11) is implemented.
+8. **Customer commerce still returns 501.** Discovery, cart, checkout and order
+   placement are routed and documented but not implemented, so nothing can yet
+   place an order for a vendor to receive. Auth and vendor operations
+   (see [VENDOR-API.md](VENDOR-API.md)) are implemented.
 
 ---
 

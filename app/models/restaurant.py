@@ -18,7 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.address import GEO_FROM_LATLNG
@@ -76,6 +76,12 @@ class Restaurant(Base, UUIDPrimaryKey, TimestampMixin):
     commission_rate: Mapped[float] = mapped_column(
         Numeric(5, 4), nullable=False, server_default=text("0.0000")
     )
+
+    # {mon..sun: {is_open, opens_at "HH:MM", closes_at "HH:MM"}} — the Business
+    # Hour screen. Informational: shown to customers, but nothing flips
+    # `status` from it (no scheduler exists), so the manual toggle stays the
+    # only thing that actually opens or closes the store.
+    business_hours: Mapped[dict | None] = mapped_column(JSONB)
 
     owner: Mapped["User"] = relationship(back_populates="restaurant", lazy="raise")  # noqa: F821
     categories: Mapped[list["MenuCategory"]] = relationship(  # noqa: F821

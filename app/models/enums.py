@@ -59,6 +59,7 @@ class OtpPurpose(enum.StrEnum):
 class DiscountType(enum.StrEnum):
     PERCENTAGE = "PERCENTAGE"
     FIXED = "FIXED"
+    FREE_DELIVERY = "FREE_DELIVERY"
 
 
 class DevicePlatform(enum.StrEnum):
@@ -80,6 +81,25 @@ class ActorType(enum.StrEnum):
     SYSTEM = "SYSTEM"
 
 
+class VendorApplicationStatus(enum.StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class PayoutMethod(enum.StrEnum):
+    BANK = "BANK"
+    BKASH = "BKASH"
+    NAGAD = "NAGAD"
+    ROCKET = "ROCKET"
+
+
+class PayoutStatus(enum.StrEnum):
+    PROCESSING = "PROCESSING"  # requested; awaiting the transfer being made
+    COMPLETED = "COMPLETED"    # money confirmed sent
+    FAILED = "FAILED"          # transfer failed; the amount returns to balance
+
+
 def pg_enum(py_enum: type[enum.Enum], name: str) -> ENUM:
     return ENUM(
         py_enum, name=name, create_type=False, values_callable=lambda e: [m.value for m in e]
@@ -97,6 +117,9 @@ DiscountTypeType = pg_enum(DiscountType, "discount_type")
 DevicePlatformType = pg_enum(DevicePlatform, "device_platform")
 ActorTypeType = pg_enum(ActorType, "actor_type")
 BiometricAlgorithmType = pg_enum(BiometricAlgorithm, "biometric_algorithm")
+VendorApplicationStatusType = pg_enum(VendorApplicationStatus, "vendor_application_status")
+PayoutMethodType = pg_enum(PayoutMethod, "payout_method")
+PayoutStatusType = pg_enum(PayoutStatus, "payout_status")
 
 # Order states in which a customer may still cancel (spec §4).
 CANCELLABLE_STATUSES = {OrderStatus.PENDING}

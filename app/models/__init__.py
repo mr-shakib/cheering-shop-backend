@@ -10,6 +10,7 @@ from app.models.base import Base
 from app.models.cart import Cart, CartItem, CartItemAddOn
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
 from app.models.order import Order, OrderItem, OrderItemAddOn, OrderStatusHistory
+from app.models.payout import VendorPayout
 from app.models.promo import PromoCode, PromoRedemption
 from app.models.restaurant import Favorite, Restaurant
 from app.models.review import Review
@@ -22,6 +23,7 @@ from app.models.user import (
     User,
     UserDevice,
 )
+from app.models.vendor_application import VendorApplication
 
 __all__ = [
     "Base",
@@ -37,6 +39,8 @@ __all__ = [
     # Restaurants & catalog
     "Restaurant",
     "Favorite",
+    "VendorApplication",
+    "VendorPayout",
     "MenuCategory",
     "MenuItem",
     "ItemVariant",

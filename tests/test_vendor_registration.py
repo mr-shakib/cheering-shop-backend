@@ -83,9 +83,12 @@ async def test_vendor_reaches_vendor_endpoints_customer_does_not(
     _, data = await _register_vendor(client, cleanup_users)
     vendor_auth = {"Authorization": f"Bearer {data['tokens']['access_token']}"}
 
-    # Vendor reaches the handler (501 = not implemented yet, but past the guard)
+    # Vendor reaches the handler. A brand-new restaurant has no orders, so an
+    # empty queue is the correct answer — what matters is that it is a 200 and
+    # not a 403.
     r = await client.get(f"{V1}/vendor/orders", headers=vendor_auth)
-    assert r.status_code == 501, r.text
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []
 
     # Customer is stopped by the guard
     r = await client.get(
@@ -158,32 +161,9 @@ async def test_self_service_role_escalation_is_blocked(client, cleanup_users, re
 
 
 # ---------------------------------------------------------------------------
-# Admin approval
+# Admin approval — the admin_token fixture lives in conftest.py, shared with
+# tests/test_vendor_application.py
 # ---------------------------------------------------------------------------
-@pytest.fixture
-async def admin_token():
-    """A real ADMIN, created the way the bootstrap script does."""
-    from sqlalchemy import delete
-
-    from app.core.database import SessionLocal
-    from app.core.security import create_access_token, hash_password
-    from app.models.enums import UserRole
-    from app.models.user import User
-
-    email = f"admin-{uuid.uuid4().hex[:8]}@example.com"
-    user = User(
-        id=uuid.uuid4(), role=UserRole.ADMIN.value, email=email,
-        password_hash=hash_password("AdminPassword1!"), is_email_verified=True,
-    )
-    async with SessionLocal() as s:
-        s.add(user)
-        await s.commit()
-
-    yield create_access_token(str(user.id), UserRole.ADMIN.value)
-
-    async with SessionLocal() as s:
-        await s.execute(delete(User).where(User.id == user.id))
-        await s.commit()
 
 
 async def test_admin_approval_makes_a_restaurant_visible(

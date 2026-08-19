@@ -178,7 +178,7 @@ These fail the build rather than letting a mistake through:
 | `test_route_inventory.py` | The API drifting from the spec's 47 endpoints, or an undocumented route appearing without a written justification |
 | `test_schema_parity.py` | `db/schema.sql` describing something the migrations do not actually produce — it builds both and diffs the structures |
 | `test_migration_drift.py` | ORM models and the migrated database disagreeing (`alembic check`) |
-| `test_docs_accuracy.py` | `docs/AUTH-API.md` going stale — every implemented endpoint documented, nothing documented that is a 501, and the 13 constants it quotes matching the code |
+| `test_docs_accuracy.py` | The `docs/*-API.md` files going stale — every implemented endpoint documented **somewhere**, nothing documented that is still a 501, and every constant they quote matching the code. Adding a module means adding its doc to `API_DOCS` |
 | `test_app_contract.py` | The response envelope, RBAC, money conversion, or the docs UI regressing |
 
 ---

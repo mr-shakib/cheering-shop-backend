@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     LOGIN_WINDOW_SECONDS: int = 900          # 15 minutes
     LOGIN_IP_MAX_ATTEMPTS: int = 50          # per source IP, per window
     HANDOFF_MAX_ATTEMPTS: int = 5            # rider-PIN guesses before lockout
+    # Vendor applications are unauthenticated writes, so both are per source IP.
+    APPLICATION_SUBMIT_MAX_PER_HOUR: int = 5
+    APPLICATION_UPLOAD_MAX_PER_HOUR: int = 30
+    # Smallest withdrawal, in whole taka. Sub-100 transfers cost more in
+    # mobile-wallet fees than they move.
+    PAYOUT_MIN_AMOUNT: int = 100
 
     # --- Business rules (spec §9, §4) --------------------------------------
     VENDOR_AUTO_DECLINE_SECONDS: int = 60  # the timeout the task queue enforces

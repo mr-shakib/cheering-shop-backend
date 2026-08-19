@@ -13,7 +13,7 @@ FastAPI · PostgreSQL 16 + PostGIS · SQLAlchemy 2.0 (async) · Alembic · Redis
 | **Step 1** Stack alignment | Complete |
 | **Step 2** Database schema | Complete — 25 tables, 21 invariant assertions passing |
 | **Step 3** Project scaffolding | Complete — all 47 endpoints routed, zero model drift |
-| **Step 4** API implementation | **Auth module complete** (12 endpoints, 36 tests). Remaining modules return `501 NOT_IMPLEMENTED` |
+| **Step 4** API implementation | **Auth and Vendor modules complete** (35 endpoints, 129 tests). Discovery, cart and orders return `501 NOT_IMPLEMENTED` |
 
 ---
 
@@ -40,6 +40,7 @@ make verify-db   # the 21 schema invariant assertions
 **Adding a module?** Read [docs/development-workflow.md](docs/development-workflow.md).
 **Setting up OTP email?** Read [docs/email-setup-resend.md](docs/email-setup-resend.md).
 **Frontend integrating auth?** Send them [docs/AUTH-API.md](docs/AUTH-API.md).
+**Building the restaurant app?** Send them [docs/VENDOR-API.md](docs/VENDOR-API.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
 > so often already taken. Override with `POSTGRES_HOST_PORT` in `.env`.
@@ -52,7 +53,13 @@ make verify-db   # the 21 schema invariant assertions
 app/
   core/          config, database, redis, security, errors, money, responses
   models/        SQLAlchemy models — a mirror of db/schema.sql
-  schemas/       Pydantic request/response models
+  schemas/
+    requests/    request bodies, one module per domain (re-exported at package level)
+    vendor/      vendor response models, same convention
+  services/
+    vendor/      the vendor domain: storefront, applications, orders, insights,
+                 finance, promotions — aliased as vendor_*_service in app.services
+    *_service.py auth, menu, OTP, tokens, storage, email
   api/
     deps.py      auth, RBAC, pagination, idempotency
     v1/
@@ -146,7 +153,7 @@ Everything below was executed, not assumed:
 - Server booted; `/health/ready` reaches live PostGIS 3.4 and Redis 7.4.9
 - Auth flow exercised over HTTP: OTP issue → 429 on resend → verify → session →
   RBAC 403 for a customer on a vendor endpoint
-- OpenAPI documents **48 operations** (46 HTTP + 2 WebSocket, which OpenAPI does not model) — 47 spec + 1 `[EXTENDED]`
+- OpenAPI documents every routed operation — 47 spec endpoints plus the `[EXTENDED]` set, each justified in `tests/test_route_inventory.py`
 
 ---
 
@@ -175,5 +182,12 @@ Found while implementing. The endpoint **total** of 47 is correct, but:
 - Payment webhooks for bKash/Visa redirect flows — `orders.payment_status` and
   `payment_reference` are ready to receive them, but no `payment_transactions`
   ledger exists yet
-- Vendor rejection: auto-rebook with a nearby vendor, or refund and suggest?
-  `POST /vendor/orders/{id}/reject` cannot be finished without this ruling
+- ~~Vendor rejection: auto-rebook with a nearby vendor, or refund and suggest?~~
+  **Resolved: refund and suggest.** `POST /vendor/orders/{id}/reject` cancels the
+  order and marks a paid one `REFUNDED`; it does not re-place the cart
+  elsewhere. A substitute restaurant has different prices, a different menu and
+  a different delivery time, so recreating "the same order" would mean deciding
+  on the customer's behalf what they will pay and wait for — and charging
+  someone for food they did not choose is the worse failure mode. The recovery
+  flow belongs in the customer app, on top of discovery. Revisit if product
+  wants automatic matching.

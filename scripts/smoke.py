@@ -194,6 +194,131 @@ def main() -> int:
                 r = client.post(f"{API}/auth/refresh", json={"refresh_token": new_refresh})
                 check("reuse revokes the whole session family", r.status_code == 401)
 
+    # ----------------------------------------------------------- vendor journey
+    section("Vendor journey")
+    if deployed:
+        skip(
+            "vendor signup → menu → store status",
+            "would leave a real restaurant behind on a deployed server",
+        )
+    else:
+        vendor_ident = f"smoke-vendor-{uuid.uuid4().hex[:10]}@example.com"
+        r = client.post(f"{API}/auth/otp/send", json={"email": vendor_ident, "role": "VENDOR"})
+        vendor_code = r.json().get("data", {}).get("debug_code") if r.status_code == 200 else None
+
+        if not check("vendor OTP issued", vendor_code is not None, r.text[:200]):
+            pass
+        else:
+            r = client.post(
+                f"{API}/auth/register/vendor",
+                json={
+                    "email": vendor_ident,
+                    "code": vendor_code,
+                    "password": "VendorPass1!",
+                    "full_name": "Smoke Vendor",
+                    "restaurant": {
+                        "name": f"Smoke Kitchen {uuid.uuid4().hex[:6]}",
+                        "address_line": "House 12, Road 8, Dhanmondi, Dhaka",
+                        "latitude": 23.7936,
+                        "longitude": 90.4064,
+                        "cuisine_types": ["Bengali"],
+                    },
+                },
+            )
+            registered = check("vendor registered", r.status_code == 201, r.text[:300])
+
+            if registered:
+                vauth = {"Authorization": f"Bearer {r.json()['data']['tokens']['access_token']}"}
+
+                r = client.get(f"{API}/vendor/profile", headers=vauth)
+                check("vendor reads own storefront", r.status_code == 200, r.text[:200])
+                if r.status_code == 200:
+                    profile = r.json()["data"]
+                    # The approval gate: readable, but not sellable.
+                    check("new restaurant is unapproved", profile["is_verified"] is False)
+                    check("and not accepting orders", profile["is_accepting_orders"] is False)
+
+                r = client.patch(
+                    f"{API}/vendor/profile", json={"delivery_fee_base": 60}, headers=vauth
+                )
+                check(
+                    "storefront is editable",
+                    r.status_code == 200 and r.json()["data"]["delivery_fee_base"] == 60,
+                    r.text[:200],
+                )
+
+                r = client.patch(
+                    f"{API}/vendor/profile", json={"commission_rate": 0}, headers=vauth
+                )
+                check("platform-owned fields are rejected", r.status_code == 400, r.text[:200])
+
+                r = client.post(
+                    f"{API}/vendor/menu/categories", json={"name": "Biryani"}, headers=vauth
+                )
+                created = check("category created", r.status_code == 201, r.text[:200])
+                category_id = r.json()["data"]["id"] if created else None
+
+                if category_id:
+                    r = client.post(
+                        f"{API}/vendor/menu/items",
+                        json={
+                            "name": "Chicken Biryani",
+                            "category_id": category_id,
+                            "base_price": 180,
+                            "variants": [
+                                {"name": "Half", "price": 180, "is_default": True},
+                                {"name": "Full", "price": 320},
+                            ],
+                            "add_ons": [{"name": "Extra raita", "price": 30}],
+                        },
+                        headers=vauth,
+                    )
+                    item_ok = check("item created with options", r.status_code == 201, r.text[:300])
+                    if item_ok:
+                        item = r.json()["data"]
+                        check(
+                            "variants keep their submitted order",
+                            [v["name"] for v in item["variants"]] == ["Half", "Full"],
+                            str([v["name"] for v in item["variants"]]),
+                        )
+                        r = client.patch(
+                            f"{API}/vendor/menu/items/{item['id']}/status",
+                            json={"is_available": False},
+                            headers=vauth,
+                        )
+                        check("sold-out toggle works", r.status_code == 200, r.text[:200])
+
+                    r = client.delete(
+                        f"{API}/vendor/menu/categories/{category_id}", headers=vauth
+                    )
+                    check(
+                        "deleting a populated category is refused",
+                        r.status_code == 409,
+                        f"got {r.status_code}",
+                    )
+
+                r = client.get(f"{API}/vendor/menu", headers=vauth)
+                check("full menu tree returned", r.status_code == 200, r.text[:200])
+
+                r = client.patch(
+                    f"{API}/vendor/store/status", json={"status": "OPEN"}, headers=vauth
+                )
+                check(
+                    "opening an unapproved store is honest",
+                    r.status_code == 200 and r.json()["data"]["is_accepting_orders"] is False,
+                    r.text[:300],
+                )
+
+                r = client.get(f"{API}/vendor/orders?status=ACTIVE", headers=vauth)
+                check("order queue reachable", r.status_code == 200, r.text[:200])
+
+                r = client.get(f"{API}/vendor/analytics", headers=vauth)
+                check(
+                    "analytics returns an empty window",
+                    r.status_code == 200 and r.json()["data"]["totals"]["orders"] == 0,
+                    r.text[:200],
+                )
+
     # ------------------------------------------------------------------ done
     print()
     total = passed + failed

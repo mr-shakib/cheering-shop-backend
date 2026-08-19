@@ -90,6 +90,32 @@ def customer_token(customer_user) -> str:
 
 
 @pytest.fixture
+async def admin_token():
+    """A real ADMIN, created the way the bootstrap script does."""
+    from sqlalchemy import delete
+
+    from app.core.database import SessionLocal
+    from app.core.security import create_access_token, hash_password
+    from app.models.enums import UserRole
+    from app.models.user import User
+
+    email = f"admin-{uuid.uuid4().hex[:8]}@example.com"
+    user = User(
+        id=uuid.uuid4(), role=UserRole.ADMIN.value, email=email,
+        password_hash=hash_password("AdminPassword1!"), is_email_verified=True,
+    )
+    async with SessionLocal() as s:
+        s.add(user)
+        await s.commit()
+
+    yield create_access_token(str(user.id), UserRole.ADMIN.value)
+
+    async with SessionLocal() as s:
+        await s.execute(delete(User).where(User.id == user.id))
+        await s.commit()
+
+
+@pytest.fixture
 async def cleanup_users():
     """Remove users created by identifier during a test, plus their OTP rows.
 
@@ -180,3 +206,182 @@ async def clear_cooldowns():
             await redis.delete(*keys)
 
     return _clear
+
+
+# ---------------------------------------------------------------------------
+# Shared vendor fixtures — used by test_vendor_api.py and
+# test_vendor_operations.py. Orders are seeded through the ORM because
+# POST /orders is still 501; see the docstring in test_vendor_api.py.
+# ---------------------------------------------------------------------------
+
+
+async def _make_vendor(*, verified: bool = True, status: str = "CLOSED"):
+    """A VENDOR user and their restaurant, created through the ORM."""
+    from app.core.database import SessionLocal
+    from app.models.restaurant import Restaurant
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        role="VENDOR",
+        email=f"vendor-{uuid.uuid4().hex[:12]}@example.com",
+        full_name="Karim Ahmed",
+        is_email_verified=True,
+    )
+    restaurant = Restaurant(
+        id=uuid.uuid4(),
+        owner_id=user.id,
+        name=f"Kitchen {uuid.uuid4().hex[:6]}",
+        slug=f"kitchen-{uuid.uuid4().hex[:10]}",
+        address_line="House 12, Road 8, Dhanmondi, Dhaka",
+        latitude=23.7936,
+        longitude=90.4064,
+        cuisine_types=["Bengali"],
+        is_verified=verified,
+        status=status,
+        commission_rate=0.15,
+    )
+    async with SessionLocal() as session:
+        session.add(user)
+        await session.flush()
+        session.add(restaurant)
+        await session.commit()
+    return user, restaurant
+
+
+async def _drop_vendor(user_id, restaurant_id) -> None:
+    """Unwind in dependency order.
+
+    `orders.restaurant_id` is ON DELETE RESTRICT — deliberately, so a restaurant
+    cannot be deleted out from under its own order history — which means the
+    teardown has to remove orders before the restaurant, exactly as the
+    application would.
+    """
+    from sqlalchemy import delete
+
+    from app.core.database import SessionLocal
+    from app.models.menu import MenuCategory
+    from app.models.order import Order
+    from app.models.payout import VendorPayout
+    from app.models.promo import PromoCode
+    from app.models.restaurant import Restaurant
+    from app.models.review import Review
+    from app.models.user import User
+
+    async with SessionLocal() as session:
+        await session.execute(delete(Review).where(Review.restaurant_id == restaurant_id))
+        # vendor_payouts.restaurant_id is ON DELETE RESTRICT for the same
+        # reason orders are: a money ledger must outlive nothing.
+        await session.execute(
+            delete(VendorPayout).where(VendorPayout.restaurant_id == restaurant_id)
+        )
+        await session.execute(delete(PromoCode).where(PromoCode.restaurant_id == restaurant_id))
+        await session.execute(delete(Order).where(Order.restaurant_id == restaurant_id))
+        await session.execute(
+            delete(MenuCategory).where(MenuCategory.restaurant_id == restaurant_id)
+        )
+        await session.execute(delete(Restaurant).where(Restaurant.id == restaurant_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+class VendorCtx:
+    def __init__(self, user, restaurant, token):
+        self.user = user
+        self.restaurant = restaurant
+        self.token = token
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def vendor(db_available):
+    from app.core.security import create_access_token
+
+    user, restaurant = await _make_vendor()
+    yield VendorCtx(user, restaurant, create_access_token(str(user.id), user.role))
+    await _drop_vendor(user.id, restaurant.id)
+
+
+@pytest.fixture
+async def other_vendor(db_available):
+    """A second vendor, for the isolation tests."""
+    from app.core.security import create_access_token
+
+    user, restaurant = await _make_vendor()
+    yield VendorCtx(user, restaurant, create_access_token(str(user.id), user.role))
+    await _drop_vendor(user.id, restaurant.id)
+
+
+@pytest.fixture
+async def pending_vendor(db_available):
+    """A vendor whose restaurant has not been approved yet."""
+    from app.core.security import create_access_token
+
+    user, restaurant = await _make_vendor(verified=False)
+    yield VendorCtx(user, restaurant, create_access_token(str(user.id), user.role))
+    await _drop_vendor(user.id, restaurant.id)
+
+
+@pytest.fixture
+async def order_customer(db_available):
+    """A CUSTOMER to hang seeded orders on.
+
+    Deliberately not the shared `customer_user` fixture: pytest tears fixtures
+    down in reverse setup order, so that one would be deleted while `vendor`
+    still held orders referencing it — and `fk_orders_customer` is ON DELETE
+    RESTRICT. This one clears its own orders first, so teardown works whichever
+    order the fixtures happen to unwind in.
+    """
+    from sqlalchemy import delete
+
+    from app.core.database import SessionLocal
+    from app.models.order import Order
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        role="CUSTOMER",
+        email=f"customer-{uuid.uuid4().hex[:12]}@example.com",
+        full_name="Rahim Uddin",
+    )
+    async with SessionLocal() as session:
+        session.add(user)
+        await session.commit()
+
+    yield user
+
+    async with SessionLocal() as session:
+        await session.execute(delete(Order).where(Order.customer_id == user.id))
+        await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()
+
+
+@pytest.fixture
+async def rider(db_available):
+    """A RIDER, for the orders that need one assigned.
+
+    `fk_orders_rider` is ON DELETE RESTRICT just like the customer FK, so the
+    teardown clears this rider's orders before removing the account.
+    """
+    from sqlalchemy import delete
+
+    from app.core.database import SessionLocal
+    from app.models.order import Order
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        role="RIDER",
+        email=f"rider-{uuid.uuid4().hex[:12]}@example.com",
+        full_name="Rider One",
+    )
+    async with SessionLocal() as session:
+        session.add(user)
+        await session.commit()
+
+    yield user
+
+    async with SessionLocal() as session:
+        await session.execute(delete(Order).where(Order.rider_id == user.id))
+        await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()

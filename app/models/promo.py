@@ -15,7 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, CreatedAtMixin, Money, UUIDPrimaryKey
@@ -33,12 +33,18 @@ class PromoCode(Base, UUIDPrimaryKey, CreatedAtMixin):
     discount_type: Mapped[str] = mapped_column(DiscountTypeType, nullable=False)
     # paisa when FIXED, basis points when PERCENTAGE (1500 == 15%) — keeping
     # percentages in bps means the whole calculation stays integer-exact.
+    # 0 when FREE_DELIVERY: the discount is the delivery fee, whatever it is.
     discount_value: Mapped[int] = mapped_column(Money, nullable=False)
     max_discount: Mapped[int | None] = mapped_column(Money)
     min_order_amount: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
     restaurant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("restaurants.id", ondelete="CASCADE")
     )
+    # Vendor promotions (the Promotions screens). budget_cap stops a runaway
+    # offer: checkout must refuse the promo once spent >= cap. NULL item list
+    # means the whole menu; ids are validated against the vendor's own items.
+    budget_cap: Mapped[int | None] = mapped_column(Money)
+    applies_to_item_ids: Mapped[list[uuid.UUID] | None] = mapped_column(ARRAY(UUID(as_uuid=True)))
     valid_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -52,7 +58,10 @@ class PromoCode(Base, UUIDPrimaryKey, CreatedAtMixin):
 
     __table_args__ = (
         CheckConstraint("valid_until > valid_from", name="ck_promo_window"),
-        CheckConstraint("discount_value > 0", name="ck_promo_value"),
+        CheckConstraint(
+            "(discount_type = 'FREE_DELIVERY' AND discount_value = 0) OR discount_value > 0",
+            name="ck_promo_value",
+        ),
         CheckConstraint(
             "times_used >= 0 AND (usage_limit IS NULL OR usage_limit > 0)", name="ck_promo_usage"
         ),

@@ -153,6 +153,117 @@ def password_reset_otp(code: str) -> tuple[str, str, str]:
     return subject, html, text
 
 
+# A code-free variant of _BASE for messages rather than OTPs. Same inline-CSS
+# constraints; {body} is one or more <p> blocks.
+_MESSAGE_BASE = """<!doctype html>
+<html><body style="margin:0;padding:0;background:#f4f4f5;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;padding:32px 24px;">
+    <div style="background:#ffffff;border-radius:12px;padding:32px;
+                box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+      <h1 style="margin:0 0 8px;font-size:20px;color:#18181b;">{heading}</h1>
+      {body}
+    </div>
+    <p style="margin:24px 0 0;font-size:12px;text-align:center;color:#a1a1aa;">
+      {brand} &middot; This is an automated message.</p>
+  </div>
+</body></html>"""
+
+_P = '<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#52525b;">{}</p>'
+
+
+def application_received(application_no: str, business_name: str) -> tuple[str, str, str]:
+    """(subject, html, text) confirming a partner application was submitted."""
+    brand = settings.EMAIL_FROM_NAME
+    subject = f"We received your {brand} partner application"
+    paragraphs = [
+        f"Thanks for applying to sell on {brand} with <strong>{business_name}</strong>.",
+        f"Your application reference is <strong>{application_no}</strong>. "
+        "Keep it — support will ask for it.",
+        "We review every application by hand and will get back to you within "
+        "2–3 business days by email.",
+    ]
+    html = _MESSAGE_BASE.format(
+        heading="Application submitted",
+        body="".join(_P.format(p) for p in paragraphs),
+        brand=brand,
+    )
+    text = (
+        f"Application submitted\n\n"
+        f"Thanks for applying to sell on {brand} with {business_name}.\n"
+        f"Your application reference is {application_no}.\n\n"
+        f"We review every application by hand and will get back to you within "
+        f"2-3 business days by email.\n"
+    )
+    return subject, html, text
+
+
+def application_approved(business_name: str, owner_email: str) -> tuple[str, str, str]:
+    """(subject, html, text) for an approved partner application.
+
+    The next step is deliberately the OTP password flow, not a link with an
+    embedded token: the apps already implement that flow, and an email that
+    tells the user to request their own code cannot be replayed from a
+    forwarded inbox.
+    """
+    brand = settings.EMAIL_FROM_NAME
+    subject = f"Your {brand} partner account is ready"
+    steps = (
+        f"Open the {brand} Partner app and choose <strong>Login</strong>, then "
+        f"<strong>Forgot Password</strong>. Enter <strong>{owner_email}</strong>, "
+        "type the code we send you, and set your password. That's it — you can "
+        "then sign in, finish your menu and open your store."
+    )
+    paragraphs = [
+        f"Good news — <strong>{business_name}</strong> has been approved and your "
+        "partner account is ready.",
+        steps,
+    ]
+    html = _MESSAGE_BASE.format(
+        heading="Welcome! Your partner account is ready",
+        body="".join(_P.format(p) for p in paragraphs),
+        brand=brand,
+    )
+    text = (
+        f"Welcome! Your partner account is ready\n\n"
+        f"Good news - {business_name} has been approved.\n\n"
+        f"To sign in: open the {brand} Partner app, choose Login, then Forgot "
+        f"Password. Enter {owner_email}, type the code we send you, and set "
+        f"your password. You can then sign in, finish your menu and open your "
+        f"store.\n"
+    )
+    return subject, html, text
+
+
+def application_rejected(business_name: str, reason: str | None) -> tuple[str, str, str]:
+    """(subject, html, text) for a rejected partner application."""
+    brand = settings.EMAIL_FROM_NAME
+    subject = f"About your {brand} partner application"
+    detail = reason or "It did not meet our current partner requirements."
+    paragraphs = [
+        f"Thank you for applying to sell on {brand} with "
+        f"<strong>{business_name}</strong>. After review, we are unable to "
+        "approve your application at this time.",
+        f"<strong>Reason:</strong> {detail}",
+        "If you believe this is a mistake, or you can address the reason above, "
+        "reply to this email and our team will take another look.",
+    ]
+    html = _MESSAGE_BASE.format(
+        heading="Your application was not approved",
+        body="".join(_P.format(p) for p in paragraphs),
+        brand=brand,
+    )
+    text = (
+        f"Your application was not approved\n\n"
+        f"Thank you for applying to sell on {brand} with {business_name}. "
+        f"After review, we are unable to approve your application at this time.\n\n"
+        f"Reason: {detail}\n\n"
+        f"If you believe this is a mistake, or you can address the reason "
+        f"above, reply to this email and our team will take another look.\n"
+    )
+    return subject, html, text
+
+
 def check_email_config() -> dict:
     """Readiness detail. A deployed environment with no key is misconfigured."""
     if settings.email_enabled:

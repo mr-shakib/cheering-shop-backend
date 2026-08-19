@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     uploads,
     users,
     vendor,
+    vendor_applications,
     ws,
 )
 
@@ -43,7 +44,9 @@ api_router.include_router(orders.router)
 api_router.include_router(tracking.router)
 api_router.include_router(comms.router)
 
-# Vendor operations
+# Vendor onboarding (public) before vendor operations — /vendor/applications/*
+# literals must register ahead of anything else under /vendor
+api_router.include_router(vendor_applications.router)
 api_router.include_router(vendor.router)
 
 # Administration

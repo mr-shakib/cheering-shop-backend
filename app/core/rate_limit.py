@@ -65,3 +65,11 @@ def login_ip_key(ip: str) -> str:
 
 def otp_verify_key(identifier: str) -> str:
     return f"rl:otpverify:{identifier}"
+
+
+def application_submit_key(ip: str) -> str:
+    return f"rl:vendorapp:submit:{ip}"
+
+
+def application_upload_key(ip: str) -> str:
+    return f"rl:vendorapp:upload:{ip}"

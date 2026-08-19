@@ -35,12 +35,18 @@ CREATE TYPE order_status      AS ENUM ('PENDING', 'PREPARING', 'READY', 'PICKED_
 CREATE TYPE payment_method    AS ENUM ('COD', 'WALLET', 'BKASH', 'CARD');
 CREATE TYPE payment_status    AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED');
 CREATE TYPE otp_purpose       AS ENUM ('SIGNUP', 'LOGIN', 'PASSWORD_RESET');
-CREATE TYPE discount_type     AS ENUM ('PERCENTAGE', 'FIXED');
+CREATE TYPE discount_type     AS ENUM ('PERCENTAGE', 'FIXED', 'FREE_DELIVERY');
 CREATE TYPE device_platform   AS ENUM ('IOS', 'ANDROID', 'WEB');
 CREATE TYPE actor_type        AS ENUM ('CUSTOMER', 'VENDOR', 'RIDER', 'ADMIN', 'SYSTEM');
 -- Signature algorithms a device can enrol with. iOS Secure Enclave is P-256
 -- (ES256) only; Android Keystore can do either.
 CREATE TYPE biometric_algorithm AS ENUM ('ES256', 'ED25519');
+-- Partner application lifecycle — decided once, never re-decided.
+CREATE TYPE vendor_application_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+-- Withdrawal destinations and lifecycle. FAILED returns the money by
+-- arithmetic: the balance formula excludes failed rows.
+CREATE TYPE payout_method AS ENUM ('BANK', 'BKASH', 'NAGAD', 'ROCKET');
+CREATE TYPE payout_status AS ENUM ('PROCESSING', 'COMPLETED', 'FAILED');
 
 -- ---------------------------------------------------------------------
 -- Shared trigger: maintain updated_at
@@ -245,6 +251,10 @@ CREATE TABLE restaurants (
     avg_prep_time_mins  smallint    NOT NULL DEFAULT 20,
     commission_rate     numeric(5,4) NOT NULL DEFAULT 0.0000,  -- 0.1500 == 15%, for /vendor/analytics
 
+    -- {mon..sun: {is_open, opens_at "HH:MM", closes_at "HH:MM"}}. Shown to
+    -- customers; nothing flips `status` from it (no scheduler exists).
+    business_hours      jsonb,
+
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
 
@@ -275,6 +285,63 @@ CREATE INDEX ix_restaurants_open_rating ON restaurants (status, rating_avg DESC)
 CREATE INDEX ix_restaurants_name_trgm ON restaurants USING GIN (name gin_trgm_ops);
 CREATE INDEX ix_restaurants_cuisines ON restaurants USING GIN (cuisine_types);
 CREATE TRIGGER trg_restaurants_updated_at BEFORE UPDATE ON restaurants
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- [EXTENDED] Vendor partner applications — the record an administrator
+-- reviews. A snapshot, deliberately denormalised from the user/restaurant it
+-- creates: the vendor editing their storefront later must not rewrite what
+-- the approval decision was based on.
+CREATE TABLE vendor_applications (
+    id                uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_no    varchar(20)   NOT NULL UNIQUE,        -- e.g. PTN-88291
+
+    user_id           uuid          NOT NULL REFERENCES users(id)       ON DELETE CASCADE,
+    restaurant_id     uuid          NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+
+    -- Business information (form step 1)
+    business_name     varchar(180)  NOT NULL,
+    business_type     varchar(40)   NOT NULL,               -- RESTAURANT / GROCERY / PHARMACY
+    business_category varchar(80)   NOT NULL,               -- e.g. "Street Food"
+    branch_count      smallint      NOT NULL DEFAULT 1,
+    cuisine_types     text[]        NOT NULL DEFAULT '{}',
+
+    -- Location (form step 2)
+    address_line      text          NOT NULL,
+    area              varchar(120),
+    latitude          double precision NOT NULL,
+    longitude         double precision NOT NULL,
+
+    -- Owner information (form step 3)
+    owner_full_name   varchar(150)  NOT NULL,
+    owner_email       citext        NOT NULL,
+    owner_phone       varchar(20)   NOT NULL,
+    national_id       varchar(50)   NOT NULL,
+
+    -- Documents & payout (form step 4): {kind: url} and free-shaped payout
+    -- details, so a new document type is a code change, not a migration.
+    documents         jsonb         NOT NULL DEFAULT '{}',
+    payout            jsonb         NOT NULL DEFAULT '{}',
+
+    agreed_to_terms   boolean       NOT NULL,
+
+    -- Review
+    status            vendor_application_status NOT NULL DEFAULT 'PENDING',
+    review_note       text,
+    reviewed_by       uuid          REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at       timestamptz,
+
+    created_at        timestamptz   NOT NULL DEFAULT now(),
+    updated_at        timestamptz   NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_vendor_applications_branches CHECK (branch_count >= 1),
+    CONSTRAINT ck_vendor_applications_lat      CHECK (latitude  BETWEEN -90  AND 90),
+    CONSTRAINT ck_vendor_applications_lng      CHECK (longitude BETWEEN -180 AND 180),
+    CONSTRAINT ck_vendor_applications_terms    CHECK (agreed_to_terms)
+);
+-- The admin queue: pending applications, oldest first.
+CREATE INDEX ix_vendor_applications_queue ON vendor_applications (status, created_at ASC);
+CREATE INDEX ix_vendor_applications_owner_email ON vendor_applications (owner_email);
+CREATE TRIGGER trg_vendor_applications_updated_at BEFORE UPDATE ON vendor_applications
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- [EXTENDED] Favorites — N:M, required by GET/POST /users/me/favorites.
@@ -464,12 +531,45 @@ CREATE TABLE promo_codes (
     per_user_limit    smallint      NOT NULL DEFAULT 1,
     times_used        integer       NOT NULL DEFAULT 0,
     is_active         boolean       NOT NULL DEFAULT true,
+    -- Vendor promotions: stop redeeming once total discount spend reaches the
+    -- cap; NULL item list means the whole menu.
+    budget_cap        bigint,                   -- paisa
+    applies_to_item_ids uuid[],
     created_at        timestamptz   NOT NULL DEFAULT now(),
     CONSTRAINT ck_promo_window CHECK (valid_until > valid_from),
-    CONSTRAINT ck_promo_value  CHECK (discount_value > 0),
+    CONSTRAINT ck_promo_value  CHECK (
+        (discount_type = 'FREE_DELIVERY' AND discount_value = 0) OR discount_value > 0
+    ),
     CONSTRAINT ck_promo_usage  CHECK (times_used >= 0 AND (usage_limit IS NULL OR usage_limit > 0))
 );
 CREATE INDEX ix_promo_active ON promo_codes (code) WHERE is_active;
+
+
+-- [EXTENDED] Vendor payouts — the Withdraw flow's ledger. One row per
+-- withdrawal request. Balance is always derived (delivered earnings minus
+-- non-FAILED payouts), never stored, so it cannot drift from this table.
+CREATE TABLE vendor_payouts (
+    id             uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_id  uuid         NOT NULL REFERENCES restaurants(id) ON DELETE RESTRICT,
+    reference      varchar(20)  NOT NULL UNIQUE,          -- e.g. CHR64445654
+    amount         bigint       NOT NULL,                 -- paisa
+    method         payout_method NOT NULL,
+    account_number varchar(50)  NOT NULL,
+    account_name   varchar(150) NOT NULL,
+    bank_name      varchar(150),
+    branch_name    varchar(150),
+    status         payout_status NOT NULL DEFAULT 'PROCESSING',
+    failure_reason text,
+    processed_by   uuid         REFERENCES users(id) ON DELETE SET NULL,
+    processed_at   timestamptz,
+    created_at     timestamptz  NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_vendor_payouts_amount CHECK (amount > 0)
+);
+CREATE INDEX ix_vendor_payouts_restaurant ON vendor_payouts (restaurant_id, created_at DESC);
+-- The finance work queue.
+CREATE INDEX ix_vendor_payouts_processing ON vendor_payouts (created_at ASC)
+    WHERE status = 'PROCESSING';
 
 
 -- =====================================================================
@@ -571,7 +671,10 @@ CREATE TABLE orders (
     --
     -- Issued when the order reaches READY, not at creation: the PIN should not
     -- exist during the whole cooking window. Support REGENERATES, never reads.
+    -- The cipher is Fernet ciphertext of the same PIN, so the vendor app's
+    -- handoff screen can re-display the code while the order is READY.
     rider_pin_hash     text,
+    rider_pin_cipher   text,
     rider_pin_issued_at timestamptz,
     handoff_attempts   smallint     NOT NULL DEFAULT 0,
 

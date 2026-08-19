@@ -1,9 +1,13 @@
 """The frontend documentation must stay true.
 
-`docs/AUTH-API.md` is sent to the mobile team and built against. A number that
-drifts from the code — a token lifetime, a rate limit, an endpoint that quietly
-disappeared — costs them a debugging session and costs us their trust in the
-document. These tests fail the build rather than let that happen.
+The `docs/*-API.md` files are sent to the mobile team and built against. A
+number that drifts from the code — a token lifetime, a rate limit, an endpoint
+that quietly disappeared — costs them a debugging session and costs us their
+trust in the document. These tests fail the build rather than let that happen.
+
+Endpoint coverage is checked across **every** API doc rather than one file, so
+adding a module means adding its doc: an implemented endpoint that appears in no
+document fails here, and so does a documented endpoint that is still a 501 stub.
 """
 
 import ast
@@ -11,8 +15,14 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC = ROOT / "docs" / "AUTH-API.md"
+DOCS = ROOT / "docs"
+DOC = DOCS / "AUTH-API.md"
+VENDOR_DOC = DOCS / "VENDOR-API.md"
 ENDPOINTS = ROOT / "app" / "api" / "v1" / "endpoints"
+
+# Every document that carries an endpoint summary table. A new module's doc
+# belongs here, or its endpoints will read as undocumented.
+API_DOCS = (DOC, VENDOR_DOC)
 
 
 def _normalise(path: str) -> str:
@@ -49,13 +59,17 @@ def _implemented() -> set[tuple[str, str]]:
 
 
 def _documented() -> set[tuple[str, str]]:
-    """Rows of the doc's endpoint summary table."""
-    return {
-        (m.group(1), _normalise(m.group(2)))
-        for m in re.finditer(
-            r"^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`", DOC.read_text(), re.M
-        )
-    }
+    """Rows of every API doc's endpoint summary table."""
+    found: set[tuple[str, str]] = set()
+    for doc in API_DOCS:
+        assert doc.exists(), f"{doc.relative_to(ROOT)} is missing"
+        found |= {
+            (m.group(1), _normalise(m.group(2)))
+            for m in re.finditer(
+                r"^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`", doc.read_text(), re.M
+            )
+        }
+    return found
 
 
 def test_every_implemented_endpoint_is_documented():
@@ -102,6 +116,45 @@ def test_documented_constants_match_the_code():
         "docs/AUTH-API.md quotes values that no longer match the code: "
         f"{stale}. Update the doc (or the config) so the two agree."
     )
+
+
+def test_vendor_doc_constants_match_the_code():
+    """Limits quoted in the vendor doc must be real."""
+    from app.core.config import settings
+
+    doc = VENDOR_DOC.read_text()
+
+    checks = [
+        (f"**{settings.VENDOR_AUTO_DECLINE_SECONDS} seconds**", "auto-decline window"),
+        (f"{settings.HANDOFF_MAX_ATTEMPTS} incorrect", "handoff attempt cap"),
+        (f"**{settings.RIDER_PIN_LENGTH}-digit**", "rider PIN length"),
+        (f"{settings.MAX_PAGE_LIMIT}", "max page limit"),
+        (f"{settings.PRESIGNED_URL_TTL_SECONDS // 60} minutes", "presigned URL lifetime"),
+    ]
+
+    stale = [what for needle, what in checks if needle not in doc]
+    assert not stale, (
+        "docs/VENDOR-API.md quotes values that no longer match the code: "
+        f"{stale}. Update the doc (or the config) so the two agree."
+    )
+
+
+def test_vendor_doc_covers_the_flows_the_product_needs():
+    """Structural guard for the vendor doc."""
+    doc = VENDOR_DOC.read_text()
+    for heading in (
+        "## 2. Getting approved",
+        "## 3. Storefront",
+        "## 4. Menu",
+        "## 5. Order queue",
+        "## 6. The order lifecycle",
+        "## 7. Handoff",
+        "## 8. Analytics",
+        "## 9. Images",
+        "## 10. Endpoint summary",
+        "## Known limitations",
+    ):
+        assert heading in doc, f"docs/VENDOR-API.md lost its `{heading}` section"
 
 
 def test_doc_covers_the_flows_the_product_needs():

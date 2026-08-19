@@ -77,9 +77,15 @@ class Order(Base, UUIDPrimaryKey):
         UUID(as_uuid=True), ForeignKey("promo_codes.id", ondelete="SET NULL")
     )
 
-    # --- Handoff proof (decision D3) -------------------------------------
+    # --- Handoff proof (decision D3, amended) ----------------------------
     # HMAC-SHA256(pepper, order_id || pin). Issued at READY, not at creation.
     rider_pin_hash: Mapped[str | None] = mapped_column(Text)
+    # Fernet ciphertext of the same PIN. The vendor app's handoff screen
+    # displays the code while the order is READY ("hand this code to your
+    # rider"), so the plaintext must be recoverable — the HMAC alone cannot be
+    # reversed. Encrypted like totp_secret: a database dump without the app key
+    # yields nothing. Exposed to the owning vendor only, and only while READY.
+    rider_pin_cipher: Mapped[str | None] = mapped_column(Text)
     rider_pin_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handoff_attempts: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0")
