@@ -43,7 +43,8 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 | Search.png | Empty search | client-side (recent searches are local) |
 | Search results.png | Results | `GET /search?q=` — returns restaurants **and** dishes |
 | Restuarent Details.png | Storefront header | `GET /restaurants/{id}` (`promotions` drives the offer ribbon) |
-| Restuarent Details-1.png, -2.png | Menu, scrolled | `GET /restaurants/{id}/menu` |
+| Restuarent Details-1.png | Menu list | `GET /restaurants/{id}/menu` |
+| Restuarent Details-2.png | Menu, scrolled to a category | same response; category jump is client-side |
 | My favorite.png | Empty state | `GET /users/me/favorites`, zero rows |
 | My favorite-1.png | Saved list | `GET /users/me/favorites`; heart → `POST /users/me/favorites/{id}` |
 | Schedule Order.png | Delivery-time sheet | `GET /restaurants/{id}/schedule`; Confirm carries the slot into `scheduled_for` |
