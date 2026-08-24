@@ -877,29 +877,91 @@ async def test_presigned_url_rejects_a_disallowed_type(client, vendor):
     assert r.status_code == 400, r.text
 
 
+def _configure_r2(monkeypatch):
+    """A fully provisioned R2 environment, as the deployed one should look."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "R2_ACCOUNT_ID", "abc123account")
+    monkeypatch.setattr(settings, "R2_BUCKET", "cr-shop-media")
+    monkeypatch.setattr(settings, "R2_ACCESS_KEY_ID", "R2KEYEXAMPLE")
+    monkeypatch.setattr(settings, "R2_SECRET_ACCESS_KEY", "s" * 40)
+    monkeypatch.setattr(settings, "R2_PUBLIC_BASE_URL", "https://cdn.cheeringshop.online")
+    monkeypatch.setattr(settings, "R2_ENDPOINT_URL", None)
+    return settings
+
+
 def test_presigned_url_is_a_well_formed_sigv4_url(monkeypatch):
     """Signing is ours rather than boto3's, so it gets its own test."""
     from urllib.parse import parse_qs, urlparse
 
-    from app.core.config import settings
     from app.services import storage_service
 
-    monkeypatch.setattr(settings, "S3_BUCKET", "cr-shop-media")
-    monkeypatch.setattr(settings, "S3_REGION", "ap-south-1")
-    monkeypatch.setattr(settings, "S3_ENDPOINT_URL", None)
-    monkeypatch.setattr(settings, "AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
-    monkeypatch.setattr(settings, "AWS_SECRET_ACCESS_KEY", "s" * 40)
+    settings = _configure_r2(monkeypatch)
 
     result = storage_service.create_presigned_put(str(uuid.uuid4()), "image/jpeg")
     parsed = urlparse(result.upload_url)
     query = parse_qs(parsed.query)
 
-    assert parsed.netloc == "cr-shop-media.s3.ap-south-1.amazonaws.com"
+    # R2 is path-style: the bucket is in the path, not the host.
+    assert parsed.netloc == "abc123account.r2.cloudflarestorage.com"
+    assert parsed.path.startswith("/cr-shop-media/uploads/")
     assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
     assert query["X-Amz-SignedHeaders"] == ["content-type;host"]
     assert query["X-Amz-Expires"] == [str(settings.PRESIGNED_URL_TTL_SECONDS)]
     assert len(query["X-Amz-Signature"][0]) == 64
+    # R2 has no regions; a real region name in the scope fails the signature.
+    assert "/auto/s3/aws4_request" in query["X-Amz-Credential"][0]
     # The content type is signed, so an upload cannot substitute another one.
     assert result.headers == {"Content-Type": "image/jpeg"}
     assert result.public_url.endswith(".jpg")
     assert result.key.endswith(".jpg")
+
+
+def test_public_url_is_the_bucket_domain_not_the_signing_endpoint(monkeypatch):
+    """The one thing R2 does not inherit from S3.
+
+    R2's S3 endpoint refuses unauthenticated GETs, so deriving `public_url`
+    from it would hand every reader a 401 while the upload itself looked fine.
+    """
+    from app.services import storage_service
+
+    _configure_r2(monkeypatch)
+
+    result = storage_service.create_presigned_put(str(uuid.uuid4()), "image/png")
+
+    assert result.public_url.startswith("https://cdn.cheeringshop.online/uploads/")
+    assert "r2.cloudflarestorage.com" not in result.public_url
+    assert result.public_url.endswith(result.key)
+
+
+def test_presigned_url_503s_and_names_the_missing_variables(monkeypatch):
+    """A 503 that says only 'not configured' sends whoever is on call to read
+    source; naming the variables sends them to the environment file."""
+    from app.core.config import settings
+    from app.services import storage_service
+
+    _configure_r2(monkeypatch)
+    monkeypatch.setattr(settings, "R2_PUBLIC_BASE_URL", "")
+
+    with pytest.raises(storage_service.StorageNotConfiguredError) as exc:
+        storage_service.create_presigned_put(str(uuid.uuid4()), "image/jpeg")
+
+    assert exc.value.status_code == 503
+    assert "R2_PUBLIC_BASE_URL" in exc.value.details[0]
+
+
+def test_endpoint_url_overrides_the_account_derived_host(monkeypatch):
+    """Jurisdiction-locked buckets and a local MinIO both need this."""
+    from urllib.parse import urlparse
+
+    from app.core.config import settings
+    from app.services import storage_service
+
+    _configure_r2(monkeypatch)
+    monkeypatch.setattr(
+        settings, "R2_ENDPOINT_URL", "https://abc123account.eu.r2.cloudflarestorage.com"
+    )
+
+    result = storage_service.create_presigned_put(str(uuid.uuid4()), "image/jpeg")
+
+    assert urlparse(result.upload_url).netloc == "abc123account.eu.r2.cloudflarestorage.com"

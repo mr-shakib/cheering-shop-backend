@@ -25,6 +25,20 @@ os.environ.setdefault("TOTP_ENCRYPTION_KEY", "k" * 64)
 # @example.com recipients. Tests must not touch a third party.
 os.environ["RESEND_API_KEY"] = ""
 
+# FORCED for the same reason: a developer with real Cloudflare R2 credentials in
+# .env would otherwise flip the upload tests from "503, correctly unprovisioned"
+# to "200, here is a signed URL against the live bucket". The suite asserts the
+# unconfigured behaviour, so the unconfigured state has to be guaranteed.
+for _r2 in (
+    "R2_ACCOUNT_ID",
+    "R2_BUCKET",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_PUBLIC_BASE_URL",
+    "R2_ENDPOINT_URL",
+):
+    os.environ[_r2] = ""
+
 import uuid  # noqa: E402
 
 import pytest  # noqa: E402

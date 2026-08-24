@@ -122,12 +122,22 @@ class Settings(BaseSettings):
     EMAIL_TIMEOUT_SECONDS: float = 10.0
     EMAIL_REPLY_TO: str = ""
 
-    # --- Object storage (spec §2: presigned S3 uploads) --------------------
-    S3_BUCKET: str = ""
-    S3_REGION: str = "ap-south-1"
-    S3_ENDPOINT_URL: str | None = None
-    AWS_ACCESS_KEY_ID: str = ""
-    AWS_SECRET_ACCESS_KEY: str = ""
+    # --- Object storage (spec §2: presigned uploads to Cloudflare R2) ------
+    # R2 speaks the S3 API, so the signing in storage_service is plain SigV4.
+    # What it does NOT give you is a readable URL: an R2 bucket is private, and
+    # the signing endpoint always demands auth, so R2_PUBLIC_BASE_URL — the
+    # r2.dev subdomain or a custom domain bound to the bucket — is where
+    # `public_url` comes from and is required, not cosmetic. There is no region
+    # setting because R2 has none; the signature scope is always "auto".
+    R2_ACCOUNT_ID: str = ""
+    R2_BUCKET: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_PUBLIC_BASE_URL: str = ""
+    # Override for a jurisdiction-locked bucket (<account>.eu.r2.cloudflare
+    # storage.com) or to point a local stack at MinIO. Unset, it is derived
+    # from R2_ACCOUNT_ID.
+    R2_ENDPOINT_URL: str | None = None
     PRESIGNED_URL_TTL_SECONDS: int = 900
     ALLOWED_UPLOAD_TYPES: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["image/jpeg", "image/png", "image/webp"]

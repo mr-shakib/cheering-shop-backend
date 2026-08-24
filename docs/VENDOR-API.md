@@ -459,7 +459,7 @@ delivery and is not shown to you.
 ## 9. Images
 
 The backend never handles image bytes. Ask for a URL, upload straight to
-storage, then send us the resulting link.
+Cloudflare R2, then send us the resulting link.
 
 ```http
 POST /uploads/presigned-url
@@ -470,8 +470,8 @@ POST /uploads/presigned-url
 {
   "success": true,
   "data": {
-    "upload_url": "https://bucket.s3.…?X-Amz-Signature=…",
-    "public_url": "https://bucket.s3.…/uploads/…/abc123.jpg",
+    "upload_url": "https://<account>.r2.cloudflarestorage.com/<bucket>/uploads/…/abc123.jpg?X-Amz-Signature=…",
+    "public_url": "https://cdn.cheeringshop.online/uploads/…/abc123.jpg",
     "key": "uploads/…/abc123.jpg",
     "method": "PUT",
     "headers": { "Content-Type": "image/jpeg" },
@@ -488,10 +488,17 @@ Then:
 2. Send `public_url` back to us as `logo_url`, `cover_image_url` or an item's
    `image_url`.
 
+**`upload_url` and `public_url` are different hosts, and neither substitutes for
+the other.** `upload_url` is R2's S3 endpoint: it takes your PUT and then
+expires. `public_url` is the CDN domain bound to the bucket, and is the only one
+that serves reads — fetching the object from the upload host returns `401`. Send
+us `public_url` and nothing else; do not try to reconstruct either URL yourself,
+because the object key is server-generated.
+
 `upload_url` is valid for 15 minutes. Allowed types are JPEG, PNG and WebP;
 anything else is a `400`. A `503` means object storage is not configured on that
 environment — treat it as "uploads unavailable here", not as a bug in your
-request.
+request. Its `details` name the missing variables.
 
 ---
 
@@ -755,7 +762,9 @@ Be aware of these when planning screens:
 6. **No push notification registration.** `POST /users/me/devices` is not built,
    so a backgrounded tablet learns nothing until it polls.
 7. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
-   wherever `S3_BUCKET` is unset, which today includes local development.
+   wherever the Cloudflare R2 variables are unset, which today includes local
+   development. `GET /ready` reports storage status without you having to
+   attempt an upload.
 8. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.

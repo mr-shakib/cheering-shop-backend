@@ -67,8 +67,9 @@ async def application_upload(body: ApplicationUploadRequest, request: Request):
     `documents` block. PDF is accepted here on top of the image types, because
     a trade licence is routinely a scan.
 
-    Keys land under `applications/…`, never `uploads/{user_id}/…`, so an
-    anonymous caller cannot collide with any user's objects.
+    Keys land in the R2 bucket under `applications/…`, never
+    `uploads/{user_id}/…`, so an anonymous caller cannot collide with any
+    user's objects.
     """
     await rate_limit.hit(
         rate_limit.application_upload_key(client_ip(request)),

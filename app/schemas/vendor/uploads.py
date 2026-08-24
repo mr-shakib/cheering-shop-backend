@@ -7,8 +7,10 @@ class PresignedUpload(BaseModel):
     """POST /uploads/presigned-url
 
     `upload_url` takes a PUT of the raw bytes with a matching `Content-Type`
-    header. `public_url` is where the object will be readable afterwards, and
-    is the value to send back to us in `logo_url`, `image_url` and friends.
+    header; it points at Cloudflare R2's S3 endpoint and expires.
+    `public_url` is a different host — the bucket's public domain — and is
+    where the object will be readable afterwards, so it is the value to send
+    back to us in `logo_url`, `image_url` and friends.
     """
 
     upload_url: str

@@ -96,10 +96,15 @@ services:
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-ap-south-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Object storage: Cloudflare R2. R2_PUBLIC_BASE_URL is the domain bound
+      # to the bucket, not the S3 endpoint — uploads that skip it succeed and
+      # then 401 for every reader. See docs/storage-setup-r2.md.
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
       # Traefik is the only peer permitted to set X-Forwarded-For. Docker's
       # default bridge pools are in 172.16.0.0/12. Without this, every session
       # records Traefik's IP and the per-IP login limit becomes one shared
