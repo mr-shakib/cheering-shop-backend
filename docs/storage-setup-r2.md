@@ -104,7 +104,7 @@ The endpoint is derived from `R2_ACCOUNT_ID`. Set it explicitly only for:
 ## Step 6 — Verify
 
 ```bash
-curl -s https://api.cheeringshop.online/ready | jq .data.storage
+curl -s https://api.cheeringshop.online/health/ready | jq .data.storage
 ```
 
 `{"status": "ok", "provider": "cloudflare-r2", "bucket": "cr-shop-media"}` means

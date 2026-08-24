@@ -763,8 +763,8 @@ Be aware of these when planning screens:
    so a backgrounded tablet learns nothing until it polls.
 7. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
    wherever the Cloudflare R2 variables are unset, which today includes local
-   development. `GET /ready` reports storage status without you having to
-   attempt an upload.
+   development. `GET /health/ready` reports storage status without you having
+   to attempt an upload.
 8. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.
