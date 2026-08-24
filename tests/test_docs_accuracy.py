@@ -18,11 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 DOC = DOCS / "AUTH-API.md"
 VENDOR_DOC = DOCS / "VENDOR-API.md"
+CUSTOMER_DOC = DOCS / "CUSTOMER-API.md"
 ENDPOINTS = ROOT / "app" / "api" / "v1" / "endpoints"
 
 # Every document that carries an endpoint summary table. A new module's doc
 # belongs here, or its endpoints will read as undocumented.
-API_DOCS = (DOC, VENDOR_DOC)
+API_DOCS = (DOC, VENDOR_DOC, CUSTOMER_DOC)
 
 
 def _normalise(path: str) -> str:

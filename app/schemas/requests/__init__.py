@@ -35,6 +35,7 @@ from app.schemas.requests.auth import (
 from app.schemas.requests.base import Money
 from app.schemas.requests.commerce import (
     CartItemRequest,
+    ChatMessageRequest,
     OrderCancelRequest,
     OrderCreateRequest,
     ReviewCreateRequest,
@@ -95,6 +96,7 @@ __all__ = [
     "PresignedUrlRequest",
     # commerce
     "CartItemRequest",
+    "ChatMessageRequest",
     "OrderCreateRequest",
     "OrderCancelRequest",
     "ReviewCreateRequest",

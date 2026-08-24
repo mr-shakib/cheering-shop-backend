@@ -1,5 +1,7 @@
 """The response/error envelope from spec §2, and the security primitives."""
 
+import json
+
 import pytest
 
 
@@ -11,12 +13,21 @@ async def test_health_returns_success_envelope(client):
     assert body["data"]["status"] == "ok"
 
 
-async def test_unimplemented_endpoint_returns_501_in_error_envelope(client):
+def test_unimplemented_surface_uses_the_documented_501_envelope():
     """A scaffolded route must return a documented 501, not a 404 that looks
-    like a routing bug."""
-    r = await client.get("/api/v1/home/feed")
-    assert r.status_code == 501
-    body = r.json()
+    like a routing bug.
+
+    This used to point at `/api/v1/home/feed`. Every HTTP route is now
+    implemented — the only unimplemented surface left is the live-tracking
+    WebSocket, which cannot return an HTTP envelope at all. So the contract is
+    asserted against the error itself rather than against whichever endpoint
+    happened to be unfinished, which is what the test was really protecting.
+    """
+    from app.core.errors import NotImplementedYetError
+
+    response = NotImplementedYetError().to_response()
+    assert response.status_code == 501
+    body = json.loads(response.body)
     assert body["success"] is False
     assert body["error"]["code"] == "NOT_IMPLEMENTED"
 
@@ -57,11 +68,20 @@ async def test_role_guard_rejects_wrong_actor(client, customer_token):
 
 
 async def test_authenticated_customer_reaches_the_handler(client, customer_token):
-    """The mirror of the test above: a correct role gets through to the stub,
-    proving the 403 came from the guard and not from a broken dependency."""
+    """The mirror of the test above: a correct role gets through to the handler,
+    proving the 403 came from the guard and not from a broken dependency.
+
+    Now that /cart is implemented this asserts a real 200 rather than the old
+    501 — which demonstrates the same thing more strongly, since the handler
+    not only ran but produced a valid body.
+    """
     r = await client.get("/api/v1/cart", headers={"Authorization": f"Bearer {customer_token}"})
-    assert r.status_code == 501
-    assert r.json()["error"]["code"] == "NOT_IMPLEMENTED"
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["success"] is True
+    # A customer with no cart gets an empty one, not a 404.
+    assert body["data"]["items"] == []
+    assert body["data"]["restaurant_id"] is None
 
 
 def test_money_conversion_is_exact_not_float():

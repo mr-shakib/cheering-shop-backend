@@ -115,7 +115,14 @@ class Order(Base, UUIDPrimaryKey):
     placed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    # The 60s vendor timeout the arq worker sweeps (spec §9).
+    # Scheduled delivery (the Schedule Order sheet). NULL means "as soon as
+    # possible", which is the overwhelming majority of orders — hence nullable
+    # rather than defaulting to placed_at, so "was this scheduled?" stays a
+    # question the column can answer.
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The 60s vendor timeout the arq worker sweeps (spec §9). NULL for a
+    # scheduled order: the countdown starts when the kitchen is asked, not
+    # when the customer books.
     auto_decline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -178,6 +185,13 @@ class Order(Base, UUIDPrimaryKey):
         Index("ix_orders_customer_history", "customer_id", text("placed_at DESC")),
         Index(
             "ix_orders_rider", "rider_id", "status", postgresql_where=text("rider_id IS NOT NULL")
+        ),
+        # The vendor's scheduled-order queue: what is due soon, oldest first.
+        # Partial, so it stays tiny however many ASAP orders accumulate.
+        Index(
+            "ix_orders_scheduled",
+            text("scheduled_for ASC"),
+            postgresql_where=text("scheduled_for IS NOT NULL AND status = 'PENDING'"),
         ),
         # Tiny partial index — only unaccepted orders qualify, so the sweeper
         # scans almost nothing however large the table grows.

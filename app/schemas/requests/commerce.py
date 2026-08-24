@@ -1,5 +1,6 @@
 """Customer commerce: cart, checkout, order lifecycle, reviews."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -26,10 +27,22 @@ class OrderCreateRequest(BaseModel):
     promo_code: str | None = None
     tip: Money = Decimal(0)
     special_instructions: str | None = Field(default=None, max_length=500)
+    # Scheduled delivery. Omit for "as soon as possible". Re-validated against
+    # the same lead time the slot generator uses — a client can post any
+    # timestamp regardless of which slots were offered.
+    scheduled_for: datetime | None = Field(
+        default=None, description="Slot start from GET /restaurants/{id}/schedule"
+    )
 
 
 class OrderCancelRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=255)
+
+
+class ChatMessageRequest(BaseModel):
+    """POST /orders/{id}/messages — the Message screen's composer."""
+
+    body: str = Field(min_length=1, max_length=2000)
 
 
 class ReviewCreateRequest(BaseModel):

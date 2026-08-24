@@ -94,6 +94,36 @@ class Settings(BaseSettings):
     # mobile-wallet fees than they move.
     PAYOUT_MIN_AMOUNT: int = 100
 
+    # --- Order pricing (spec §5 checkout summary) --------------------------
+    # Every line of the bill is platform policy except delivery_fee_base and
+    # commission_rate, which are per-restaurant columns. Basis points keep the
+    # whole computation in integers — see core/money.percentage_of — so a 5%
+    # VAT on an odd subtotal never produces a fractional paisa.
+    TAX_BASIS_POINTS: int = 500  # 5% VAT on the food, not on delivery or tip
+    PLATFORM_FEE_BASIS_POINTS: int = 200  # 2% service fee
+    PACKAGING_FEE_PER_ORDER: int = 10  # whole taka, flat
+    # Delivery is the restaurant's base fee plus distance beyond the first km.
+    DELIVERY_FEE_PER_KM: int = 10  # whole taka
+    DELIVERY_FREE_KM: float = 1.0  # covered by the base fee
+    # Above this order value delivery is on us. 0 disables the promotion.
+    FREE_DELIVERY_THRESHOLD: int = 0  # whole taka
+    # Refuse to quote a delivery this far out rather than charging for a trip
+    # no rider will take.
+    MAX_DELIVERY_DISTANCE_KM: float = 15.0
+
+    # --- Scheduled delivery (Schedule Order screen) ------------------------
+    SCHEDULE_SLOT_MINUTES: int = 10  # width of one bookable window
+    SCHEDULE_MAX_DAYS_AHEAD: int = 4  # the date tabs on the picker
+    # A slot must be at least this far out: the kitchen needs the notice, and a
+    # "scheduled" order arriving in five minutes is just a normal order.
+    SCHEDULE_MIN_LEAD_MINUTES: int = 30
+
+    # --- Order chat (Message screen) ---------------------------------------
+    CHAT_MESSAGE_MAX_LENGTH: int = 2000
+    # Chat closes with the order. An open channel to a stranger's phone number
+    # long after delivery is a safety problem, not a feature.
+    CHAT_OPEN_AFTER_DELIVERY_HOURS: int = 24
+
     # --- Business rules (spec §9, §4) --------------------------------------
     VENDOR_AUTO_DECLINE_SECONDS: int = 60  # the timeout the task queue enforces
     ORDER_CANCEL_GRACE_SECONDS: int = 60  # cancel allowed only while PENDING

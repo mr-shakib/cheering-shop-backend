@@ -49,6 +49,37 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+async def get_optional_user(
+    db: DbSession,
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+) -> User | None:
+    """The caller if they happen to be signed in, otherwise None.
+
+    Discovery is public — a browsing customer must not be forced to log in —
+    but a signed-in one should still see their hearts filled and their
+    favourites marked. This resolves that without letting authentication
+    become a requirement.
+
+    A malformed or expired token yields None rather than a 401, deliberately:
+    on a public endpoint the correct response to a stale token is to serve the
+    anonymous view, not to break browsing until the client refreshes.
+    """
+    if creds is None or not creds.credentials:
+        return None
+    try:
+        payload = decode_token(creds.credentials, expected_type="access")
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = await db.get(User, uuid.UUID(user_id))
+    except Exception:
+        return None
+    return user if user is not None and user.is_active else None
+
+
+OptionalUser = Annotated[User | None, Depends(get_optional_user)]
+
+
 def require_roles(*roles: UserRole):
     """RBAC guard implementing the spec §7 permission matrix.
 

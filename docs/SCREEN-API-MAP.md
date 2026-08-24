@@ -27,6 +27,57 @@ or data already fetched by an earlier screen.
 Admin console for this flow: `GET /admin/vendor-applications`,
 `GET /admin/vendor-applications/{id}`, `POST …/{id}/approve`, `POST …/{id}/reject`.
 
+## Customer app (`ui/food-ui/`)
+
+Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
+
+### Browse
+
+| Screen file | What it is | API |
+|---|---|---|
+| Food.png | Home dashboard | `GET /home/feed?lat=&lng=` (one call: cuisines, offers, nearby, top rated) |
+| Food-1.png, Food-2.png | Feed scrolled | same response, rendered further |
+| Scroll.png | Restaurant carousel | `GET /restaurants?lat=&lng=` |
+| Category listing (Pizza).png | One cuisine | `GET /restaurants?cuisine=Pizza` |
+| Filter and Short.png | Filter + sort sheet | `GET /restaurants` with `sort`, `min_rating`, `max_delivery_fee`, `is_open` |
+| Search.png | Empty search | client-side (recent searches are local) |
+| Search results.png | Results | `GET /search?q=` — returns restaurants **and** dishes |
+| Restuarent Details.png | Storefront header | `GET /restaurants/{id}` (`promotions` drives the offer ribbon) |
+| Restuarent Details-1.png, -2.png | Menu, scrolled | `GET /restaurants/{id}/menu` |
+| My favorite.png | Empty state | `GET /users/me/favorites`, zero rows |
+| My favorite-1.png | Saved list | `GET /users/me/favorites`; heart → `POST /users/me/favorites/{id}` |
+| Schedule Order.png | Delivery-time sheet | `GET /restaurants/{id}/schedule`; Confirm carries the slot into `scheduled_for` |
+| Share Details.png | Share sheet | client-side (OS share; no backend) |
+| Reels.png | Video feed | **no backend** — not in the spec, nothing serves it |
+
+### Cart and checkout
+
+| Screen file | What it is | API |
+|---|---|---|
+| Empty Cart.png | Nothing added | `GET /cart` returns an empty cart, not a 404 |
+| Cart.png | Lines + quantities | `GET /cart`; +/−/remove → `POST /cart/items` (`quantity: 0` removes) |
+| Order Modify.png | Edit a line's options | `POST /cart/items` with the new `variant_id` / `add_on_ids` |
+| Checkout.png | Address, payment, bill | `GET /checkout/summary?address_id=&promo_code=&tip=` |
+| Checkout-1.png | Promo applied | same call; a bad code returns the bill plus `promo_error` |
+| Address.png | Address picker + add | `GET/POST /users/me/addresses`; star → `PATCH …/{id}/default` |
+| Order Complete.png | "Order placed" | rendered from `POST /orders` (send an `Idempotency-Key`) |
+
+### After ordering
+
+| Screen file | What it is | API |
+|---|---|---|
+| Order.png | Order list | `GET /orders?status_filter=ACTIVE` |
+| Order-1.png | Empty history | same call, zero rows |
+| Order Details.png | Receipt + timeline | `GET /orders/{id}` |
+| Preparing food.png | Status while cooking | `GET /orders/{id}/tracking` (poll — no push yet) |
+| Ride Assign.png | "Arriving in 12 mins" + steps | `GET /orders/{id}/tracking` (`timeline` draws the dots, `eta_minutes` the header) |
+| Track order.png | Map | `GET /orders/{id}/tracking` for the endpoints and ETA. **The rider dot is not implemented** — `rider_location` is null and `WS /ws/orders/{id}/live-tracking` is a 501, because no rider client reports a position |
+| Message.png | Chat with the rider | `GET/POST /orders/{id}/messages` |
+| Call Screen.png | Calling | `POST /orders/{id}/call` — returns `available: false`; no telephony provider is configured |
+| Review.png | Rate the order | `POST /orders/{id}/reviews` (DELIVERED only, one per order) |
+| Profile.png | Account | `GET /users/me`; edit → `PUT /users/me/profile` |
+
+
 ## Vendor app (`ui/full vendor/`)
 
 ### Order tab

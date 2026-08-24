@@ -153,6 +153,35 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "GET",
+        "/orders/{id}",
+        "Spec #30 lists order history but no way to open one. The Order "
+        "Details screen needs the receipt, the line items and the status "
+        "timeline, none of which fit in a history row.",
+    ),
+    (
+        "GET",
+        "/restaurants/{id}/schedule",
+        "The Schedule Order sheet offers delivery windows days ahead. Slots "
+        "are generated from business hours rather than stored, so the client "
+        "needs an endpoint to ask what is bookable — guessing them locally "
+        "would drift from the lead time the server enforces at placement.",
+    ),
+    (
+        "GET",
+        "/orders/{id}/messages",
+        "The Message screen. The spec has a masked phone call but no text "
+        "channel, and a rider who cannot find a gate has nothing to type "
+        "into.",
+    ),
+    (
+        "POST",
+        "/orders/{id}/messages",
+        "The other half of the chat: sending. Scoped to the order so the "
+        "channel closes with it — a standing line to a stranger's device "
+        "after delivery is a safety problem, not a feature.",
+    ),
+    (
+        "GET",
         "/admin/vendor-applications",
         "The review queue. /admin/restaurants/pending lists storefronts but "
         "not the identity, documents or payout details a decision needs.",

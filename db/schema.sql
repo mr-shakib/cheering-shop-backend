@@ -692,6 +692,11 @@ CREATE TABLE orders (
 
     -- Lifecycle timestamps, one per §8 transition.
     placed_at            timestamptz NOT NULL DEFAULT now(),
+    -- Scheduled delivery (the Schedule Order sheet). NULL = as soon as
+    -- possible, which is most orders — hence nullable rather than defaulting
+    -- to placed_at, which would destroy the ability to ask whether an order
+    -- was scheduled at all.
+    scheduled_for        timestamptz,
     auto_decline_at      timestamptz,   -- the 60s vendor timeout the worker sweeps
     accepted_at          timestamptz,
     ready_at             timestamptz,
@@ -746,6 +751,10 @@ CREATE INDEX ix_orders_auto_decline ON orders (auto_decline_at)
 -- Vendor analytics date-range scans.
 CREATE INDEX ix_orders_analytics ON orders (restaurant_id, delivered_at)
     WHERE status = 'DELIVERED';
+-- The vendor's scheduled-order queue: what is due soon, oldest first. Partial,
+-- so it stays tiny however many ASAP orders accumulate.
+CREATE INDEX ix_orders_scheduled ON orders (scheduled_for ASC)
+    WHERE scheduled_for IS NOT NULL AND status = 'PENDING';
 CREATE TRIGGER trg_orders_updated_at BEFORE UPDATE ON orders
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
@@ -826,6 +835,31 @@ CREATE TABLE reviews (
 );
 CREATE INDEX ix_reviews_restaurant ON reviews (restaurant_id, created_at DESC);
 CREATE INDEX ix_reviews_rider ON reviews (rider_id) WHERE rider_id IS NOT NULL;
+
+-- [EXTENDED] Order chat — the Message screen. There is deliberately no thread
+-- table: the ORDER is the thread, so who may post is derived from who is party
+-- to the order and the channel closes when the order does. A standing line to
+-- a stranger's device after delivery is a safety problem, not a feature.
+CREATE TABLE order_messages (
+    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id    uuid        NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    sender_id   uuid        NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+    sender_role actor_type  NOT NULL,
+    body        varchar(2000) NOT NULL,
+    -- Per-message rather than a per-thread high-water mark, so the read ticks
+    -- on each bubble are exact rather than inferred.
+    read_at     timestamptz,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT ck_order_messages_body CHECK (length(btrim(body)) > 0),
+    CONSTRAINT ck_order_messages_role CHECK (
+        sender_role IN ('CUSTOMER', 'VENDOR', 'RIDER', 'ADMIN', 'SYSTEM')
+    )
+);
+-- The thread read: this order's messages, oldest first.
+CREATE INDEX ix_order_messages_thread ON order_messages (order_id, created_at);
+-- The unread badge — a count over a tiny partial index, not a thread scan.
+CREATE INDEX ix_order_messages_unread ON order_messages (order_id, sender_role)
+    WHERE read_at IS NULL;
 
 -- [EXTENDED] Rider GPS breadcrumbs. Decision D2: this is the COLD trail, not
 -- the live feed. Redis serves WS /ws/orders/{id}/live-tracking at full ping
