@@ -138,6 +138,7 @@ async def submit(
         # Invisible to customers until approval; CLOSED until the vendor opens it.
         is_verified=False,
         status="CLOSED",
+        commission_rate=storefront.default_commission_rate(),
     )
     db.add(restaurant)
     try:

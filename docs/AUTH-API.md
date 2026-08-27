@@ -624,6 +624,7 @@ key and clears any lockout. That is the recovery path for a device locked after
 | POST | `/vendor/applications/uploads` | — | Upload URL for application documents |
 | GET | `/admin/restaurants/pending` | admin | Approval queue (restaurants) |
 | POST | `/admin/restaurants/{id}/verify` | admin | Approve or suspend |
+| PATCH | `/admin/restaurants/{id}/commission` | admin | Set the commission rate |
 | GET | `/admin/vendor-applications` | admin | Application review queue |
 | GET | `/admin/vendor-applications/{id}` | admin | Application detail |
 | POST | `/admin/vendor-applications/{id}/approve` | admin | Approve an application |
@@ -757,6 +758,49 @@ everything above plus the document URLs, and
 `POST /admin/vendor-applications/{id}/approve` / `…/reject` decide it. Approval
 verifies the restaurant and emails the owner their sign-in steps; rejection
 emails the `note` as the reason, so write it for the applicant.
+
+### 11.1b Pricing a restaurant — commission
+
+```http
+PATCH /api/v1/admin/restaurants/{restaurant_id}/commission
+Authorization: Bearer <ADMIN_ACCESS_TOKEN>
+
+{ "commission_rate": 0.18, "note": "renegotiated for volume" }
+```
+
+`commission_rate` is a **fraction, not a percentage**: `0.18` is 18%, four
+decimal places, `0` to `1`. Sending `18` is a `400` rather than a 1800% cut.
+`note` is optional and goes to the server log.
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Commission set to 18.00%",
+    "restaurant_id": "…",
+    "name": "Karim's Kitchen",
+    "commission_rate": 0.18
+  }
+}
+```
+
+Three things follow from where this number lives:
+
+- **Nothing else writes it.** Approval does not take a rate, and the vendor is
+  refused the field on `PATCH /vendor/profile` — a vendor who could set their
+  own commission could set it to zero.
+- **New restaurants are not created at 0%.** Both signup paths start a
+  restaurant on the platform default (`DEFAULT_COMMISSION_BASIS_POINTS`,
+  1500 == 15%), so a vendor approved before anyone gets to pricing still bills
+  correctly.
+- **It only applies forward.** Each order snapshots the commission it was
+  charged, so repricing changes the next order, never the last one. That also
+  means a restaurant left at the wrong rate cannot be corrected retroactively
+  — the orders it already took keep the old number.
+
+The vendor reads their own rate back on `GET /vendor/profile`
+(`commission_rate`), and what it cost them per order on
+`GET /vendor/orders/{id}` (`commission_amount`, `vendor_payout`).
 
 ### 11.2 The fast path
 

@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
 from app.models.enums import UserRole
@@ -125,6 +126,7 @@ async def register_vendor(
         # until the vendor opens it themselves.
         is_verified=False,
         status="CLOSED",
+        commission_rate=default_commission_rate(),
     )
     db.add(restaurant)
 
@@ -154,6 +156,43 @@ async def list_pending(db: AsyncSession, limit: int, offset: int) -> tuple[list[
         base.order_by(Restaurant.created_at.asc()).limit(limit).offset(offset)
     )
     return list(result.scalars().all()), total or 0
+
+
+def default_commission_rate() -> float:
+    """The commission a restaurant is created on, as a fraction.
+
+    Both creation paths (the registration fast path and application approval)
+    call this rather than letting the column default to 0. A restaurant that
+    exists at 0% is not a pricing decision anyone made, and because each order
+    snapshots `commission_amount`, every order it takes before someone notices
+    is permanently un-billable.
+    """
+    return settings.DEFAULT_COMMISSION_BASIS_POINTS / 10_000
+
+
+async def set_commission_rate(db: AsyncSession, restaurant_id, rate: Decimal) -> Restaurant:
+    """Reprice one restaurant. `rate` is a fraction: 0.15 is 15%.
+
+    Forward-looking only, and that is the point of D6: orders already placed
+    keep the `commission_amount` they were charged, so renegotiating a vendor
+    from 15% to 18% cannot rewrite what they earned last month, in either
+    direction.
+    """
+    restaurant = await db.get(Restaurant, restaurant_id)
+    if restaurant is None:
+        raise NotFoundError("Restaurant not found")
+
+    previous = Decimal(str(restaurant.commission_rate))
+    restaurant.commission_rate = float(rate)
+    await db.flush()
+
+    log.info(
+        "restaurant_commission_changed",
+        restaurant_id=str(restaurant.id),
+        previous_rate=str(previous),
+        new_rate=str(rate),
+    )
+    return restaurant
 
 
 async def set_verified(db: AsyncSession, restaurant_id, verified: bool) -> Restaurant:

@@ -119,6 +119,13 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "waits forever and can never appear in customer discovery.",
     ),
     (
+        "PATCH",
+        "/admin/restaurants/{id}/commission",
+        "The only way to price a restaurant. Approval asks for no rate and the "
+        "vendor is refused the field on their own profile, so renegotiating a "
+        "commission otherwise means hand-written SQL against production.",
+    ),
+    (
         "POST",
         "/users/me/password",
         "The spec only offers password reset via OTP. A signed-in user "

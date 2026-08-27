@@ -226,3 +226,82 @@ async def test_non_admin_cannot_approve(client, cleanup_users, reset_limits, cus
             headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 403, f"{who} approved a restaurant"
+
+
+# ---------------------------------------------------------------------------
+# Commission — the rate a restaurant is priced at
+# ---------------------------------------------------------------------------
+
+
+async def test_a_new_restaurant_starts_on_the_configured_commission(
+    client, cleanup_users, reset_limits
+):
+    """The column defaults to 0. Inheriting that would mean every order a
+    fresh vendor takes is billed at 0% — and orders snapshot the rate, so it
+    cannot be repaired afterwards."""
+    from app.core.config import settings
+
+    _, data = await _register_vendor(client, cleanup_users)
+    expected = settings.DEFAULT_COMMISSION_BASIS_POINTS / 10_000
+
+    r = await client.get(
+        f"{V1}/vendor/profile",
+        headers={"Authorization": f"Bearer {data['tokens']['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    assert float(r.json()["data"]["commission_rate"]) == expected
+    assert expected > 0, "a default of zero is not a pricing decision"
+
+
+async def test_admin_can_reprice_a_restaurant(client, cleanup_users, reset_limits, admin_token):
+    _, data = await _register_vendor(client, cleanup_users)
+    restaurant_id = data["restaurant"]["id"]
+    admin = {"Authorization": f"Bearer {admin_token}"}
+
+    r = await client.patch(
+        f"{V1}/admin/restaurants/{restaurant_id}/commission",
+        json={"commission_rate": 0.18, "note": "renegotiated for volume"},
+        headers=admin,
+    )
+    assert r.status_code == 200, r.text
+    assert float(r.json()["data"]["commission_rate"]) == 0.18
+
+    # The vendor reads their own rate back on the storefront profile.
+    r = await client.get(
+        f"{V1}/vendor/profile",
+        headers={"Authorization": f"Bearer {data['tokens']['access_token']}"},
+    )
+    assert float(r.json()["data"]["commission_rate"]) == 0.18
+
+
+async def test_a_percentage_sent_as_a_percentage_is_refused(
+    client, cleanup_users, reset_limits, admin_token
+):
+    """`18` means 1800%, not 18%. Taking it literally would zero out a
+    vendor's earnings on every subsequent order."""
+    _, data = await _register_vendor(client, cleanup_users)
+    r = await client.patch(
+        f"{V1}/admin/restaurants/{data['restaurant']['id']}/commission",
+        json={"commission_rate": 18},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r.status_code == 400, r.text
+
+
+async def test_only_an_admin_may_set_commission(
+    client, cleanup_users, reset_limits, customer_token
+):
+    """A vendor who can set their own rate can set it to zero."""
+    _, data = await _register_vendor(client, cleanup_users)
+    restaurant_id = data["restaurant"]["id"]
+
+    for token, who in (
+        (data["tokens"]["access_token"], "the vendor themselves"),
+        (customer_token, "a customer"),
+    ):
+        r = await client.patch(
+            f"{V1}/admin/restaurants/{restaurant_id}/commission",
+            json={"commission_rate": 0.0},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403, f"{who} repriced a restaurant"

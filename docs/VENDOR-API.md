@@ -173,7 +173,12 @@ Two rules worth knowing before you build the form:
   occupied — and discovery indexes that point.
 - **Unknown fields are rejected, not ignored.** `slug`, `is_verified`,
   `is_active`, `commission_rate` and `rating_avg` are not yours to set, and
-  sending one returns `400` rather than silently doing nothing. `slug` is frozen
+  sending one returns `400` rather than silently doing nothing.
+  `commission_rate` is read-only here by design — it is the platform's cut of
+  your `item_total`, set by an administrator through
+  `PATCH /admin/restaurants/{id}/commission` (AUTH-API.md §11.1b) and applied
+  to future orders only, since each order records the commission it was
+  actually charged. `slug` is frozen
   on purpose: it is your public URL, and regenerating it on every rename would
   break links and QR codes already in circulation.
 

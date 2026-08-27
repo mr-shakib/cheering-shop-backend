@@ -11,6 +11,7 @@ public "make me an admin" endpoint would be an obvious hole. Use
 """
 
 import uuid
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Query
@@ -20,6 +21,7 @@ from app.core.responses import ok, paginated
 from app.schemas.requests import (
     ApplicationDecisionRequest,
     PayoutFailRequest,
+    SetCommissionRequest,
     VerifyRestaurantRequest,
 )
 from app.services import vendor_application_service, vendor_finance_service, vendor_service
@@ -55,6 +57,36 @@ async def verify_restaurant(
         {
             "message": "Restaurant approved" if body.is_verified else "Restaurant suspended",
             "restaurant": vendor_service.to_summary(restaurant).model_dump(),
+        }
+    )
+
+
+@router.patch("/restaurants/{restaurant_id}/commission", summary="Set commission rate [EXTENDED]")
+async def set_commission(
+    restaurant_id: uuid.UUID, body: SetCommissionRequest, admin: AdminUser, db: DbSession
+):
+    """Price a restaurant: what the platform keeps of each order's `item_total`.
+
+    Nothing else can write this. Approval does not ask for a rate and the
+    vendor is refused it on `PATCH /vendor/profile`, so without this endpoint a
+    renegotiation meant hand-written SQL against production.
+
+    **The change is forward-looking.** Each order stores the commission it was
+    charged (decision D6), so this cannot rewrite—or repair—what a vendor
+    earned on orders already placed. Repricing a restaurant that is mid-service
+    applies from the next order in, not to the one being cooked.
+    """
+    restaurant = await vendor_service.set_commission_rate(
+        db, restaurant_id, body.commission_rate
+    )
+    await db.commit()
+    rate = Decimal(str(restaurant.commission_rate))
+    return ok(
+        {
+            "message": f"Commission set to {rate * 100:.2f}%",
+            "restaurant_id": str(restaurant.id),
+            "name": restaurant.name,
+            "commission_rate": rate,
         }
     )
 

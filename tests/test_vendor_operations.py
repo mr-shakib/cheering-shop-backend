@@ -453,3 +453,34 @@ async def test_report_csv_downloads_delivered_orders(client, vendor, order_custo
     assert lines[0].startswith("order_number,delivered_at_utc")
     assert len(lines) == 2
     assert ",800.00," in lines[1] and ",680.00" in lines[1]
+
+
+async def test_repricing_commission_does_not_rewrite_past_earnings(
+    client, vendor, order_customer, rider, admin_token
+):
+    """Decision D6. The rate is mutable and earnings are not: an order keeps
+    the commission it was charged, so a renegotiation cannot retroactively
+    change what a vendor earned last month — in either direction."""
+    now = datetime.now(UTC)
+    await _seed_order(
+        vendor.restaurant.id,
+        order_customer.id,
+        status="DELIVERED",
+        item_total=100_000,
+        commission=15_000,
+        delivered_at=now,
+        rider_id=rider.id,
+    )
+
+    r = await client.get(f"{V1}/vendor/earnings", headers=vendor.headers)
+    before = r.json()["data"]["available_balance"]
+
+    r = await client.patch(
+        f"{V1}/admin/restaurants/{vendor.restaurant.id}/commission",
+        json={"commission_rate": 0.30},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"{V1}/vendor/earnings", headers=vendor.headers)
+    assert r.json()["data"]["available_balance"] == before == 850.0

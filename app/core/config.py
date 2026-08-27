@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     # commission_rate, which are per-restaurant columns. Basis points keep the
     # whole computation in integers — see core/money.percentage_of — so a 5%
     # VAT on an odd subtotal never produces a fractional paisa.
+    # What a newly created restaurant starts on, in basis points (1500 == 15%).
+    # The column default is 0, which silently means "this vendor pays us
+    # nothing" — a restaurant created before an admin gets round to pricing it
+    # would bank every order at full value, and orders snapshot the rate, so
+    # those are unrecoverable. Set it at creation instead. Per-restaurant
+    # renegotiation is PATCH /admin/restaurants/{id}/commission.
+    DEFAULT_COMMISSION_BASIS_POINTS: int = 1500
     TAX_BASIS_POINTS: int = 500  # 5% VAT on the food, not on delivery or tip
     PLATFORM_FEE_BASIS_POINTS: int = 200  # 2% service fee
     PACKAGING_FEE_PER_ORDER: int = 10  # whole taka, flat

@@ -1,5 +1,6 @@
 """Vendor storefront, registration fast path, order actions, business hours."""
 
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -86,6 +87,28 @@ class VerifyRestaurantRequest(BaseModel):
 
     is_verified: bool = Field(description="True to approve, false to suspend")
     note: str | None = Field(default=None, max_length=500)
+
+
+class SetCommissionRequest(BaseModel):
+    """PATCH /admin/restaurants/{id}/commission — [EXTENDED].
+
+    A **fraction**, the same unit `GET /vendor/profile` reads back, not a
+    percentage: 0.15 is 15%. Sending 15 is rejected rather than quietly
+    charging a vendor 1500% — the ceiling is 1.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    commission_rate: Decimal = Field(
+        ge=0,
+        le=1,
+        decimal_places=4,
+        description="Platform cut as a fraction of item_total: 0.15 == 15%. "
+        "Four decimal places, matching the column.",
+    )
+    note: str | None = Field(
+        default=None, max_length=500, description="Why the rate changed; recorded in the log"
+    )
 
 
 class DayHours(BaseModel):
