@@ -508,6 +508,234 @@ async def test_reorder_applies_or_changes_nothing(client, vendor):
 
 
 # ---------------------------------------------------------------------------
+# Menu — single variants and add-ons
+# ---------------------------------------------------------------------------
+
+
+async def test_a_variant_can_be_added_without_resending_the_others(client, vendor):
+    """The point of the endpoint: adding one size must not require echoing the
+    others back, because a client that gets that list wrong deletes them."""
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/variants",
+        json={"name": "Family", "price": 620},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 201, r.text
+    names = [v["name"] for v in r.json()["data"]["variants"]]
+    assert names == ["Half", "Full", "Family"], "existing variants were disturbed"
+    # Appended, not tied at 0 — which would sort it alphabetically into the middle.
+    assert [v["sort_order"] for v in r.json()["data"]["variants"]] == [0, 1, 2]
+
+
+async def test_an_add_on_can_be_added_on_its_own(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/add-ons",
+        json={"name": "Extra cheese", "price": 40},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 201, r.text
+    assert [a["name"] for a in r.json()["data"]["add_ons"]] == ["Extra raita", "Extra cheese"]
+
+
+async def test_the_first_variant_is_the_default_and_a_new_one_takes_over(client, vendor):
+    """An item with variants and no default has nothing to preselect, and a
+    variant's price is the price — so the client would show no price at all."""
+    category = await _make_category(client, vendor)
+    item = await _make_item(client, vendor, category, variants=[], add_ons=[])
+    assert item["variants"] == []
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/variants",
+        json={"name": "Regular", "price": 200},
+        headers=vendor.headers,
+    )
+    assert r.json()["data"]["variants"][0]["is_default"] is True, "first variant not promoted"
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/variants",
+        json={"name": "Large", "price": 300, "is_default": True},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 201, r.text
+    defaults = {v["name"]: v["is_default"] for v in r.json()["data"]["variants"]}
+    assert defaults == {"Regular": False, "Large": True}, "two defaults, or the wrong one"
+
+
+async def test_a_variant_is_edited_without_touching_its_siblings(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    full = next(v for v in item["variants"] if v["name"] == "Full")
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{full['id']}",
+        json={"price": 340, "is_available": False},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 200, r.text
+    variants = {v["name"]: v for v in r.json()["data"]["variants"]}
+    assert variants["Full"]["price"] == 340
+    assert variants["Full"]["is_available"] is False
+    # The sibling survived, with its id — this is the whole point of the route.
+    assert variants["Half"]["price"] == 180
+    assert variants["Half"]["id"] == item["variants"][0]["id"]
+    assert variants["Half"]["is_default"] is True
+
+
+async def test_an_add_on_is_edited_in_place(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    add_on = item["add_ons"][0]
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{item['id']}/add-ons/{add_on['id']}",
+        json={"name": "Extra raita (large)", "price": 45},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 200, r.text
+    updated = r.json()["data"]["add_ons"][0]
+    assert (updated["name"], updated["price"]) == ("Extra raita (large)", 45)
+    assert updated["id"] == add_on["id"], "recreated instead of edited; carts would have emptied"
+
+
+async def test_promoting_a_variant_demotes_the_previous_default(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    full = next(v for v in item["variants"] if v["name"] == "Full")
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{full['id']}",
+        json={"is_default": True},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 200, r.text
+    assert {v["name"]: v["is_default"] for v in r.json()["data"]["variants"]} == {
+        "Half": False,
+        "Full": True,
+    }
+
+
+async def test_a_variant_cannot_un_default_itself(client, vendor):
+    """An item with variants and no default gives the client nothing to
+    preselect, and D4 makes the variant price the price the customer pays."""
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    half = next(v for v in item["variants"] if v["name"] == "Half")
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{half['id']}",
+        json={"is_default": False},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 400, r.text
+
+    # Still exactly one default, unchanged.
+    r = await client.get(f"{V1}/vendor/menu/items/{item['id']}", headers=vendor.headers)
+    assert [v["is_default"] for v in r.json()["data"]["variants"]] == [True, False]
+
+
+async def test_renaming_onto_a_siblings_name_is_refused(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    full = next(v for v in item["variants"] if v["name"] == "Full")
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{full['id']}",
+        json={"name": "Half"},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_deleting_a_variant_promotes_a_new_default(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    half = next(v for v in item["variants"] if v["name"] == "Half")
+    assert half["is_default"] is True
+
+    r = await client.delete(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{half['id']}", headers=vendor.headers
+    )
+    assert r.status_code == 200, r.text
+    remaining = r.json()["data"]["variants"]
+    assert [v["name"] for v in remaining] == ["Full"]
+    assert remaining[0]["is_default"] is True, "item left with variants and no default"
+
+
+async def test_an_add_on_can_be_deleted_on_its_own(client, vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+    add_on = item["add_ons"][0]
+
+    r = await client.delete(
+        f"{V1}/vendor/menu/items/{item['id']}/add-ons/{add_on['id']}", headers=vendor.headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["add_ons"] == []
+    # The item and its variants are untouched.
+    assert len(r.json()["data"]["variants"]) == 2
+
+
+async def test_duplicate_option_names_are_refused(client, vendor):
+    """uq_item_variants_name / uq_item_add_ons_name, as a 409 rather than a 500."""
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/variants",
+        json={"name": "Half", "price": 200},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 409, r.text
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/add-ons",
+        json={"name": "Extra raita", "price": 50},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_options_are_scoped_to_their_own_item(client, vendor):
+    """The item in the path owns the row: another item's variant is a 404, so
+    a mistyped id cannot delete an option off a different dish."""
+    category = await _make_category(client, vendor)
+    first = await _make_item(client, vendor, category)
+    second = await _make_item(client, vendor, category, name="Mutton Biryani")
+
+    r = await client.patch(
+        f"{V1}/vendor/menu/items/{second['id']}/variants/{first['variants'][0]['id']}",
+        json={"price": 1},
+        headers=vendor.headers,
+    )
+    assert r.status_code == 404, r.text
+
+    r = await client.delete(
+        f"{V1}/vendor/menu/items/{second['id']}/variants/{first['variants'][0]['id']}",
+        headers=vendor.headers,
+    )
+    assert r.status_code == 404, r.text
+
+    r = await client.delete(
+        f"{V1}/vendor/menu/items/{second['id']}/add-ons/{first['add_ons'][0]['id']}",
+        headers=vendor.headers,
+    )
+    assert r.status_code == 404, r.text
+
+
+async def test_another_vendor_cannot_touch_these_options(client, vendor, other_vendor):
+    item = await _make_item(client, vendor, await _make_category(client, vendor))
+
+    r = await client.post(
+        f"{V1}/vendor/menu/items/{item['id']}/variants",
+        json={"name": "Family", "price": 620},
+        headers=other_vendor.headers,
+    )
+    assert r.status_code == 404, r.text
+
+    r = await client.delete(
+        f"{V1}/vendor/menu/items/{item['id']}/variants/{item['variants'][0]['id']}",
+        headers=other_vendor.headers,
+    )
+    assert r.status_code == 404, r.text
+
+
+# ---------------------------------------------------------------------------
 # Order queue
 # ---------------------------------------------------------------------------
 

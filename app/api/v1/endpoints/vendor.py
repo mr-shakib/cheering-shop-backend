@@ -31,6 +31,8 @@ from fastapi import APIRouter, Query, Response, status
 from app.api.deps import DbSession, Paginated, VendorRestaurant, VendorUser
 from app.core.responses import ok, paginated
 from app.schemas.requests import (
+    AddOnCreateRequest,
+    AddOnUpdateRequest,
     BusinessHoursRequest,
     HandoffRequest,
     MenuCategoryCreateRequest,
@@ -45,6 +47,8 @@ from app.schemas.requests import (
     PromotionUpdateRequest,
     RestaurantProfileUpdateRequest,
     StoreStatusRequest,
+    VariantCreateRequest,
+    VariantUpdateRequest,
 )
 from app.services import (
     menu_service,
@@ -289,6 +293,128 @@ async def set_menu_item_status(
     connection and one that does not.
     """
     item = await menu_service.set_item_status(db, restaurant, item_id, body.is_available)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.post(
+    "/menu/items/{item_id}/variants",
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a variant [EXTENDED]",
+)
+async def add_menu_item_variant(
+    item_id: uuid.UUID,
+    body: VariantCreateRequest,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — add one size/option to an item that already exists.
+
+    `PATCH /menu/items/{id}` can do this, but only as a replace-set: to add one
+    size a client must echo every other size back with its id, and any it
+    forgets is deleted. That is the right shape for the edit screen's Save and
+    the wrong shape for an "add variant" button.
+
+    Returns the whole item, because adding a variant can change rows the caller
+    did not send — the first variant becomes the default, and a new default
+    demotes the previous one.
+    """
+    item = await menu_service.add_variant(db, restaurant, item_id, body)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.patch("/menu/items/{item_id}/variants/{variant_id}", summary="Edit a variant [EXTENDED]")
+async def update_menu_item_variant(
+    item_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    body: VariantUpdateRequest,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — edit one variant without resending its siblings.
+
+    The item's replace-set can do this, but a client that sends only the
+    variant it is editing deletes the others — and their cart lines with them.
+    This route makes "change the price of Large" a request that cannot mean
+    anything else.
+
+    `is_default: true` promotes this variant and demotes the previous default.
+    `is_default: false` on the current default is a `400`: promote the
+    replacement instead, so the item is never left with variants and nothing
+    preselected.
+    """
+    item = await menu_service.update_variant(db, restaurant, item_id, variant_id, body)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.delete("/menu/items/{item_id}/variants/{variant_id}", summary="Delete a variant [EXTENDED]")
+async def delete_menu_item_variant(
+    item_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — remove one variant.
+
+    Unlike deleting an item, this is a hard delete: `cart_items.variant_id`
+    cascades, so every cart line holding this size goes with it. Set
+    `is_available: false` through the item PATCH to retire a size without
+    touching live carts.
+
+    Deleting the default promotes the next variant in display order, so the
+    item is never left with variants and nothing preselected.
+    """
+    item = await menu_service.delete_variant(db, restaurant, item_id, variant_id)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.post(
+    "/menu/items/{item_id}/add-ons",
+    status_code=status.HTTP_201_CREATED,
+    summary="Add an add-on [EXTENDED]",
+)
+async def add_menu_item_add_on(
+    item_id: uuid.UUID,
+    body: AddOnCreateRequest,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — add one extra to an existing item. Same reason as
+    variants: the replace-set is a Save, not an Add."""
+    item = await menu_service.add_add_on(db, restaurant, item_id, body)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.patch("/menu/items/{item_id}/add-ons/{add_on_id}", summary="Edit an add-on [EXTENDED]")
+async def update_menu_item_add_on(
+    item_id: uuid.UUID,
+    add_on_id: uuid.UUID,
+    body: AddOnUpdateRequest,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — edit one add-on. Same reason as variants: repricing an
+    extra should not require rewriting the set it belongs to."""
+    item = await menu_service.update_add_on(db, restaurant, item_id, add_on_id, body)
+    await db.commit()
+    return ok(item.model_dump())
+
+
+@router.delete("/menu/items/{item_id}/add-ons/{add_on_id}", summary="Delete an add-on [EXTENDED]")
+async def delete_menu_item_add_on(
+    item_id: uuid.UUID,
+    add_on_id: uuid.UUID,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+):
+    """**[EXTENDED]** — remove one add-on. Hard, and it cascades into the
+    add-ons already chosen in live carts; `is_available: false` is the
+    reversible alternative."""
+    item = await menu_service.delete_add_on(db, restaurant, item_id, add_on_id)
     await db.commit()
     return ok(item.model_dump())
 

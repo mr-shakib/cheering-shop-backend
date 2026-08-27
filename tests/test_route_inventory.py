@@ -287,6 +287,45 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "stayed on the menu permanently.",
     ),
     (
+        "POST",
+        "/vendor/menu/items/{id}/variants",
+        "Adding one size meant PATCHing the item with every other size echoed "
+        "back by id, because the collection is a replace-set — and a client "
+        "that got that list wrong deleted the options it forgot.",
+    ),
+    (
+        "PATCH",
+        "/vendor/menu/items/{id}/variants/{variant_id}",
+        "Editing one variant meant resending the whole set, so 'change the "
+        "price of Large' and 'delete every other size' were the same request "
+        "with one field forgotten.",
+    ),
+    (
+        "DELETE",
+        "/vendor/menu/items/{id}/variants/{variant_id}",
+        "The only way to remove a variant was to omit it from a replace-set, "
+        "which made deletion a side effect of a save rather than a thing a "
+        "vendor could ask for.",
+    ),
+    (
+        "POST",
+        "/vendor/menu/items/{id}/add-ons",
+        "Same replace-set problem as variants: an 'add extra' button had to "
+        "resend the whole add-on list to add one row.",
+    ),
+    (
+        "PATCH",
+        "/vendor/menu/items/{id}/add-ons/{add_on_id}",
+        "Same as variants: repricing one extra required rewriting the set it "
+        "belonged to.",
+    ),
+    (
+        "DELETE",
+        "/vendor/menu/items/{id}/add-ons/{add_on_id}",
+        "Same as variants — removing one extra required rewriting the set it "
+        "belonged to.",
+    ),
+    (
         "GET",
         "/vendor/orders/{id}",
         "The spec defines a queue and no way to read a row of it: a vendor "

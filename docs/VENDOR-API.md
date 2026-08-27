@@ -286,6 +286,72 @@ Send the id for anything you are keeping. Deleting a variant cascades into every
 cart holding it, so a price edit that recreates its variants empties baskets;
 one that reuses their ids does not.
 
+### One variant or add-on at a time
+
+The rule is short: **whole list → the item `PATCH` above; one row → these.**
+
+The replace-set is a Save. For an "add size", "reprice this extra" or "remove
+option" button, touch one row instead — and never send a partial list to the
+item `PATCH` to do it, because everything you leave out is deleted.
+
+```http
+POST /vendor/menu/items/{id}/variants
+{ "name": "Family", "price": 620 }
+```
+
+```http
+POST /vendor/menu/items/{id}/add-ons
+{ "name": "Extra cheese", "price": 40 }
+```
+
+`201` in both cases, and the body is the **whole item** — adding a variant can
+change rows you did not send, so re-render from the response rather than
+appending locally.
+
+Optional fields: `is_available` (default `true`), `sort_order` (omit and it
+appends after the current last one), and on a variant `is_default`.
+
+```http
+PATCH /vendor/menu/items/{id}/variants/{variant_id}
+{ "price": 340 }
+```
+
+```http
+PATCH /vendor/menu/items/{id}/add-ons/{add_on_id}
+{ "name": "Extra raita (large)", "is_available": false }
+```
+
+PATCH semantics: an omitted field is left alone. Every field backs a NOT NULL
+column, so there is nothing to clear — sending `null` leaves the value as it
+was. Editing in place keeps the id, which is what stops a price change from
+emptying the carts holding that option.
+
+```http
+DELETE /vendor/menu/items/{id}/variants/{variant_id}
+DELETE /vendor/menu/items/{id}/add-ons/{add_on_id}
+```
+
+`200` with the updated item, for both PATCH and DELETE.
+
+Four things worth knowing before you wire the buttons up:
+
+- **These deletes are hard, unlike an item's.** `cart_items` cascades, so every
+  cart line holding that variant — or that add-on — goes with it. To retire an
+  option without emptying live baskets, `PATCH` that option to
+  `is_available: false` instead: it stops being orderable and the lines survive.
+- **The first variant on an item is always the default**, whatever you send,
+  and a new `is_default: true` demotes the previous one. An item with variants
+  and no default leaves the customer nothing preselected, and a variant's price
+  is the real price. For the same reason `is_default: false` on the *current*
+  default is a `400` — promote the replacement, which demotes this one for you.
+- **Deleting the default promotes the next variant** in display order, for the
+  same reason.
+- **A duplicate name is a `409`**, not a silent second row: names are unique per
+  item. So is exceeding 50 variants or 50 add-ons on one item.
+
+A variant id that belongs to another item is a `404` — the item in the path
+owns the row you are editing or deleting.
+
 ### The sold-out toggle
 
 ```http
@@ -546,6 +612,12 @@ All require a `VENDOR` bearer token unless noted.
 | PATCH | `/vendor/menu/items/{id}` | vendor | Edit an item |
 | DELETE | `/vendor/menu/items/{id}` | vendor | Remove an item (soft) |
 | PATCH | `/vendor/menu/items/{id}/status` | vendor | Sold-out toggle |
+| POST | `/vendor/menu/items/{id}/variants` | vendor | Add one variant |
+| PATCH | `/vendor/menu/items/{id}/variants/{variant_id}` | vendor | Edit one variant |
+| DELETE | `/vendor/menu/items/{id}/variants/{variant_id}` | vendor | Delete one variant |
+| POST | `/vendor/menu/items/{id}/add-ons` | vendor | Add one add-on |
+| PATCH | `/vendor/menu/items/{id}/add-ons/{add_on_id}` | vendor | Edit one add-on |
+| DELETE | `/vendor/menu/items/{id}/add-ons/{add_on_id}` | vendor | Delete one add-on |
 | GET | `/vendor/orders` | vendor | Order queue |
 | GET | `/vendor/orders/{id}` | vendor | Order detail |
 | POST | `/vendor/orders/{id}/accept` | vendor | Accept |

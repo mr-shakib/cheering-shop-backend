@@ -44,6 +44,80 @@ class AddOnRequest(BaseModel):
     sort_order: int = Field(default=0, ge=0, le=9999)
 
 
+class VariantCreateRequest(BaseModel):
+    """POST /vendor/menu/items/{id}/variants — [EXTENDED].
+
+    One variant, added to an item that already exists. The replace-set on
+    `PATCH /menu/items/{id}` can do this too, but only by resending every
+    other variant with its id — and a client that gets that list wrong
+    deletes the options it forgot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    price: Money
+    is_default: bool = Field(
+        default=False,
+        description="Preselect this one. The previous default is demoted; the "
+        "first variant on an item becomes the default whatever this says, "
+        "since an item with variants and no default has nothing to preselect.",
+    )
+    is_available: bool = True
+    sort_order: int | None = Field(
+        default=None,
+        ge=0,
+        le=9999,
+        description="Omit to append after the current last variant",
+    )
+
+
+class AddOnCreateRequest(BaseModel):
+    """POST /vendor/menu/items/{id}/add-ons — [EXTENDED]."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    price: Money
+    is_available: bool = True
+    sort_order: int | None = Field(
+        default=None, ge=0, le=9999, description="Omit to append after the current last add-on"
+    )
+
+
+class VariantUpdateRequest(BaseModel):
+    """PATCH /vendor/menu/items/{id}/variants/{variant_id} — [EXTENDED].
+
+    PATCH semantics: an omitted field is left alone. Every field here backs a
+    NOT NULL column, so an explicit `null` means "leave it" rather than
+    "clear it" — there is nothing to clear it to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    price: Money | None = None
+    is_default: bool | None = Field(
+        default=None,
+        description="`true` promotes this variant and demotes the current "
+        "default. `false` on the current default is refused — promote the "
+        "replacement instead, so the item is never left with no default.",
+    )
+    is_available: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=9999)
+
+
+class AddOnUpdateRequest(BaseModel):
+    """PATCH /vendor/menu/items/{id}/add-ons/{add_on_id} — [EXTENDED]."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    price: Money | None = None
+    is_available: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=9999)
+
+
 class MenuItemCreateRequest(BaseModel):
     """POST /vendor/menu/items"""
 

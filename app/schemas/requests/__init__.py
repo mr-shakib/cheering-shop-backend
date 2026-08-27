@@ -64,7 +64,9 @@ from app.schemas.requests.vendor import (
     VerifyRestaurantRequest,
 )
 from app.schemas.requests.vendor_menu import (
+    AddOnCreateRequest,
     AddOnRequest,
+    AddOnUpdateRequest,
     MenuCategoryCreateRequest,
     MenuCategoryUpdateRequest,
     MenuItemCreateRequest,
@@ -72,7 +74,9 @@ from app.schemas.requests.vendor_menu import (
     MenuItemUpdateRequest,
     MenuReorderRequest,
     ReorderEntry,
+    VariantCreateRequest,
     VariantRequest,
+    VariantUpdateRequest,
 )
 
 __all__ = [
@@ -114,7 +118,11 @@ __all__ = [
     "BusinessHoursRequest",
     # vendor menu
     "VariantRequest",
+    "VariantCreateRequest",
+    "VariantUpdateRequest",
     "AddOnRequest",
+    "AddOnCreateRequest",
+    "AddOnUpdateRequest",
     "MenuItemCreateRequest",
     "MenuItemUpdateRequest",
     "MenuItemStatusRequest",

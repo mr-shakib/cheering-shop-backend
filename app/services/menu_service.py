@@ -29,13 +29,17 @@ from app.core.money import to_major, to_minor
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
 from app.models.restaurant import Restaurant
 from app.schemas.requests import (
+    AddOnCreateRequest,
     AddOnRequest,
+    AddOnUpdateRequest,
     MenuCategoryCreateRequest,
     MenuCategoryUpdateRequest,
     MenuItemCreateRequest,
     MenuItemUpdateRequest,
     MenuReorderRequest,
+    VariantCreateRequest,
     VariantRequest,
+    VariantUpdateRequest,
 )
 from app.schemas.vendor import (
     AddOnOut,
@@ -410,6 +414,254 @@ async def _sync_add_ons(db: AsyncSession, item: MenuItem, payload: list[AddOnReq
             await db.delete(add_on)
 
     await db.flush()
+
+
+# ---------------------------------------------------------------------------
+# Single variants and add-ons
+#
+# The replace-set on PATCH /menu/items/{id} can add and remove these, but only
+# by resending the whole list: a client that means "add one size" has to echo
+# every other size back with its id, and the cost of getting that wrong is
+# silent deletion. These four endpoints let a screen touch exactly one row.
+# ---------------------------------------------------------------------------
+
+# Mirrors the `max_length=50` the replace-set enforces on the same collections.
+MAX_OPTIONS_PER_ITEM = 50
+
+
+def _next_sort_order(rows: list) -> int:
+    """Append position: one past the current last."""
+    return max((r.sort_order for r in rows), default=-1) + 1
+
+
+async def add_variant(
+    db: AsyncSession, restaurant: Restaurant, item_id, body: VariantCreateRequest
+) -> MenuItemOut:
+    """[EXTENDED] Add one variant to an existing item.
+
+    Two rules the caller does not have to know about:
+
+    * **The first variant is always the default**, whatever the body says. An
+      item with variants and no default gives the client nothing to preselect,
+      and D4 makes the variant price the real price — so a customer would face
+      a dish with no price chosen.
+    * **A new default demotes the old one**, in two passes with a flush
+      between. `uq_item_variants_one_default` is a partial unique index, and it
+      objects to two defaults existing at any point in the transaction, not
+      just at the end of it.
+    """
+    item = await _get_item(db, restaurant, item_id)
+    if len(item.variants) >= MAX_OPTIONS_PER_ITEM:
+        raise ConflictError(f"An item can hold at most {MAX_OPTIONS_PER_ITEM} variants")
+
+    make_default = body.is_default or not item.variants
+    if make_default:
+        for existing in item.variants:
+            existing.is_default = False
+        await db.flush()
+
+    variant = ItemVariant(
+        menu_item_id=item.id,
+        name=body.name.strip(),
+        price=to_minor(body.price),
+        is_available=body.is_available,
+        sort_order=(
+            body.sort_order if body.sort_order is not None else _next_sort_order(item.variants)
+        ),
+        is_default=make_default,
+    )
+    # Appended to the loaded collection rather than only db.add()ed: `item` is
+    # already in the identity map with its variants loaded, so re-reading it
+    # would hand back the same object and the same stale collection.
+    item.variants.append(variant)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # uq_item_variants_name — this item already has a size by that name.
+        await db.rollback()
+        raise ConflictError(f"This item already has a variant named '{body.name.strip()}'") from exc
+
+    log.info("variant_added", item_id=str(item.id), variant_id=str(variant.id))
+    return item_to_out(item)
+
+
+async def update_variant(
+    db: AsyncSession,
+    restaurant: Restaurant,
+    item_id,
+    variant_id,
+    body: VariantUpdateRequest,
+) -> MenuItemOut:
+    """[EXTENDED] Edit one variant in place.
+
+    The row-level counterpart to the item's replace-set. Without it a client
+    editing one price has to resend every sibling with its id, and the failure
+    mode of getting that list wrong is silent deletion — of the variant *and*
+    of every cart line holding it.
+
+    Demotion is refused rather than obeyed: `is_default: false` on the current
+    default would leave an item with variants and nothing preselected, and D4
+    makes the variant price the real price. Promote the replacement instead —
+    that demotes this one as a side effect, which is what the caller meant.
+    """
+    item = await _get_item(db, restaurant, item_id)
+    variant = next((v for v in item.variants if v.id == variant_id), None)
+    if variant is None:
+        raise NotFoundError("Variant not found on this item")
+
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get("name") is not None:
+        variant.name = fields["name"].strip()
+    if fields.get("price") is not None:
+        variant.price = to_minor(fields["price"])
+    if fields.get("is_available") is not None:
+        variant.is_available = fields["is_available"]
+    if fields.get("sort_order") is not None:
+        variant.sort_order = fields["sort_order"]
+
+    if fields.get("is_default") is False and variant.is_default:
+        raise ValidationError(
+            "A variant cannot un-default itself",
+            details=[
+                "Promote another variant with is_default: true — that demotes "
+                "this one, and the item is never left without a default"
+            ],
+        )
+    if fields.get("is_default") is True and not variant.is_default:
+        # Clear, flush, then set: uq_item_variants_one_default is a partial
+        # unique index and objects to two defaults at any point, not just at
+        # the end of the transaction.
+        for other in item.variants:
+            other.is_default = False
+        await db.flush()
+        variant.is_default = True
+
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("This item already has a variant with that name") from exc
+
+    log.info("variant_updated", item_id=str(item.id), variant_id=str(variant_id))
+    return item_to_out(item)
+
+
+async def update_add_on(
+    db: AsyncSession,
+    restaurant: Restaurant,
+    item_id,
+    add_on_id,
+    body: AddOnUpdateRequest,
+) -> MenuItemOut:
+    """[EXTENDED] Edit one add-on in place. Same reasoning as `update_variant`,
+    without the default to defend."""
+    item = await _get_item(db, restaurant, item_id)
+    add_on = next((a for a in item.add_ons if a.id == add_on_id), None)
+    if add_on is None:
+        raise NotFoundError("Add-on not found on this item")
+
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get("name") is not None:
+        add_on.name = fields["name"].strip()
+    if fields.get("price") is not None:
+        add_on.price = to_minor(fields["price"])
+    if fields.get("is_available") is not None:
+        add_on.is_available = fields["is_available"]
+    if fields.get("sort_order") is not None:
+        add_on.sort_order = fields["sort_order"]
+
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("This item already has an add-on with that name") from exc
+
+    log.info("add_on_updated", item_id=str(item.id), add_on_id=str(add_on_id))
+    return item_to_out(item)
+
+
+async def delete_variant(
+    db: AsyncSession, restaurant: Restaurant, item_id, variant_id
+) -> MenuItemOut:
+    """[EXTENDED] Remove one variant.
+
+    A hard delete, and it reaches further than this table: `cart_items.variant_id`
+    carries ON DELETE CASCADE, so every cart line holding this size disappears
+    with it. To retire a size without emptying anyone's basket, set
+    `is_available: false` on it instead — it stops being orderable and the
+    lines survive.
+
+    Deleting the default promotes the next variant in display order, for the
+    same reason the first one is default on the way in.
+    """
+    item = await _get_item(db, restaurant, item_id)
+    variant = next((v for v in item.variants if v.id == variant_id), None)
+    if variant is None:
+        # Scoped to this item: another item's variant id is a 404, not a 403.
+        raise NotFoundError("Variant not found on this item")
+
+    was_default = variant.is_default
+    item.variants.remove(variant)
+    await db.delete(variant)
+    await db.flush()
+
+    if was_default and item.variants:
+        promoted = sorted(item.variants, key=lambda v: (v.sort_order, v.name))[0]
+        promoted.is_default = True
+        await db.flush()
+
+    log.info("variant_deleted", item_id=str(item.id), variant_id=str(variant_id))
+    return item_to_out(item)
+
+
+async def add_add_on(
+    db: AsyncSession, restaurant: Restaurant, item_id, body: AddOnCreateRequest
+) -> MenuItemOut:
+    """[EXTENDED] Add one add-on to an existing item."""
+    item = await _get_item(db, restaurant, item_id)
+    if len(item.add_ons) >= MAX_OPTIONS_PER_ITEM:
+        raise ConflictError(f"An item can hold at most {MAX_OPTIONS_PER_ITEM} add-ons")
+
+    add_on = ItemAddOn(
+        menu_item_id=item.id,
+        name=body.name.strip(),
+        price=to_minor(body.price),
+        is_available=body.is_available,
+        sort_order=(
+            body.sort_order if body.sort_order is not None else _next_sort_order(item.add_ons)
+        ),
+    )
+    item.add_ons.append(add_on)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError(f"This item already has an add-on named '{body.name.strip()}'") from exc
+
+    log.info("add_on_added", item_id=str(item.id), add_on_id=str(add_on.id))
+    return item_to_out(item)
+
+
+async def delete_add_on(
+    db: AsyncSession, restaurant: Restaurant, item_id, add_on_id
+) -> MenuItemOut:
+    """[EXTENDED] Remove one add-on.
+
+    Hard, and it cascades into `cart_item_add_ons` the same way variants do:
+    a basket holding "extra cheese" loses that extra, and its line is repriced
+    on the next read. `is_available: false` is the reversible alternative.
+    """
+    item = await _get_item(db, restaurant, item_id)
+    add_on = next((a for a in item.add_ons if a.id == add_on_id), None)
+    if add_on is None:
+        raise NotFoundError("Add-on not found on this item")
+
+    item.add_ons.remove(add_on)
+    await db.delete(add_on)
+    await db.flush()
+
+    log.info("add_on_deleted", item_id=str(item.id), add_on_id=str(add_on_id))
+    return item_to_out(item)
 
 
 async def create_item(
