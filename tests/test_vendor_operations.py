@@ -44,7 +44,13 @@ async def test_dashboard_counts_queue_and_today(client, vendor, order_customer, 
     assert r.status_code == 200, r.text
     data = r.json()["data"]
 
-    assert data["queue"] == {"new": 1, "preparing": 1, "ready": 0, "completed_today": 1}
+    assert data["queue"] == {
+        "new": 1,
+        "preparing": 1,
+        "complete": 1,
+        "ready": 0,
+        "completed_today": 1,
+    }
     assert data["today_orders"] == 1
     assert data["today_earnings"] == 680.0  # 800 - 120 commission
     assert len(data["last_7_days"]) == 7

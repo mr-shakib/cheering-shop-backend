@@ -49,6 +49,24 @@ log = structlog.get_logger()
 # The working set a kitchen screen actually wants: everything still in play.
 ACTIVE_STATUSES = (OrderStatus.PENDING, OrderStatus.PREPARING, OrderStatus.READY)
 
+# The three tabs of the vendor Order screen — New · Preparing · Complete — as
+# the status sets behind them. The tab name is what a client sends to
+# `?status=`, so no client has to hard-code a status list, and the dashboard
+# chips count exactly these groups.
+#
+# READY belongs under Preparing deliberately: the food is cooked but still in
+# the kitchen, and the handoff code lives on that card. An order leaves the tab
+# when a rider takes it, not when the timer stops.
+QUEUE_TABS: dict[str, tuple[OrderStatus, ...]] = {
+    "NEW": (OrderStatus.PENDING,),
+    "PREPARING": (OrderStatus.PREPARING, OrderStatus.READY),
+    "COMPLETE": (OrderStatus.PICKED_UP, OrderStatus.DELIVERED),
+    "ACTIVE": ACTIVE_STATUSES,
+}
+
+# The chips above the queue, in the order the screen draws them.
+CHIP_TABS = ("NEW", "PREPARING", "COMPLETE")
+
 # What a vendor may still cancel. Once a rider has the food it is out of the
 # kitchen's hands and cancellation becomes a support problem, not an API call.
 VENDOR_CANCELLABLE = (OrderStatus.PENDING, OrderStatus.PREPARING)
@@ -377,9 +395,12 @@ async def handoff_order(
 def parse_status_filter(raw: str | None) -> list[str] | None:
     """Translate `?status=` into a list of order statuses.
 
-    Accepts a single value, a comma-separated list, or the alias `ACTIVE` for
-    "everything still in play" — which is what a kitchen screen actually wants
-    and would otherwise be three round trips or a hard-coded client-side list.
+    Accepts a single value, a comma-separated list, or one of the Order
+    screen's tabs — `NEW`, `PREPARING`, `COMPLETE` — plus `ACTIVE` for
+    "everything still in play". Tabs resolve before raw statuses, so
+    `?status=PREPARING` is the whole tab (PREPARING **and** READY) rather than
+    a list that drops an order the moment the kitchen marks it ready. A client
+    that wants one exact state can still name it, e.g. `?status=PICKED_UP`.
     """
     if not raw:
         return None
@@ -388,13 +409,16 @@ def parse_status_filter(raw: str | None) -> list[str] | None:
         token = part.strip().upper()
         if not token:
             continue
-        if token == "ACTIVE":
-            wanted.extend(s.value for s in ACTIVE_STATUSES)
+        if token in QUEUE_TABS:
+            wanted.extend(s.value for s in QUEUE_TABS[token])
             continue
         if token not in OrderStatus.__members__:
             raise ValidationError(
                 f"Unknown order status '{token}'",
-                details=[f"Expected one of: {', '.join(OrderStatus.__members__)}, or ACTIVE"],
+                details=[
+                    f"Expected one of: {', '.join(OrderStatus.__members__)}, "
+                    f"or a tab: {', '.join(QUEUE_TABS)}"
+                ],
             )
         wanted.append(token)
     return list(dict.fromkeys(wanted)) or None

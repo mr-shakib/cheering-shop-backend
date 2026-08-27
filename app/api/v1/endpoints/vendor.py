@@ -307,8 +307,9 @@ async def list_vendor_orders(
         str | None,
         Query(
             alias="status",
-            description="One status, a comma-separated list, or ACTIVE for "
-            "PENDING+PREPARING+READY",
+            description="One status, a comma-separated list, or an Order-tab "
+            "name: NEW (PENDING), PREPARING (PREPARING+READY), COMPLETE "
+            "(PICKED_UP+DELIVERED), ACTIVE (everything still in play)",
         ),
     ] = None,
 ):

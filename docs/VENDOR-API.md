@@ -320,15 +320,34 @@ than applying half of itself.
 ## 5. Order queue
 
 ```http
-GET /vendor/orders?status=ACTIVE&limit=20
+GET /vendor/orders?status=NEW&limit=20
 ```
 
 Newest first. `status` accepts:
 
-- one status — `?status=PENDING`
-- a list — `?status=PENDING,PREPARING`
-- **`ACTIVE`** — shorthand for `PENDING`, `PREPARING` and `READY`, which is what
-  a kitchen screen wants and saves you hard-coding the set
+- **a tab name** — the three tabs of the Order screen, which is what you want
+  99% of the time:
+
+  | Tab | Send | Statuses behind it |
+  | --- | --- | --- |
+  | New(5) | `?status=NEW` | `PENDING` |
+  | Preparing(2) | `?status=PREPARING` | `PREPARING` + `READY` |
+  | Complete(21) | `?status=COMPLETE` | `PICKED_UP` + `DELIVERED` |
+
+- **`ACTIVE`** — `PENDING`, `PREPARING` and `READY` in one filter: the whole
+  kitchen screen, for the poll that drives the new-order alert
+- one status — `?status=PICKED_UP`
+- a list — `?status=PENDING,PREPARING` (tabs and statuses mix freely)
+
+Two things worth knowing about the tabs:
+
+- **`PREPARING` is the tab, not just the status.** A cooked order is still in
+  the kitchen until a rider takes it, and the handoff code lives on that card,
+  so `READY` rows stay in this tab. Ask for `?status=PREPARING` and you get
+  both — no order can fall between two tabs the moment it is marked ready.
+- **Cancelled and rejected orders are in no tab.** `COMPLETE` means the food
+  reached a rider. Add them explicitly if your history screen wants them:
+  `?status=COMPLETE,CANCELLED`.
 
 Rows carry an `item_count` but **not the line items**. Fetch
 `GET /vendor/orders/{id}` when the vendor opens an order — that returns every
@@ -561,8 +580,10 @@ GET /vendor/dashboard
 ```
 
 One call renders the Order tab's header and the whole Overview tab: the queue
-chips (`queue.new`, `queue.preparing`, `queue.ready`, `queue.completed_today`),
-today's delivered orders and earnings, the last-7-days chart (`last_7_days`,
+chips (`queue.new`, `queue.preparing`, `queue.complete` — each counting exactly
+what `GET /vendor/orders?status=<tab>` lists, so a chip cannot disagree with the
+list under it — plus `queue.ready`, the handoff-waiting slice of `preparing`,
+and `queue.completed_today`), today's delivered orders and earnings, the last-7-days chart (`last_7_days`,
 always exactly 7 entries, zero-filled), `acceptance_rate`, the store toggle
 state, and the five most recent orders. Call it on app resume instead of five
 separate requests.

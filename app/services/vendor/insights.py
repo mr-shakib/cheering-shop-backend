@@ -35,7 +35,7 @@ from app.schemas.vendor import (
     VendorPerformance,
     VendorReviewOut,
 )
-from app.services.vendor.orders import ACTIVE_STATUSES
+from app.services.vendor.orders import CHIP_TABS, QUEUE_TABS
 from app.services.vendor.storefront import is_accepting_orders
 
 log = structlog.get_logger()
@@ -300,15 +300,22 @@ async def dashboard(db: AsyncSession, restaurant: Restaurant) -> VendorDashboard
     now = datetime.now(UTC)
     today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC)
 
+    # One grouped count behind all three chips. It counts the same QUEUE_TABS
+    # groups the queue itself filters on, so New(5) is precisely what
+    # `?status=NEW` lists — chips and list cannot drift apart.
+    chip_statuses = {s for tab in CHIP_TABS for s in QUEUE_TABS[tab]}
     status_rows = await db.execute(
         select(Order.status, func.count())
         .where(
             Order.restaurant_id == restaurant.id,
-            Order.status.in_([s.value for s in ACTIVE_STATUSES]),
+            Order.status.in_([s.value for s in chip_statuses]),
         )
         .group_by(Order.status)
     )
     by_status = {str(s): int(c) for s, c in status_rows.all()}
+
+    def chip(tab: str) -> int:
+        return sum(by_status.get(s, 0) for s in QUEUE_TABS[tab])
 
     today_row = (
         await db.execute(
@@ -372,8 +379,9 @@ async def dashboard(db: AsyncSession, restaurant: Restaurant) -> VendorDashboard
         store_status=str(restaurant.status),
         is_accepting_orders=is_accepting_orders(restaurant),
         queue=QueueCounts(
-            new=by_status.get(OrderStatus.PENDING, 0),
-            preparing=by_status.get(OrderStatus.PREPARING, 0),
+            new=chip("NEW"),
+            preparing=chip("PREPARING"),
+            complete=chip("COMPLETE"),
             ready=by_status.get(OrderStatus.READY, 0),
             completed_today=today_orders,
         ),

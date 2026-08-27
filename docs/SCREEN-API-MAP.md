@@ -108,8 +108,9 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 
 | Screen file | What it is | API | Status |
 | --- | --- | --- | --- |
-| Home.png | Queue, New tab + chips + store toggle | `GET /vendor/dashboard` (chips, toggle state) + `GET /vendor/orders?status=PENDING`; toggle → `PATCH /vendor/store/status` | 🟢 live |
-| Home-1.png | Preparing tab, "Mark as Ready" | `GET /vendor/orders?status=PREPARING`; button → `POST /vendor/orders/{id}/ready` | 🟢 live |
+| Home.png | Queue, New tab + chips + store toggle | `GET /vendor/dashboard` (`queue.new` / `queue.preparing` / `queue.complete` are the three chips, plus the toggle state) + `GET /vendor/orders?status=NEW`; toggle → `PATCH /vendor/store/status` | 🟢 live |
+| Home-1.png | Preparing tab, "Mark as Ready" | `GET /vendor/orders?status=PREPARING` (the tab: PREPARING **and** READY); button → `POST /vendor/orders/{id}/ready` | 🟢 live |
+| Home.png Complete chip | Complete tab | `GET /vendor/orders?status=COMPLETE` (PICKED_UP + DELIVERED); add `,CANCELLED` if the tab should show rejected orders too | 🟢 live |
 | Home-7.png | Empty queue state | same queue calls, zero rows | 🟢 live |
 | Home-8.png | Order Details (items, 0:42 countdown, call) | `GET /vendor/orders/{id}` (`seconds_to_auto_decline` drives the countdown); call → `POST /orders/{id}/call` | 🟢 live |
 | Home.png Accept / Reject buttons | Decide an order | `POST /vendor/orders/{id}/accept` / `…/reject` | 🟢 live |

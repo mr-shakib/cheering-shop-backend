@@ -58,11 +58,22 @@ class VendorAnalytics(BaseModel):
 
 
 class QueueCounts(BaseModel):
-    """The Order tab's chips: New(5) · Preparing(2) · Complete(21)."""
+    """The Order tab's chips: New(5) · Preparing(2) · Complete(21).
+
+    One field per chip. Each counts exactly what
+    `GET /vendor/orders?status=NEW|PREPARING|COMPLETE` returns, so a chip can
+    never disagree with the list it sits above.
+    """
 
     new: int = Field(description="PENDING orders awaiting accept/reject")
-    preparing: int
-    ready: int
+    preparing: int = Field(
+        description="PREPARING + READY — food that is cooked but not yet "
+        "handed to a rider is still the kitchen's problem"
+    )
+    complete: int = Field(description="PICKED_UP + DELIVERED, all time")
+    ready: int = Field(
+        description="The READY slice of `preparing`, waiting on the rider handoff"
+    )
     completed_today: int = Field(description="DELIVERED since local midnight (UTC)")
 
 

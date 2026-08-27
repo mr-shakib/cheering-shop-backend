@@ -548,6 +548,39 @@ async def test_queue_status_filter(client, vendor, order_customer):
     assert r.status_code == 400, r.text
 
 
+async def test_queue_tabs_partition_the_screen(client, vendor, order_customer, rider):
+    """New · Preparing · Complete: every order the vendor screen shows sits in
+    exactly one tab, and a cooked order stays under Preparing until a rider
+    actually takes it."""
+    now = datetime.now(UTC)
+    await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+    await _seed_order(vendor.restaurant.id, order_customer.id, status="PREPARING")
+    await _seed_order(vendor.restaurant.id, order_customer.id, status="READY")
+    await _seed_order(
+        vendor.restaurant.id, order_customer.id, status="PICKED_UP", rider_id=rider.id
+    )
+    await _seed_order(
+        vendor.restaurant.id,
+        order_customer.id,
+        status="DELIVERED",
+        rider_id=rider.id,
+        delivered_at=now,
+    )
+
+    async def tab(name):
+        r = await client.get(f"{V1}/vendor/orders?status={name}", headers=vendor.headers)
+        assert r.status_code == 200, r.text
+        return sorted(o["status"] for o in r.json()["data"])
+
+    assert await tab("NEW") == ["PENDING"]
+    assert await tab("PREPARING") == ["PREPARING", "READY"]
+    assert await tab("COMPLETE") == ["DELIVERED", "PICKED_UP"]
+
+    # Tabs are case-insensitive and compose with each other, like any other
+    # `?status=` token.
+    assert await tab("new,complete") == ["DELIVERED", "PENDING", "PICKED_UP"]
+
+
 async def test_queue_never_shows_another_vendors_orders(
     client, vendor, other_vendor, order_customer
 ):
