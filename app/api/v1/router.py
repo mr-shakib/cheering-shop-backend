@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     discovery,
     favorites,
     orders,
+    rider,
     tracking,
     uploads,
     users,
@@ -48,6 +49,9 @@ api_router.include_router(comms.router)
 # literals must register ahead of anything else under /vendor
 api_router.include_router(vendor_applications.router)
 api_router.include_router(vendor.router)
+
+# Rider app
+api_router.include_router(rider.router)
 
 # Administration
 api_router.include_router(admin.router)

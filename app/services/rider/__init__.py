@@ -10,7 +10,10 @@ never spend it.
 
 * ``dispatch`` — who gets the order, and the seam a real dispatcher replaces
 * ``roster``   — the rider accounts an administrator maintains
+* ``jobs``     — the rider app's own screens, including the delivery that
+  finally moves an order to DELIVERED
 
-``app.services`` re-exports these as ``dispatch_service`` and
-``rider_roster_service``, matching the ``vendor_*_service`` convention.
+``app.services`` re-exports these as ``dispatch_service``,
+``rider_roster_service`` and ``rider_jobs_service``, matching the
+``vendor_*_service`` convention.
 """

@@ -8,10 +8,10 @@ step today — there is no rider document pipeline the way there is for vendor
 applications, so ``is_verified`` records a decision a human already made rather
 than the output of a review queue.
 
-Riders created here cannot sign in. No password is set, and there are no
-rider-facing endpoints for a token to reach, so an account that could
-authenticate would be a credential with nothing behind it. When the rider app
-lands, enrolment gains a password or an OTP path and this stays the roster.
+A rider signs in at ``/auth/login`` like anybody else, with the password an
+administrator sets at enrolment or issues later. There is no self-service reset
+path for them: ``/auth/password/forgot`` mails an OTP, and a courier's account
+is not something to hand back on the strength of an inbox.
 """
 
 import uuid
@@ -26,7 +26,7 @@ from app.models.enums import UserRole
 from app.models.rider import RiderProfile
 from app.models.user import User
 from app.schemas.requests import RiderCreateRequest
-from app.schemas.rider import RiderOut
+from app.schemas.rider import RiderOut, ShiftState
 from app.services.rider.dispatch import count_in_flight, in_flight_counts
 
 log = structlog.get_logger()
@@ -58,7 +58,7 @@ async def create_rider(db: AsyncSession, body: RiderCreateRequest) -> RiderOut:
     customer into a courier behind their back would be a surprising thing to
     do to a person.
     """
-    from app.services.auth_service import find_by_identifier
+    from app.services.auth_service import find_by_identifier, set_password
 
     for identifier in (body.email, body.phone):
         if identifier and await find_by_identifier(db, identifier) is not None:
@@ -83,6 +83,9 @@ async def create_rider(db: AsyncSession, body: RiderCreateRequest) -> RiderOut:
         # users.email and users.phone are both UNIQUE — two administrators
         # enrolling the same courier at once land here.
         raise ConflictError("That email or phone already belongs to an account") from exc
+
+    if body.password:
+        await set_password(db, user, body.password)
 
     profile = RiderProfile(
         user_id=user.id,
@@ -143,6 +146,7 @@ async def set_flags(
     *,
     is_online: bool | None = None,
     is_verified: bool | None = None,
+    password: str | None = None,
 ) -> RiderOut:
     """Shift state and clearance — the two things dispatch filters on.
 
@@ -150,11 +154,15 @@ async def set_flags(
     holding. Those are in a bag on a motorcycle; a flag in a database does not
     bring them back, and clearing the assignment would strand the customer.
     """
+    from app.services.auth_service import set_password
+
     user, profile = await get_rider(db, rider_id)
     if is_online is not None:
         profile.is_online = is_online
     if is_verified is not None:
         profile.is_verified = is_verified
+    if password is not None:
+        await set_password(db, user, password)
     await db.flush()
 
     log.info(
@@ -164,3 +172,32 @@ async def set_flags(
         is_verified=profile.is_verified,
     )
     return to_out(user, profile, await count_in_flight(db, user.id))
+
+
+async def set_shift(db: AsyncSession, rider: User, is_online: bool) -> ShiftState:
+    """The rider's own clock-on, writing the same column an operator writes.
+
+    One column, not two: a rider who believes they are on shift while dispatch
+    believes otherwise is the kind of disagreement that surfaces as an order
+    nobody collects.
+
+    Going off shift never releases orders already in hand. Those are in a bag
+    on a motorcycle — a flag does not bring them back, and dropping the
+    assignment would strand the customer with an order nobody is carrying.
+    """
+    _, profile = await get_rider(db, rider.id)
+    profile.is_online = is_online
+    await db.flush()
+
+    in_flight = await count_in_flight(db, rider.id)
+    log.info("rider_shift", rider_id=str(rider.id), is_online=is_online, in_flight=in_flight)
+    return ShiftState(
+        rider_id=str(rider.id),
+        is_online=is_online,
+        orders_in_flight=in_flight,
+        message=(
+            "You are on shift and can be assigned orders"
+            if is_online
+            else "You are off shift. Orders already assigned to you stay yours."
+        ),
+    )

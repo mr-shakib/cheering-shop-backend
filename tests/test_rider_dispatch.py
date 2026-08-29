@@ -19,59 +19,8 @@ V1 = "/api/v1"
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers — the `riders` factory fixture lives in conftest.py
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-async def riders(db_available):
-    """Factory for riders dispatch will actually consider.
-
-    The shared `rider` fixture in conftest deliberately has no
-    ``rider_profiles`` row — it exists to satisfy the orders FK, not to be
-    dispatched — so tests that need a dispatchable rider build one here.
-    """
-    from sqlalchemy import delete
-
-    from app.core.database import SessionLocal
-    from app.models.order import Order
-    from app.models.rider import RiderProfile
-    from app.models.user import User
-
-    made: list[User] = []
-
-    async def _make(*, is_online: bool = True, is_verified: bool = True, name: str = "Demo Rider"):
-        user = User(
-            id=uuid.uuid4(),
-            role="RIDER",
-            email=f"rider-{uuid.uuid4().hex[:12]}@example.com",
-            full_name=name,
-        )
-        async with SessionLocal() as session:
-            session.add(user)
-            await session.flush()
-            session.add(
-                RiderProfile(
-                    user_id=user.id,
-                    user_role="RIDER",
-                    is_online=is_online,
-                    is_verified=is_verified,
-                    vehicle_type="MOTORCYCLE",
-                )
-            )
-            await session.commit()
-        made.append(user)
-        return user
-
-    yield _make
-
-    # fk_orders_rider is ON DELETE RESTRICT, so the orders go first. The
-    # profile cascades with the user.
-    async with SessionLocal() as session:
-        for user in made:
-            await session.execute(delete(Order).where(Order.rider_id == user.id))
-            await session.execute(delete(User).where(User.id == user.id))
-        await session.commit()
 
 
 async def _rider_id_of(order_id) -> uuid.UUID | None:

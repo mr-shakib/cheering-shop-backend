@@ -30,6 +30,7 @@ from app.schemas.requests import (
 from app.schemas.rider import RiderAssignment
 from app.services import (
     dispatch_service,
+    rider_jobs_service,
     rider_roster_service,
     vendor_application_service,
     vendor_finance_service,
@@ -268,15 +269,24 @@ async def create_rider(body: RiderCreateRequest, admin: AdminUser, db: DbSession
 async def update_rider(
     rider_id: uuid.UUID, body: RiderUpdateRequest, admin: AdminUser, db: DbSession
 ):
-    """The two flags dispatch filters on: `is_online` (on shift) and
-    `is_verified` (cleared to carry food).
+    """The two flags dispatch filters on — `is_online` (on shift) and
+    `is_verified` (cleared to carry food) — plus the rider's sign-in password.
+
+    `password` is how a rider gets credentials after enrolment, or gets them
+    reset. There is no self-service path: `/auth/password/forgot` mails an OTP,
+    and a courier account is not something to hand back on the strength of an
+    inbox.
 
     Taking a rider off shift does not touch what they are already holding —
     those orders are in a bag on a motorcycle, and unassigning them would
     strand the customer rather than recall the food.
     """
     rider = await rider_roster_service.set_flags(
-        db, rider_id, is_online=body.is_online, is_verified=body.is_verified
+        db,
+        rider_id,
+        is_online=body.is_online,
+        is_verified=body.is_verified,
+        password=body.password,
     )
     await db.commit()
     return ok(rider.model_dump())
@@ -312,3 +322,19 @@ async def assign_rider(
             message=f"{rider.full_name or 'The rider'} is now carrying this order",
         ).model_dump()
     )
+
+
+@router.post("/orders/{order_id}/deliver", summary="Confirm a delivery [EXTENDED]")
+async def force_deliver(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
+    """The fallback for when the rider cannot mark it themselves — a dead phone,
+    an uninstalled app, a dispute resolved in the customer's favour.
+
+    Deliberately separate from `POST /rider/orders/{id}/deliver` rather than a
+    shared endpoint with a role switch: the status history records ADMIN as the
+    actor, so a delivery nobody was present for is visibly not the same event as
+    one a courier confirmed at the door. Use it when the rider genuinely cannot,
+    not as the normal path.
+    """
+    result = await rider_jobs_service.deliver_as_admin(db, admin, order_id)
+    await db.commit()
+    return ok(result.model_dump())

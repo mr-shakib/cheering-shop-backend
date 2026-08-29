@@ -3,20 +3,18 @@
 Every call below was executed against a live local server, in this order, and passed.
 Base URL: `http://localhost:8000/api/v1`. Envelope: `{"success":true,"data":{...}}`.
 
-**Read this first — three things will block you if you don't know them:**
+**Read this first — two things will trip you up:**
 
-1. **The customer side does not exist yet.** `GET /restaurants`, `/cart`, `/cart/items`,
-   `/checkout/summary`, `POST /orders`, `/users/me/addresses`, favorites, tracking and the
-   WebSockets all return **501 NOT_IMPLEMENTED**. There is no API path that creates an order,
-   so step 6 seeds one with SQL.
-2. **Riders are assigned automatically, but they have to exist first.** Accepting an order
+1. **Riders are assigned automatically, but they have to exist first.** Accepting an order
    dispatches a rider from whoever is verified and on shift. Enrol one with
    `POST /admin/riders` before step 8 or the pool is empty and the handoff 409s.
-3. **Nothing writes `DELIVERED`.** That status is only ever read. Since earnings are derived
-   from delivered orders, a payout is untestable until you force the status in SQL.
+2. **Only the WebSockets are unbuilt.** `WS /ws/vendor/live` and
+   `WS /ws/orders/{id}/live-tracking` return **501**, so everything is polled. The customer
+   ordering flow is live: step 6 seeds an order with SQL only because this runbook is about
+   the vendor app, and placing one properly means walking the customer journey first.
 
-Steps 1–5, 7 and 9 are pure API and are what you actually hand over. Steps 6, 8 and 10 are
-scaffolding to work around the three gaps above.
+Every step below is pure API. An order runs from cart to DELIVERED without a single SQL
+statement — `tests/test_order_lifecycle.py` does exactly that if you want to watch it.
 
 ---
 
@@ -468,14 +466,24 @@ again** — on an already-READY order it issues a fresh code and restores the bu
 
 ---
 
-## 9. 🔧 Force delivery — terminal
+## 9. Deliver it — the rider's own call
 
-Nothing in the API writes `DELIVERED`.
+`POST /rider/orders/{order_id}/deliver` moves `PICKED_UP → DELIVERED`. It needs a **rider**
+token, so give the rider you enrolled at 8a0 a password and sign in as them:
 
-```bash
-psql "update orders set status='DELIVERED', delivered_at=now() where id='$ORDER'"
-psql "select status from orders where id='$ORDER'"     # → DELIVERED
+```http
+PATCH /admin/riders/{rider_id}                           # ADMIN_TOKEN
+{"password":"RiderPassword1!"}
+
+POST /auth/login
+{"phone":"+8801799000001","password":"RiderPassword1!"}
+
+POST /rider/orders/{order_id}/deliver                    # RIDER_TOKEN
 ```
+
+A COD order also flips to `payment_status: PAID` here — the rider took the cash. If the
+rider cannot do it, `POST /admin/orders/{order_id}/deliver` is the operator fallback, and
+the status history records who confirmed it. See [RIDER-API.md](RIDER-API.md).
 
 Do this before step 10: the balance is a query, not a column —
 `Σ(item_total − commission_amount)` over DELIVERED orders, minus every payout not FAILED.
@@ -635,9 +643,10 @@ regardless. Use a **different phone number** than any existing account.
 | Document uploads | ⚠️ 503 — Cloudflare R2 variables unset in `.env` |
 | Handoff `READY → PICKED_UP` | ✅ working — needs a rider enrolled via `POST /admin/riders` |
 | Rider roster and assignment (admin) | ✅ working |
-| `DELIVERED`, and therefore earnings and payouts | ⚠️ reachable only via SQL |
-| Customer — discovery, cart, checkout, place order, addresses, favorites | ❌ **501** |
-| Rider app — a rider signing in, seeing the job, delivering | ❌ does not exist |
+| `DELIVERED`, and therefore earnings and payouts | ✅ working — `POST /rider/orders/{id}/deliver` |
+| Customer — discovery, cart, checkout, place order, addresses, favorites | ✅ working |
+| Rider — sign in, job list, handoff code, deliver, shift | ✅ working |
+| Rider live position, rider earnings, declining a job | ❌ not modelled |
 | Tracking, messaging, WebSockets | ❌ **501** |
 
 Two behaviours worth stating in the handover doc: a menu item or order belonging to another

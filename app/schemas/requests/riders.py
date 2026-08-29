@@ -16,6 +16,16 @@ class RiderCreateRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=150)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, min_length=6, max_length=20)
+    password: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description=(
+            "Sets the rider up to sign in at /auth/login. Omit to create the "
+            "account without credentials — dispatch works either way, but the "
+            "rider app cannot be used until a password exists."
+        ),
+    )
     vehicle_type: str | None = Field(default=None, max_length=40)
     license_number: str | None = Field(default=None, max_length=60)
     is_online: bool = Field(default=True, description="Start the rider on shift")
@@ -31,16 +41,33 @@ class RiderCreateRequest(BaseModel):
 
 
 class RiderUpdateRequest(BaseModel):
-    """PATCH /admin/riders/{id} — shift state and clearance."""
+    """PATCH /admin/riders/{id} — shift state, clearance, credentials."""
 
     is_online: bool | None = None
     is_verified: bool | None = None
+    password: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="Issue or reset the rider's sign-in password",
+    )
 
     @model_validator(mode="after")
     def _needs_a_field(self):
-        if self.is_online is None and self.is_verified is None:
-            raise ValueError("Send is_online, is_verified, or both")
+        if self.is_online is None and self.is_verified is None and self.password is None:
+            raise ValueError("Send is_online, is_verified, password, or a combination")
         return self
+
+
+class RiderShiftRequest(BaseModel):
+    """PATCH /rider/me/shift — the rider's own go-online toggle.
+
+    Same column as the administrator's `is_online`, deliberately: a rider
+    clocking on and an operator forcing them off must not be two states that
+    can disagree.
+    """
+
+    is_online: bool
 
 
 class AssignRiderRequest(BaseModel):

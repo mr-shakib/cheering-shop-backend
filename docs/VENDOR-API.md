@@ -9,10 +9,10 @@ Interactive docs: `https://api.cheeringshop.online/docs`
 Signing up as a vendor is covered in [AUTH-API.md](AUTH-API.md) §11. Everything
 in this document assumes you already hold a `VENDOR` access token.
 
-Everything below is implemented and covered by tests. Two things this document
-describes are **not** live yet and are called out where they matter: the
-customer ordering flow that fills the queue, and the rider app that receives the
-handoff PIN. Riders themselves are now assigned automatically — see
+Everything below is implemented and covered by tests. The customer ordering
+flow that fills your queue is live, riders are dispatched automatically, and an
+order now runs all the way to DELIVERED. What is still missing is real-time
+push and the rider-side display of the handoff code — see
 [Known limitations](#known-limitations).
 
 ---
@@ -661,6 +661,7 @@ All require a `VENDOR` bearer token unless noted.
 | POST | `/admin/riders` | admin | Enrol a rider |
 | PATCH | `/admin/riders/{id}` | admin | Shift state and clearance |
 | POST | `/admin/orders/{id}/assign-rider` | admin | Assign or reassign a rider |
+| POST | `/admin/orders/{id}/deliver` | admin | Confirm a delivery the rider could not |
 
 Vendor **registration** and login are in [AUTH-API.md](AUTH-API.md).
 
@@ -844,9 +845,8 @@ PATCH /vendor/promotions/{id}
 Nothing else about a live promotion can change — repricing an offer customers
 have already seen is a bait-and-switch. Ended promotions are immutable.
 
-**Until the customer checkout module ships, nothing can redeem a promotion** —
-stats read zero. The offer goes live the moment checkout does; see Known
-limitations.
+Promotions are redeemed at checkout, which is live, so a launched offer starts
+accumulating real stats as soon as customers use it.
 
 ---
 
@@ -854,22 +854,23 @@ limitations.
 
 Be aware of these when planning screens:
 
-1. **Nothing fills the queue yet.** The customer ordering flow (`/cart`,
-   `/checkout/summary`, `POST /orders`) is still `501`, so on a live server your
-   order queue will be empty no matter what you do. Every endpoint in §5–§7
-   works and is tested; there is simply no way for a real order to arrive until
-   that module ships. Build against the contracts and seed test data directly if
-   you need a populated screen.
+1. **Nothing pushes a new order at you.** The customer ordering flow (`/cart`,
+   `/checkout/summary`, `POST /orders`) is live and a real customer order will
+   land in your queue — but you will only see it when you poll, because
+   `WS /ws/vendor/live` is still `501`. Mind the 60-second accept window when
+   choosing an interval.
 2. **No live push.** `WS /ws/vendor/live` is routed but not implemented, so
    there are no instant new-order alerts. Poll `GET /vendor/orders?status=ACTIVE`
    — and mind the 60-second accept window when you choose an interval.
-3. **No rider app.** Riders are now assigned automatically on accept, so the
-   handoff completes end to end — but nothing *delivers* the code to a rider,
-   which is why your screen still displays it (§7). `POST /vendor/orders/{id}/handoff`
-   returns `409 "No rider is available to take this order"` only when no
-   verified rider is on shift; an administrator brings one online.
-   Proof-of-presence flips to rider-side display when the rider app ships, by
-   removing the field — the verification underneath does not change.
+3. **You still see the handoff code.** Riders now have their own API
+   ([RIDER-API.md](RIDER-API.md)) and read the same code from their job screen,
+   which is what makes typing it back proof of presence. Your copy of the field
+   remains only because this app was built against it: removing `handoff_code`
+   from the `ready` response and the order detail is the whole change whenever
+   you are ready, and the verification underneath does not move. Until then,
+   keep the code display separable from the input.
+   `POST /vendor/orders/{id}/handoff` returns `409 "No rider is available to
+   take this order"` only when no verified rider is on shift.
 4. **No scheduled opening hours.** `status` is a manual toggle, and the
    business hours saved via `PUT /vendor/hours` (§13) are informational — a
    vendor who forgets to close stays open. Consider a client-side reminder.
@@ -886,8 +887,8 @@ Be aware of these when planning screens:
 8. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.
-9. **Promotions cannot be redeemed yet.** They depend on the same unshipped
-   checkout module as the order queue (limitation 1). Launching, pausing and
+9. **Promotion analytics are thin.** Redemptions are counted at checkout, but
+   there is no per-customer breakdown or cohort view. Launching, pausing and
    reporting all work; `redemptions` and `budget_spent` stay zero until
    checkout ships, and the budget-cap cutoff is enforced there.
 

@@ -470,6 +470,48 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "admin-only — a vendor picking their own rider is not how delivery "
         "works, and adding it to the vendor API later would break a shipped app.",
     ),
+    (
+        "POST",
+        "/admin/orders/{id}/deliver",
+        "The fallback when a rider cannot mark their own delivery — dead "
+        "phone, uninstalled app, a dispute settled for the customer. Separate "
+        "from the rider endpoint so the status history shows who was actually "
+        "at the door.",
+    ),
+    # --- The rider app ------------------------------------------------------
+    # §7 names a RIDER and every order carries rider_id, but the spec defines
+    # no endpoint a rider can call. PICKED_UP -> DELIVERED was therefore the
+    # one transition nothing in the system could perform, which stranded every
+    # order a step short of done and made earnings, payouts and reviews —
+    # all derived from DELIVERED — unreachable.
+    (
+        "GET",
+        "/rider/orders",
+        "A courier with no way to see what they are carrying. Two tabs, the "
+        "same working set the vendor queue has, scoped to the assigned rider.",
+    ),
+    (
+        "GET",
+        "/rider/orders/{id}",
+        "Where to collect, what to collect, where it goes — and the handoff "
+        "code. This is decision D3 as originally designed: the code on the "
+        "rider's screen is what makes the vendor typing it back proof of "
+        "presence rather than a formality.",
+    ),
+    (
+        "POST",
+        "/rider/orders/{id}/deliver",
+        "The missing transition. Nothing wrote DELIVERED, so no order ever "
+        "completed, no vendor could be paid for one, and no customer could "
+        "review one.",
+    ),
+    (
+        "PATCH",
+        "/rider/me/shift",
+        "Dispatch only assigns to riders who are online, and is_online had no "
+        "endpoint a rider could reach — a courier could not clock on for their "
+        "own shift.",
+    ),
 ]
 
 PREFIX = "/api/v1"

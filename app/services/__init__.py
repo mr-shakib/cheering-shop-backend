@@ -28,6 +28,7 @@ from app.services.customer import orders as order_service
 from app.services.customer import promos as promo_service
 from app.services.customer import reviews as review_service
 from app.services.rider import dispatch as dispatch_service
+from app.services.rider import jobs as rider_jobs_service
 from app.services.rider import roster as rider_roster_service
 from app.services.vendor import applications as vendor_application_service
 from app.services.vendor import finance as vendor_finance_service
@@ -50,6 +51,7 @@ __all__ = [
     "promo_service",
     "realtime",
     "review_service",
+    "rider_jobs_service",
     "rider_roster_service",
     "storage_service",
     "token_service",
