@@ -435,6 +435,41 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "A bounced transfer. Marking FAILED is itself the refund — the "
         "balance formula excludes failed rows.",
     ),
+    # --- Riders & dispatch --------------------------------------------------
+    # The spec defines a RIDER role, orders.rider_id, live GPS and rider
+    # earnings, but no way for a rider to exist or to arrive on an order.
+    # Nothing wrote rider_id, so ck_orders_rider_required made spec #42 —
+    # POST /vendor/orders/{id}/handoff — unreachable on every real order.
+    (
+        "GET",
+        "/admin/riders",
+        "Dispatch chooses from a pool nobody could see. An operator "
+        "overriding an assignment needs the list dispatch was choosing from, "
+        "with shift state and current load.",
+    ),
+    (
+        "POST",
+        "/admin/riders",
+        "There is no rider signup and there should not be one — /auth/otp/send "
+        "accepts CUSTOMER and VENDOR only. Without this endpoint no RIDER row "
+        "could be created through the API at all, so the dispatch pool was "
+        "permanently empty and the handoff permanently 409.",
+    ),
+    (
+        "PATCH",
+        "/admin/riders/{id}",
+        "is_online and is_verified are what dispatch filters on, and both "
+        "defaulted false with no endpoint to flip them. A rider who cannot go "
+        "on shift is a row, not a courier.",
+    ),
+    (
+        "POST",
+        "/admin/orders/{id}/assign-rider",
+        "The control-centre override every dispatch system has: a bike breaks "
+        "down, a rider no-shows, the automatic choice is wrong. Deliberately "
+        "admin-only — a vendor picking their own rider is not how delivery "
+        "works, and adding it to the vendor API later would break a shipped app.",
+    ),
 ]
 
 PREFIX = "/api/v1"

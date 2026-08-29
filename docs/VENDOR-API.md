@@ -12,7 +12,8 @@ in this document assumes you already hold a `VENDOR` access token.
 Everything below is implemented and covered by tests. Two things this document
 describes are **not** live yet and are called out where they matter: the
 customer ordering flow that fills the queue, and the rider app that receives the
-handoff PIN. See [Known limitations](#known-limitations).
+handoff PIN. Riders themselves are now assigned automatically — see
+[Known limitations](#known-limitations).
 
 ---
 
@@ -501,6 +502,19 @@ Where to read the code: `handoff_code` in the `ready` response, and again in
 `GET /vendor/orders/{id}` **while the order is READY** — so an app restart
 cannot strand a pickup. After pickup it is `null` everywhere.
 
+**Reissuing a code.** Calling `POST /vendor/orders/{id}/ready` again on an order
+that is already READY issues a fresh code and restores the full attempt budget.
+That is the way out of the lockout below, and the only one: the order stays
+READY, `ready_at` keeps its original value, and no status-history row is
+written, because nothing changed status. Expect a new `handoff_code` in the
+response and show that one.
+
+**Who the rider is.** You do not choose. A rider is assigned automatically when
+you accept the order — during the cooking window, so they have time to reach
+you — and again at `ready` if nobody was on shift the first time. There is no
+vendor endpoint to pick or change a rider; an operator does that from the admin
+side when something goes wrong.
+
 > Displaying the code to the vendor is a deliberate interim posture: with no
 > rider app shipped yet, nothing else could receive it. When the rider app
 > lands, proof-of-presence flips back to rider-side display by removing the
@@ -643,6 +657,10 @@ All require a `VENDOR` bearer token unless noted.
 | GET | `/admin/payouts` | admin | Transfer work queue |
 | POST | `/admin/payouts/{id}/complete` | admin | Confirm a transfer |
 | POST | `/admin/payouts/{id}/fail` | admin | Bounce a transfer (auto-refunds) |
+| GET | `/admin/riders` | admin | The dispatch pool, most idle first |
+| POST | `/admin/riders` | admin | Enrol a rider |
+| PATCH | `/admin/riders/{id}` | admin | Shift state and clearance |
+| POST | `/admin/orders/{id}/assign-rider` | admin | Assign or reassign a rider |
 
 Vendor **registration** and login are in [AUTH-API.md](AUTH-API.md).
 
@@ -845,11 +863,13 @@ Be aware of these when planning screens:
 2. **No live push.** `WS /ws/vendor/live` is routed but not implemented, so
    there are no instant new-order alerts. Poll `GET /vendor/orders?status=ACTIVE`
    — and mind the 60-second accept window when you choose an interval.
-3. **No rider app.** Nothing delivers the handoff code to a rider yet, and no
-   rider is ever assigned to an order. `POST /vendor/orders/{id}/handoff` will
-   therefore return `409 "No rider has been assigned to this order yet"` on a
-   real order. The `handoff_code` flow (§7) is fully exercisable end to end
-   regardless.
+3. **No rider app.** Riders are now assigned automatically on accept, so the
+   handoff completes end to end — but nothing *delivers* the code to a rider,
+   which is why your screen still displays it (§7). `POST /vendor/orders/{id}/handoff`
+   returns `409 "No rider is available to take this order"` only when no
+   verified rider is on shift; an administrator brings one online.
+   Proof-of-presence flips to rider-side display when the rider app ships, by
+   removing the field — the verification underneath does not change.
 4. **No scheduled opening hours.** `status` is a manual toggle, and the
    business hours saved via `PUT /vendor/hours` (§13) are informational — a
    vendor who forgets to close stays open. Consider a client-side reminder.
