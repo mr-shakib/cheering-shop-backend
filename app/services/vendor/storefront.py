@@ -276,7 +276,10 @@ def to_profile(restaurant: Restaurant) -> RestaurantProfile:
         address_line=restaurant.address_line,
         latitude=restaurant.latitude,
         longitude=restaurant.longitude,
-        delivery_fee_base=to_major(restaurant.delivery_fee_base),
+        # Platform policy, not the stored column — which nothing reads any
+        # more. Reported so a vendor can see what their customers are
+        # charged without having to read the customer docs.
+        delivery_fee_base=Decimal(settings.DELIVERY_FEE_BASE),
         min_order_amount=to_major(restaurant.min_order_amount),
         avg_prep_time_mins=restaurant.avg_prep_time_mins,
         commission_rate=Decimal(str(restaurant.commission_rate)),
@@ -378,8 +381,6 @@ async def update_profile(
         # point from these two, so discovery follows automatically.
         restaurant.latitude = fields["latitude"]
         restaurant.longitude = fields["longitude"]
-    if "delivery_fee_base" in fields and fields["delivery_fee_base"] is not None:
-        restaurant.delivery_fee_base = to_minor(fields["delivery_fee_base"])
     if "min_order_amount" in fields and fields["min_order_amount"] is not None:
         restaurant.min_order_amount = to_minor(fields["min_order_amount"])
     if "avg_prep_time_mins" in fields and fields["avg_prep_time_mins"] is not None:

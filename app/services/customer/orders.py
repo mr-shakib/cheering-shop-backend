@@ -122,7 +122,6 @@ async def _prepare(
     )
     bill = quote(
         lines,
-        base_delivery_fee_minor=restaurant.delivery_fee_base,
         distance_km=distance_km,
         commission_rate=float(restaurant.commission_rate),
         discount=promo.discount,

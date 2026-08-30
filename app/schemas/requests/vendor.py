@@ -49,7 +49,6 @@ class RestaurantProfileUpdateRequest(BaseModel):
     address_line: str | None = Field(default=None, min_length=5, max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
-    delivery_fee_base: Money | None = None
     min_order_amount: Money | None = None
     avg_prep_time_mins: int | None = Field(
         default=None, ge=1, le=240, description="Drives the delivery estimate shown to customers"

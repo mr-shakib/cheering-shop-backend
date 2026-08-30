@@ -695,3 +695,39 @@ async def test_tracking_is_honest_about_having_no_rider_position(client, kitchen
     # Everything that IS real is present.
     assert data["timeline"]
     assert data["restaurant_latitude"] and data["delivery_latitude"]
+
+
+async def test_delivery_is_a_flat_base_plus_started_kilometres(client, kitchen, shopper):
+    """৳10 covers the first km, then ৳8 per started km. The kitchen fixture is
+    ~1.6 km from the shopper's address, so that is one chargeable km."""
+    from app.core.config import settings
+
+    await _add_burger(client, kitchen, shopper, quantity=1)
+    r = await client.get(
+        f"{V1}/checkout/summary",
+        params={"address_id": shopper.address_id},
+        headers=shopper.headers,
+    )
+    assert r.status_code == 200, r.text
+    bill = r.json()["data"]
+
+    distance = bill["distance_km"]
+    assert 1.0 < distance < 2.0, f"fixture geometry moved: {distance} km"
+
+    expected = settings.DELIVERY_FEE_BASE + settings.DELIVERY_FEE_PER_KM
+    assert bill["delivery_fee"] == expected == 18
+
+
+async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitchen, shopper):
+    """`restaurants.delivery_fee_base` still exists and the fixture sets it to
+    ৳40. Nothing reads it, so the customer is charged platform policy."""
+    from app.core.config import settings
+
+    await _add_burger(client, kitchen, shopper, quantity=1)
+    r = await client.get(
+        f"{V1}/checkout/summary",
+        params={"address_id": shopper.address_id},
+        headers=shopper.headers,
+    )
+    assert r.json()["data"]["delivery_fee"] < 40
+    assert r.json()["data"]["delivery_fee"] >= settings.DELIVERY_FEE_BASE

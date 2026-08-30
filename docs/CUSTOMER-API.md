@@ -51,10 +51,10 @@ session.
 
 | Param | Values |
 |---|---|
-| `sort` | `distance` (default), `rating`, `delivery_fee`, `prep_time` |
+| `sort` | `distance` (default), `rating`, `prep_time`. `delivery_fee` is accepted but no longer discriminates — the fee is the same everywhere |
 | `cuisine` | one cuisine name |
 | `is_open` | `true` / `false` — omit to get both |
-| `max_delivery_fee`, `min_rating` | numbers |
+| `max_delivery_fee`, `min_rating` | numbers. `max_delivery_fee` is all-or-nothing now: below ৳10 it matches nothing |
 | `radius` | metres, capped at 25000 |
 | `q` | name search |
 
@@ -95,11 +95,16 @@ block checkout until it is removed.
 | Field | Notes |
 |---|---|
 | `item_total` | sum of the lines |
-| `delivery_fee` | restaurant base + per-km beyond the first km |
+| `delivery_fee` | ৳10 base covering the first km, then ৳8 per **started** km. Identical from every restaurant |
 | `packaging_fee` | flat, per order |
 | `tax_amount` | on food only — never on delivery, fees or tip |
 | `platform_fee` | service fee |
 | `discount` | applied **after** tax, so a promo never reduces tax remitted |
+
+Delivery worked through, since rounding surprises people: **1.0 km → ৳10**,
+**1.2 km → ৳18** (one started km beyond the free one), **3.0 km → ৳26**,
+**5.0 km → ৳42**. Started kilometres, not rounded ones — 1.2 km of overage is
+two kilometres of a rider's time.
 | `tip` | as sent |
 | `grand_total` | the sum of the above, minus discount |
 

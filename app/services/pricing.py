@@ -96,8 +96,15 @@ class Quote:
         }
 
 
-def delivery_fee_minor(base_fee_minor: int, distance_km: float, item_total: int) -> int:
-    """Restaurant base fee, plus per-km beyond the free radius.
+def delivery_fee_minor(distance_km: float, item_total: int) -> int:
+    """Flat base covering the first kilometre, then per started km after it.
+
+    Platform-wide. `restaurants.delivery_fee_base` used to feed this and no
+    longer does: what a customer pays to be brought food should not depend on
+    which kitchen cooked it, and a column every vendor could edit made the
+    delivery fee a competitive lever rather than a cost. The column still
+    exists — dropping it would need a migration and buys nothing — but nothing
+    reads it.
 
     The threshold promotion waives the whole fee rather than discounting it:
     "free delivery over ৳500" that silently still charges ৳15 is the kind of
@@ -110,13 +117,14 @@ def delivery_fee_minor(base_fee_minor: int, distance_km: float, item_total: int)
     # Ceiling, not round: a 1.2 km overage is two started kilometres of rider
     # time, and rounding it down means the platform absorbs the difference on
     # every single order.
-    return base_fee_minor + to_minor(settings.DELIVERY_FEE_PER_KM) * math.ceil(chargeable_km)
+    return to_minor(settings.DELIVERY_FEE_BASE) + to_minor(
+        settings.DELIVERY_FEE_PER_KM
+    ) * math.ceil(chargeable_km)
 
 
 def quote(
     lines: list[QuoteLine],
     *,
-    base_delivery_fee_minor: int,
     distance_km: float,
     commission_rate: float,
     discount: int = 0,
@@ -138,7 +146,7 @@ def quote(
       lands, that is the point at which this line needs a branch, not before.
     """
     item_total = sum(line.line_total for line in lines)
-    delivery = delivery_fee_minor(base_delivery_fee_minor, distance_km, item_total)
+    delivery = delivery_fee_minor(distance_km, item_total)
     packaging = to_minor(settings.PACKAGING_FEE_PER_ORDER) if lines else 0
     tax = percentage_of(item_total, settings.TAX_BASIS_POINTS)
     platform = percentage_of(item_total, settings.PLATFORM_FEE_BASIS_POINTS)
