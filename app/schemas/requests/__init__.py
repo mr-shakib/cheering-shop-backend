@@ -48,6 +48,7 @@ from app.schemas.requests.promotions import (
 from app.schemas.requests.riders import (
     AssignRiderRequest,
     RiderCreateRequest,
+    RiderLocationRequest,
     RiderShiftRequest,
     RiderUpdateRequest,
 )
@@ -155,5 +156,6 @@ __all__ = [
     "RiderCreateRequest",
     "RiderUpdateRequest",
     "RiderShiftRequest",
+    "RiderLocationRequest",
     "AssignRiderRequest",
 ]

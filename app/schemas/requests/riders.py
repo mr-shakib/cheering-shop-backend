@@ -78,3 +78,18 @@ class AssignRiderRequest(BaseModel):
     """
 
     rider_id: uuid.UUID | None = None
+
+
+class RiderLocationRequest(BaseModel):
+    """POST /rider/location
+
+    Sent every few seconds while on shift. `heading` and `speed_kph` are
+    optional because a phone that has just woken up has a fix before it has a
+    bearing, and refusing the position until it does would blank the customer's
+    map for no reason.
+    """
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    heading: int | None = Field(default=None, ge=0, le=359)
+    speed_kph: float | None = Field(default=None, ge=0, le=300)

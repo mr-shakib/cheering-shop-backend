@@ -225,6 +225,7 @@ async def _complete(
     )
     return DeliveryResult(
         order_id=str(order.id),
+        restaurant_id=str(order.restaurant_id),
         status=str(order.status),
         delivered_at=now,
         payment_status=str(order.payment_status),

@@ -507,15 +507,23 @@ async def _rider_brief(db: AsyncSession, order: Order) -> RiderBrief | None:
 async def tracking(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> OrderTracking:
     """Spec #31. Initialises the map; the WebSocket streams updates after.
 
-    `rider` is populated once dispatch has assigned one. `rider_location` stays
-    null and `live_tracking_available` false regardless: knowing who is
-    carrying the order is not the same as knowing where they are, and
-    interpolating a plausible dot would be worse than an honest absence — a
-    customer watching a fake courier approach is being lied to.
+    `rider_location` is the position Redis holds right now, and only while the
+    order is READY or PICKED_UP. It is null whenever nobody has heard from the
+    rider recently, and `live_tracking_available` says which case you are in —
+    a dot frozen where a courier was ten minutes ago reads as someone who has
+    stopped moving, not as an app that has gone quiet, so the absence is
+    reported rather than papered over.
+
+    The WebSocket takes over from here; this call exists to draw the first
+    frame without waiting for a ping.
     """
+    from app.services.rider import tracking as rider_tracking
+
     order = await _load_order(db, user_id, order_id)
     restaurant = await db.get(Restaurant, order.restaurant_id)
     rider = await _rider_brief(db, order)
+    position = await rider_tracking.position_for_order(db, order)
+    live = rider_tracking.is_fresh(position)
 
     eta_minutes = None
     if order.estimated_delivery_at and str(order.status) not in {
@@ -538,8 +546,8 @@ async def tracking(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> Order
         estimated_delivery_at=order.estimated_delivery_at,
         eta_minutes=eta_minutes,
         rider=rider,
-        rider_location=None,
-        live_tracking_available=False,
+        rider_location=position.model_dump(mode="json") if live and position else None,
+        live_tracking_available=live,
     )
 
 

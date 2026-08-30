@@ -12,8 +12,10 @@ never spend it.
 * ``roster``   — the rider accounts an administrator maintains
 * ``jobs``     — the rider app's own screens, including the delivery that
   finally moves an order to DELIVERED
+* ``tracking`` — live position: Redis on the hot path, a decimated trail in
+  Postgres, and the fan-out that feeds the customer's map
 
 ``app.services`` re-exports these as ``dispatch_service``,
-``rider_roster_service`` and ``rider_jobs_service``, matching the
-``vendor_*_service`` convention.
+``rider_roster_service``, ``rider_jobs_service`` and
+``rider_tracking_service``, matching the ``vendor_*_service`` convention.
 """

@@ -52,6 +52,7 @@ from app.schemas.requests import (
 )
 from app.services import (
     menu_service,
+    realtime,
     vendor_finance_service,
     vendor_insights_service,
     vendor_order_service,
@@ -60,6 +61,20 @@ from app.services import (
 )
 
 router = APIRouter(prefix="/vendor", tags=["Vendor"])
+
+
+async def _announce(summary, restaurant) -> None:
+    """Push a lifecycle change to the vendor tablet and the customer's map.
+
+    Called after the commit in every handler that moves an order, so the two
+    screens advance together — a status that reached one and not the other is
+    worse than one that reached neither, because only one side knows it is
+    stale. Best-effort: `realtime.publish` never raises, and a transition that
+    is already durable must not be undone because Redis blinked.
+    """
+    await realtime.publish_order_status(
+        summary.id, str(restaurant.id), summary.status, order_number=summary.order_number
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +496,7 @@ async def accept_order(
     """
     summary = await vendor_order_service.accept_order(db, restaurant, order_id, user)
     await db.commit()
+    await _announce(summary, restaurant)
     return ok(summary.model_dump())
 
 
@@ -506,6 +522,7 @@ async def reject_order(
     """
     summary = await vendor_order_service.reject_order(db, restaurant, order_id, user, body.reason)
     await db.commit()
+    await _announce(summary, restaurant)
     return ok(summary.model_dump())
 
 
@@ -526,6 +543,7 @@ async def mark_ready(
     """
     summary, pin = await vendor_order_service.mark_ready(db, restaurant, order_id, user)
     await db.commit()
+    await _announce(summary, restaurant)
     payload = summary.model_dump()
     payload["handoff_code"] = pin
     return ok(payload)
@@ -555,6 +573,9 @@ async def handoff_order(
         db, restaurant, order_id, user, body.rider_pin
     )
     await db.commit()
+    await realtime.publish_order_status(
+        result.order_id, str(restaurant.id), result.status, picked_up_at=result.picked_up_at
+    )
     return ok(result.model_dump())
 
 

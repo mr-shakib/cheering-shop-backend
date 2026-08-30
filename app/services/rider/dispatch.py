@@ -12,13 +12,23 @@ and the handoff must never care how the rider got there.
 GEOSEARCH over live positions, batching, shift schedules — ``_pick_rider`` is
 the only body that changes and nothing above it moves.
 
-What this deliberately does NOT do is geography. **Decision D2** states that
+Selection is nearest-first, then load. **Decision D2** is specific about where
+"nearest" may come from: Redis GEOSEARCH owns it, and
 ``rider_profiles.current_latitude/longitude`` are LAST KNOWN, synced
-periodically from Redis, not authoritative, and must not be read by dispatch.
-Choosing "the nearest rider" from a column that may be minutes stale is worse
-than not choosing on distance at all — it looks correct and is wrong. So
-selection balances load instead: of the riders on shift, the one holding the
-fewest orders.
+periodically and explicitly not to be read here. A rider who has not pinged
+recently has no live position at all and falls back to the load-balanced pool
+rather than being placed at a point they may have left ten minutes ago.
+
+So there are two tiers, in this order:
+
+1. **Live and near.** Riders with a fresh Redis position, within
+   ``DISPATCH_SEARCH_RADIUS_M`` of the restaurant, nearest first — skipping any
+   whose current load would make them a worse choice than the distance
+   suggests.
+2. **Live but unlocated, or nobody in range.** The idlest rider on shift.
+
+Tier 2 is not a degraded mode. A fleet that has not shipped location reporting
+yet, or a rider whose phone lost GPS in a basement, still gets work.
 """
 
 import uuid
@@ -27,13 +37,21 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import AppError, ConflictError, NotFoundError
+from app.core.redis import find_nearby_riders
 from app.models.enums import OrderStatus, UserRole
 from app.models.order import Order
+from app.models.restaurant import Restaurant
 from app.models.rider import RiderProfile
 from app.models.user import User
 
 log = structlog.get_logger()
+
+# How many geo hits to pull before filtering. Wide enough that a handful of
+# fully-loaded riders near the restaurant cannot starve the search, small
+# enough that the follow-up query stays a single indexed lookup.
+_GEO_CANDIDATES = 20
 
 # Orders that occupy a rider. DELIVERED and CANCELLED have let go of theirs;
 # everything else is still in their hands, including PENDING — an order can be
@@ -79,16 +97,18 @@ async def count_in_flight(db: AsyncSession, rider_id: uuid.UUID) -> int:
     )
 
 
-async def _pick_rider(db: AsyncSession) -> User | None:
-    """**The seam.** Replace this body, not its callers, when dispatch is real.
+def _available_riders_query():
+    """On shift, cleared to carry food, account live — with current load.
 
-    On shift, cleared to carry food, account live. Fewest orders in hand wins;
-    the older account breaks a tie, so a quiet shift spreads work in a stable
-    order rather than hammering whichever row Postgres returns first.
+    Returns the statement and its load expression together. The subquery is
+    built once and both are derived from it: constructing a second
+    `in_flight_counts()` to order by would reference a table the statement
+    never joined, which Postgres rejects outright.
     """
     load = in_flight_counts()
-    return await db.scalar(
-        select(User)
+    load_col = func.coalesce(load.c.n, 0)
+    stmt = (
+        select(User, load_col.label("load"))
         .join(RiderProfile, RiderProfile.user_id == User.id)
         .outerjoin(load, load.c.rider_id == User.id)
         .where(
@@ -97,9 +117,66 @@ async def _pick_rider(db: AsyncSession) -> User | None:
             RiderProfile.is_online.is_(True),
             RiderProfile.is_verified.is_(True),
         )
-        .order_by(func.coalesce(load.c.n, 0), User.created_at)
-        .limit(1)
     )
+    return stmt, load_col
+
+
+async def _pick_nearest(db: AsyncSession, latitude: float, longitude: float) -> User | None:
+    """Tier 1: the closest rider with a live position, by Redis GEOSEARCH.
+
+    Distance is not the only input. A rider two hundred metres away already
+    carrying `MAX_CONCURRENT_JOBS` is a worse choice than one a kilometre out
+    with empty hands, because the near one still has to finish what they have
+    first — so the loaded ones are skipped and the search falls through to
+    whoever is next.
+
+    Geo membership alone proves nothing: a dead app leaves its last point in
+    the set forever. Only riders that also survive the availability query —
+    online, verified, active — are considered, which is the same filter tier 2
+    applies.
+    """
+    nearby = await find_nearby_riders(
+        latitude, longitude, settings.DISPATCH_SEARCH_RADIUS_M, limit=_GEO_CANDIDATES
+    )
+    if not nearby:
+        return None
+
+    order = {rider_id: rank for rank, (rider_id, _) in enumerate(nearby)}
+    stmt, _ = _available_riders_query()
+    rows = (
+        await db.execute(
+            stmt.where(User.id.in_([uuid.UUID(rider_id) for rider_id in order]))
+        )
+    ).all()
+
+    candidates = [
+        (order[str(user.id)], user)
+        for user, load in rows
+        if load < settings.MAX_CONCURRENT_JOBS
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: pair[0])
+    return candidates[0][1]
+
+
+async def _pick_rider(
+    db: AsyncSession, latitude: float | None = None, longitude: float | None = None
+) -> User | None:
+    """**The seam.** Nearest live rider, else the idlest one on shift.
+
+    Batching, shift schedules and predicted travel time all belong here when
+    they land; nothing above this function needs to know they arrived.
+    """
+    if latitude is not None and longitude is not None:
+        nearest = await _pick_nearest(db, latitude, longitude)
+        if nearest is not None:
+            return nearest
+
+    # Tier 2. The older account breaks a tie, so a quiet shift spreads work in
+    # a stable order rather than hammering whichever row Postgres returns first.
+    stmt, load_col = _available_riders_query()
+    return await db.scalar(stmt.order_by(load_col, User.created_at).limit(1))
 
 
 async def _resolve_rider(db: AsyncSession, rider_id: uuid.UUID) -> User:
@@ -138,7 +215,12 @@ async def assign_rider(
         )
 
     if rider_id is None:
-        rider = await _pick_rider(db)
+        restaurant = await db.get(Restaurant, order.restaurant_id)
+        rider = await _pick_rider(
+            db,
+            latitude=restaurant.latitude if restaurant else None,
+            longitude=restaurant.longitude if restaurant else None,
+        )
         if rider is None:
             raise ConflictError(
                 "No rider is available to take this order",

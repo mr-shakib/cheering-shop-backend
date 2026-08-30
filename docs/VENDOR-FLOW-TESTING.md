@@ -8,10 +8,9 @@ Base URL: `http://localhost:8000/api/v1`. Envelope: `{"success":true,"data":{...
 1. **Riders are assigned automatically, but they have to exist first.** Accepting an order
    dispatches a rider from whoever is verified and on shift. Enrol one with
    `POST /admin/riders` before step 8 or the pool is empty and the handoff 409s.
-2. **Only the WebSockets are unbuilt.** `WS /ws/vendor/live` and
-   `WS /ws/orders/{id}/live-tracking` return **501**, so everything is polled. The customer
-   ordering flow is live: step 6 seeds an order with SQL only because this runbook is about
-   the vendor app, and placing one properly means walking the customer journey first.
+2. **Nothing here needs SQL any more.** Step 6 still seeds an order directly only because
+   this runbook is about the vendor app, and placing one properly means walking the whole
+   customer journey first. Both WebSockets are live if you want to watch instead of poll.
 
 Every step below is pure API. An order runs from cart to DELIVERED without a single SQL
 statement — `tests/test_order_lifecycle.py` does exactly that if you want to watch it.
@@ -646,7 +645,8 @@ regardless. Use a **different phone number** than any existing account.
 | `DELIVERED`, and therefore earnings and payouts | ✅ working — `POST /rider/orders/{id}/deliver` |
 | Customer — discovery, cart, checkout, place order, addresses, favorites | ✅ working |
 | Rider — sign in, job list, handoff code, deliver, shift | ✅ working |
-| Rider live position, rider earnings, declining a job | ❌ not modelled |
+| Rider live position, customer live tracking | ✅ working |
+| Rider earnings, declining a job, proof-of-delivery capture | ❌ not modelled |
 | Tracking, messaging, WebSockets | ❌ **501** |
 
 Two behaviours worth stating in the handover doc: a menu item or order belonging to another

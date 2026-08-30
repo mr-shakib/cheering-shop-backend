@@ -85,6 +85,9 @@ class DeliveryResult(BaseModel):
     """POST /rider/orders/{id}/deliver"""
 
     order_id: str
+    restaurant_id: str = Field(
+        description="Carried so the completion can be announced on the vendor's channel"
+    )
     status: str
     delivered_at: datetime
     payment_status: str
@@ -99,3 +102,26 @@ class ShiftState(BaseModel):
     is_online: bool
     orders_in_flight: int
     message: str
+
+
+class RiderPosition(BaseModel):
+    """A live position, as read back from Redis."""
+
+    latitude: float
+    longitude: float
+    heading: int | None = Field(default=None, description="Degrees clockwise from north")
+    speed_kph: float | None = None
+    updated_at: datetime | None = None
+
+
+class LocationAccepted(BaseModel):
+    """POST /rider/location — what the app learns from reporting a position."""
+
+    recorded_at: datetime
+    orders_notified: int = Field(
+        description="How many of this rider's customers received the update live"
+    )
+    trail_written: bool = Field(
+        description="Whether this ping also landed in the audit trail — most do not"
+    )
+    next_ping_seconds: int = Field(description="How long to wait before reporting again")

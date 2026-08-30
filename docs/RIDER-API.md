@@ -25,6 +25,8 @@ below needs a `RIDER` access token.
 5. [Delivering](#5-delivering)
 6. [Endpoint summary](#6-endpoint-summary)
 7. [Known limitations](#7-known-limitations)
+8. [Live position](#8-live-position)
+9. [What the customer sees](#9-what-the-customer-sees)
 
 ---
 
@@ -186,6 +188,7 @@ same event as one you confirmed at the door.
 | GET | `/rider/orders/{id}` | rider | One job, plus the handoff code while READY |
 | POST | `/rider/orders/{id}/deliver` | rider | `PICKED_UP → DELIVERED` |
 | PATCH | `/rider/me/shift` | rider | Go on or off shift |
+| POST | `/rider/location` | rider | Report a live position |
 | POST | `/admin/orders/{id}/deliver` | admin | Confirm a delivery the rider could not |
 
 Enrolment and dispatch are administrator endpoints, documented in
@@ -196,20 +199,90 @@ Enrolment and dispatch are administrator endpoints, documented in
 
 ## 7. Known limitations
 
-1. **No live position.** Nothing reports where you are. `rider_profiles` has
-   last-known coordinates and there is a partitioned `rider_location_pings`
-   table waiting for them, but no endpoint writes either, so the customer's map
-   shows your name and not your dot. `live_tracking_available` is honestly
-   `false` rather than showing a courier who is not there.
-2. **No rider earnings screen.** Deliveries are counted (`total_deliveries`) but
+1. **No rider earnings screen.** Deliveries are counted (`total_deliveries`) but
    what a rider is paid is not modelled at all — there is no per-delivery fee,
    no rider payout table, and no endpoint. Vendor payouts exist; rider payouts
    do not.
-3. **You cannot decline a job.** Dispatch assigns and that is the assignment.
+2. **You cannot decline a job.** Dispatch assigns and that is the assignment.
    Refusing, returning an order to the pool, and the penalties real platforms
    attach to both are not modelled. An operator reassigns with
    `POST /admin/orders/{id}/assign-rider`.
-4. **No push.** `WS /ws/orders/{id}/live-tracking` is routed but returns 501,
-   so a new job arrives when you poll for it.
-5. **No proof-of-delivery capture.** No photo, no signature, no drop-off note —
+3. **No push for new jobs.** `WS /ws/orders/{id}/live-tracking` streams one
+   order you already have; there is no channel that tells you a job was
+   assigned. Poll `GET /rider/orders` for that.
+4. **No proof-of-delivery capture.** No photo, no signature, no drop-off note —
    the delivery is the rider's word plus a timestamp.
+
+---
+
+## 8. Live position
+
+While you are on shift, report where you are:
+
+```http
+POST /rider/location
+{"latitude": 23.7936, "longitude": 90.4064, "heading": 47, "speed_kph": 18.5}
+```
+
+`heading` and `speed_kph` are optional — a phone that has just acquired a fix
+has a position before it has a bearing, and holding the position back until it
+does would blank the customer's map for no reason.
+
+```json
+{
+  "success": true,
+  "data": {
+    "recorded_at": "2026-08-30T20:04:11Z",
+    "orders_notified": 1,
+    "trail_written": false,
+    "next_ping_seconds": 5
+  }
+}
+```
+
+Send one every `next_ping_seconds`. The response is honest about what happened
+to it, so the app can show a real "live" indicator rather than assuming one:
+
+| Field | Meaning |
+|---|---|
+| `orders_notified` | How many of your customers received it over their socket |
+| `trail_written` | Whether it also landed in the audit trail. **Usually false** — the trail is decimated to one point per 30s, and that is by design, not a dropped ping |
+
+Your position is only forwarded to customers whose order is `READY` or
+`PICKED_UP`. Before that you are not yet going anywhere on their behalf; after
+delivery the journey is over and where you drive next is not their business.
+
+Stop pinging when you clock off. A position nobody refreshes expires from Redis
+after five minutes, and everything downstream then reports "no live position"
+rather than showing a dot frozen where you were — a stopped courier and a quiet
+app must not look the same on a map.
+
+---
+
+## 9. What the customer sees
+
+`WS /ws/orders/{order_id}/live-tracking` — spec #33, now live. The customer and
+you are the only two parties who may open it; the vendor has their own feed.
+
+The first frame is a snapshot so a client joining mid-journey draws immediately:
+
+```json
+{
+  "type": "tracking.snapshot",
+  "order_id": "…",
+  "status": "PICKED_UP",
+  "eta_minutes": 12,
+  "rider_location": {"latitude": 23.7936, "longitude": 90.4064, "heading": 47},
+  "live_tracking_available": true
+}
+```
+
+After that the channel carries `rider.location` frames from your pings,
+`order.status` frames as the order moves, and `{"type":"ping"}` keepalives every
+25 seconds — an idle socket through a reverse proxy is usually killed inside a
+minute, and a tablet that quietly lost its connection looks exactly like one
+with nothing happening.
+
+Pass the access token as a query parameter (`?token=…`): browsers cannot set an
+`Authorization` header on a WebSocket handshake. It is validated **before** the
+socket is accepted.

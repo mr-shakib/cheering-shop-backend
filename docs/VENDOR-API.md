@@ -430,8 +430,29 @@ Every row also carries `seconds_to_auto_decline`, which is non-null only while
 the order is `PENDING`. Drive your countdown from it rather than from a local
 timer, so a backgrounded app resumes with the right number.
 
-`WS /ws/vendor/live` exists in the route table for push alerts but is **not
-implemented yet** — poll for now.
+### Live push
+
+`WS /ws/vendor/live?token=<access_token>` streams your restaurant's feed, so the
+tablet learns about an order when it is placed rather than when it next polls.
+That matters: the accept window is 60 seconds, and half of it can be gone before
+a poll fires.
+
+The restaurant is resolved from your token, never from a parameter — no vendor
+can subscribe to a competitor's feed by editing a query string. Browsers cannot
+set an `Authorization` header on a WebSocket handshake, so the token goes in the
+query string and is validated **before** the socket is accepted.
+
+Frames:
+
+| `type` | When |
+|---|---|
+| `order.placed` | A customer placed an order with you. Carries the full order |
+| `order.status` | An order moved — accept, reject, ready, handoff, delivered |
+| `ping` | Keepalive every 25s. An idle socket through a proxy dies inside a minute |
+
+Keep polling as a fallback. Publishing is best-effort by design: an order must
+still be placed when Redis is unreachable, so a missed frame is possible and a
+socket is an optimisation, not a source of truth.
 
 ---
 
@@ -854,15 +875,12 @@ accumulating real stats as soon as customers use it.
 
 Be aware of these when planning screens:
 
-1. **Nothing pushes a new order at you.** The customer ordering flow (`/cart`,
-   `/checkout/summary`, `POST /orders`) is live and a real customer order will
-   land in your queue — but you will only see it when you poll, because
-   `WS /ws/vendor/live` is still `501`. Mind the 60-second accept window when
-   choosing an interval.
-2. **No live push.** `WS /ws/vendor/live` is routed but not implemented, so
-   there are no instant new-order alerts. Poll `GET /vendor/orders?status=ACTIVE`
-   — and mind the 60-second accept window when you choose an interval.
-3. **You still see the handoff code.** Riders now have their own API
+1. **A dropped socket is silent.** `WS /ws/vendor/live` pushes orders and
+   status changes (§5), but publishing is best-effort — a Redis outage must not
+   fail an order that is already placed. Keep a polling fallback on
+   `GET /vendor/orders?status=ACTIVE`, and mind the 60-second accept window when
+   choosing its interval.
+2. **You still see the handoff code.** Riders now have their own API
    ([RIDER-API.md](RIDER-API.md)) and read the same code from their job screen,
    which is what makes typing it back proof of presence. Your copy of the field
    remains only because this app was built against it: removing `handoff_code`
@@ -871,23 +889,23 @@ Be aware of these when planning screens:
    keep the code display separable from the input.
    `POST /vendor/orders/{id}/handoff` returns `409 "No rider is available to
    take this order"` only when no verified rider is on shift.
-4. **No scheduled opening hours.** `status` is a manual toggle, and the
+3. **No scheduled opening hours.** `status` is a manual toggle, and the
    business hours saved via `PUT /vendor/hours` (§13) are informational — a
    vendor who forgets to close stays open. Consider a client-side reminder.
-5. **Refunds and payouts are recorded, not executed.** Rejecting a paid order
+4. **Refunds and payouts are recorded, not executed.** Rejecting a paid order
    sets `payment_status` to `REFUNDED`, and `POST /vendor/payouts` records a
    PROCESSING withdrawal — no payment gateway is connected, so in both cases a
    person moves the actual money and then confirms it.
-6. **No push notification registration.** `POST /users/me/devices` is not built,
+5. **No push notification registration.** `POST /users/me/devices` is not built,
    so a backgrounded tablet learns nothing until it polls.
-7. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
+6. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
    wherever the Cloudflare R2 variables are unset, which today includes local
    development. `GET /health/ready` reports storage status without you having
    to attempt an upload.
-8. **One restaurant per vendor.** The API is shaped for multi-outlet support —
+7. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.
-9. **Promotion analytics are thin.** Redemptions are counted at checkout, but
+8. **Promotion analytics are thin.** Redemptions are counted at checkout, but
    there is no per-customer breakdown or cohort view. Launching, pausing and
    reporting all work; `redemptions` and `budget_spent` stay zero until
    checkout ships, and the budget-cap cutoff is enforced there.

@@ -512,6 +512,14 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "endpoint a rider could reach — a courier could not clock on for their "
         "own shift.",
     ),
+    (
+        "POST",
+        "/rider/location",
+        "Decision D2 designed Redis GEOSEARCH for dispatch, a decimated "
+        "Postgres trail for disputes and a live channel for the customer's "
+        "map — and nothing produced a position, so spec #33 streamed nothing "
+        "and had to return 501. This is the write all three read from.",
+    ),
 ]
 
 PREFIX = "/api/v1"

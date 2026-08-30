@@ -30,6 +30,7 @@ from app.schemas.requests import (
 from app.schemas.rider import RiderAssignment
 from app.services import (
     dispatch_service,
+    realtime,
     rider_jobs_service,
     rider_roster_service,
     vendor_application_service,
@@ -337,4 +338,7 @@ async def force_deliver(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
     """
     result = await rider_jobs_service.deliver_as_admin(db, admin, order_id)
     await db.commit()
+    await realtime.publish_order_status(
+        result.order_id, result.restaurant_id, result.status, delivered_at=result.delivered_at
+    )
     return ok(result.model_dump())

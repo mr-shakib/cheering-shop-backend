@@ -19,8 +19,13 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession, Paginated, RiderUser
 from app.core.responses import ok, paginated
-from app.schemas.requests import RiderShiftRequest
-from app.services import rider_jobs_service, rider_roster_service
+from app.schemas.requests import RiderLocationRequest, RiderShiftRequest
+from app.services import (
+    realtime,
+    rider_jobs_service,
+    rider_roster_service,
+    rider_tracking_service,
+)
 
 router = APIRouter(prefix="/rider", tags=["Rider"])
 
@@ -77,6 +82,9 @@ async def deliver(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
     """
     result = await rider_jobs_service.deliver(db, rider, order_id)
     await db.commit()
+    await realtime.publish_order_status(
+        result.order_id, result.restaurant_id, result.status, delivered_at=result.delivered_at
+    )
     return ok(result.model_dump())
 
 
@@ -92,3 +100,30 @@ async def set_shift(body: RiderShiftRequest, rider: RiderUser, db: DbSession):
     state = await rider_roster_service.set_shift(db, rider, body.is_online)
     await db.commit()
     return ok(state.model_dump())
+
+
+@router.post("/location", summary="Report my position [EXTENDED]")
+async def report_location(body: RiderLocationRequest, rider: RiderUser, db: DbSession):
+    """Decision D2's hot path. Send this every `next_ping_seconds` while on shift.
+
+    Three stores on three clocks, because a fleet of 500 riders reporting every
+    five seconds is a hundred writes a second and they cannot all be cheap:
+    Redis takes every ping and is the only copy anything reads live; the
+    Postgres trail and `rider_profiles` take one ping per decimation window,
+    which is enough to answer "where were you at 19:40" without generating
+    millions of dead tuples a day.
+
+    The response tells you what actually happened — how many customers got the
+    update over their socket, whether this one was trailed — so a rider app can
+    show an honest "live" indicator instead of assuming.
+    """
+    result = await rider_tracking_service.record_ping(
+        db,
+        rider,
+        latitude=body.latitude,
+        longitude=body.longitude,
+        heading=body.heading,
+        speed_kph=body.speed_kph,
+    )
+    await db.commit()
+    return ok(result.model_dump())
