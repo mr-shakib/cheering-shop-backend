@@ -435,6 +435,91 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "A bounced transfer. Marking FAILED is itself the refund — the "
         "balance formula excludes failed rows.",
     ),
+    # --- Riders & dispatch --------------------------------------------------
+    # The spec defines a RIDER role, orders.rider_id, live GPS and rider
+    # earnings, but no way for a rider to exist or to arrive on an order.
+    # Nothing wrote rider_id, so ck_orders_rider_required made spec #42 —
+    # POST /vendor/orders/{id}/handoff — unreachable on every real order.
+    (
+        "GET",
+        "/admin/riders",
+        "Dispatch chooses from a pool nobody could see. An operator "
+        "overriding an assignment needs the list dispatch was choosing from, "
+        "with shift state and current load.",
+    ),
+    (
+        "POST",
+        "/admin/riders",
+        "There is no rider signup and there should not be one — /auth/otp/send "
+        "accepts CUSTOMER and VENDOR only. Without this endpoint no RIDER row "
+        "could be created through the API at all, so the dispatch pool was "
+        "permanently empty and the handoff permanently 409.",
+    ),
+    (
+        "PATCH",
+        "/admin/riders/{id}",
+        "is_online and is_verified are what dispatch filters on, and both "
+        "defaulted false with no endpoint to flip them. A rider who cannot go "
+        "on shift is a row, not a courier.",
+    ),
+    (
+        "POST",
+        "/admin/orders/{id}/assign-rider",
+        "The control-centre override every dispatch system has: a bike breaks "
+        "down, a rider no-shows, the automatic choice is wrong. Deliberately "
+        "admin-only — a vendor picking their own rider is not how delivery "
+        "works, and adding it to the vendor API later would break a shipped app.",
+    ),
+    (
+        "POST",
+        "/admin/orders/{id}/deliver",
+        "The fallback when a rider cannot mark their own delivery — dead "
+        "phone, uninstalled app, a dispute settled for the customer. Separate "
+        "from the rider endpoint so the status history shows who was actually "
+        "at the door.",
+    ),
+    # --- The rider app ------------------------------------------------------
+    # §7 names a RIDER and every order carries rider_id, but the spec defines
+    # no endpoint a rider can call. PICKED_UP -> DELIVERED was therefore the
+    # one transition nothing in the system could perform, which stranded every
+    # order a step short of done and made earnings, payouts and reviews —
+    # all derived from DELIVERED — unreachable.
+    (
+        "GET",
+        "/rider/orders",
+        "A courier with no way to see what they are carrying. Two tabs, the "
+        "same working set the vendor queue has, scoped to the assigned rider.",
+    ),
+    (
+        "GET",
+        "/rider/orders/{id}",
+        "Where to collect, what to collect, where it goes — and the handoff "
+        "code. This is decision D3 as originally designed: the code on the "
+        "rider's screen is what makes the vendor typing it back proof of "
+        "presence rather than a formality.",
+    ),
+    (
+        "POST",
+        "/rider/orders/{id}/deliver",
+        "The missing transition. Nothing wrote DELIVERED, so no order ever "
+        "completed, no vendor could be paid for one, and no customer could "
+        "review one.",
+    ),
+    (
+        "PATCH",
+        "/rider/me/shift",
+        "Dispatch only assigns to riders who are online, and is_online had no "
+        "endpoint a rider could reach — a courier could not clock on for their "
+        "own shift.",
+    ),
+    (
+        "POST",
+        "/rider/location",
+        "Decision D2 designed Redis GEOSEARCH for dispatch, a decimated "
+        "Postgres trail for disputes and a live channel for the customer's "
+        "map — and nothing produced a position, so spec #33 streamed nothing "
+        "and had to return 501. This is the write all three read from.",
+    ),
 ]
 
 PREFIX = "/api/v1"

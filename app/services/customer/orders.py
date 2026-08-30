@@ -32,6 +32,8 @@ from app.models.order import Order, OrderItem, OrderItemAddOn, OrderStatusHistor
 from app.models.promo import PromoRedemption
 from app.models.restaurant import Restaurant
 from app.models.review import Review
+from app.models.rider import RiderProfile
+from app.models.user import User
 from app.schemas.customer import (
     CheckoutSummary,
     OrderDetail,
@@ -40,6 +42,7 @@ from app.schemas.customer import (
     OrderSummary,
     OrderTracking,
     PlacedOrder,
+    RiderBrief,
 )
 from app.schemas.requests import OrderCreateRequest
 from app.services.customer import cart as cart_service
@@ -480,16 +483,47 @@ async def cancel_order(
     return await order_detail(db, user_id, order_id)
 
 
+async def _rider_brief(db: AsyncSession, order: Order) -> RiderBrief | None:
+    """Who is bringing it — name, photo, rating, vehicle. Never a phone number.
+
+    `POST /orders/{id}/call` bridges the two parties without either learning
+    the other's number, so nothing here needs to leak one.
+    """
+    if order.rider_id is None:
+        return None
+    user = await db.get(User, order.rider_id)
+    if user is None:
+        return None
+    profile = await db.get(RiderProfile, order.rider_id)
+    return RiderBrief(
+        id=str(user.id),
+        full_name=user.full_name or "Your rider",
+        avatar_url=user.avatar_url,
+        rating_avg=float(profile.rating_avg) if profile else None,
+        vehicle_type=profile.vehicle_type if profile else None,
+    )
+
+
 async def tracking(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> OrderTracking:
     """Spec #31. Initialises the map; the WebSocket streams updates after.
 
-    `rider_location` stays null and `live_tracking_available` false until a
-    rider client exists to report a position. Interpolating a plausible dot
-    would be worse than an honest absence — a customer watching a fake courier
-    approach is being lied to.
+    `rider_location` is the position Redis holds right now, and only while the
+    order is READY or PICKED_UP. It is null whenever nobody has heard from the
+    rider recently, and `live_tracking_available` says which case you are in —
+    a dot frozen where a courier was ten minutes ago reads as someone who has
+    stopped moving, not as an app that has gone quiet, so the absence is
+    reported rather than papered over.
+
+    The WebSocket takes over from here; this call exists to draw the first
+    frame without waiting for a ping.
     """
+    from app.services.rider import tracking as rider_tracking
+
     order = await _load_order(db, user_id, order_id)
     restaurant = await db.get(Restaurant, order.restaurant_id)
+    rider = await _rider_brief(db, order)
+    position = await rider_tracking.position_for_order(db, order)
+    live = rider_tracking.is_fresh(position)
 
     eta_minutes = None
     if order.estimated_delivery_at and str(order.status) not in {
@@ -511,9 +545,9 @@ async def tracking(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> Order
         delivery_address_text=order.delivery_address_text,
         estimated_delivery_at=order.estimated_delivery_at,
         eta_minutes=eta_minutes,
-        rider=None,
-        rider_location=None,
-        live_tracking_available=False,
+        rider=rider,
+        rider_location=position.model_dump(mode="json") if live and position else None,
+        live_tracking_available=live,
     )
 
 

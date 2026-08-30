@@ -20,11 +20,23 @@ from app.api.deps import AdminUser, DbSession, Paginated
 from app.core.responses import ok, paginated
 from app.schemas.requests import (
     ApplicationDecisionRequest,
+    AssignRiderRequest,
     PayoutFailRequest,
+    RiderCreateRequest,
+    RiderUpdateRequest,
     SetCommissionRequest,
     VerifyRestaurantRequest,
 )
-from app.services import vendor_application_service, vendor_finance_service, vendor_service
+from app.schemas.rider import RiderAssignment
+from app.services import (
+    dispatch_service,
+    realtime,
+    rider_jobs_service,
+    rider_roster_service,
+    vendor_application_service,
+    vendor_finance_service,
+    vendor_service,
+)
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -215,3 +227,118 @@ async def fail_payout(
             "payout": vendor_finance_service.to_out(payout).model_dump(),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Riders & dispatch
+# ---------------------------------------------------------------------------
+
+
+@router.get("/riders", summary="The rider roster [EXTENDED]")
+async def list_riders(
+    admin: AdminUser,
+    db: DbSession,
+    page: Paginated,
+    online_only: Annotated[bool, Query(description="Only riders currently on shift")] = False,
+):
+    """Most idle first — the same order dispatch itself picks in, so an operator
+    overriding a choice is looking at the list dispatch was choosing from."""
+    riders, total = await rider_roster_service.list_riders(
+        db, page.limit, page.offset, online_only=online_only
+    )
+    return paginated(
+        [r.model_dump() for r in riders], total=total, limit=page.limit, offset=page.offset
+    )
+
+
+@router.post("/riders", summary="Enrol a rider [EXTENDED]")
+async def create_rider(body: RiderCreateRequest, admin: AdminUser, db: DbSession):
+    """Riders are created here or not at all.
+
+    `/auth/otp/send` accepts CUSTOMER and VENDOR only — a public endpoint that
+    mints couriers would let anyone join the delivery fleet — so enrolment is
+    gated on an administrator the same way vendor approval is. The account gets
+    no password: there are no rider-facing endpoints for a token to reach yet,
+    and a credential with nothing behind it is worse than none.
+    """
+    rider = await rider_roster_service.create_rider(db, body)
+    await db.commit()
+    return ok(rider.model_dump())
+
+
+@router.patch("/riders/{rider_id}", summary="Shift state and clearance [EXTENDED]")
+async def update_rider(
+    rider_id: uuid.UUID, body: RiderUpdateRequest, admin: AdminUser, db: DbSession
+):
+    """The two flags dispatch filters on — `is_online` (on shift) and
+    `is_verified` (cleared to carry food) — plus the rider's sign-in password.
+
+    `password` is how a rider gets credentials after enrolment, or gets them
+    reset. There is no self-service path: `/auth/password/forgot` mails an OTP,
+    and a courier account is not something to hand back on the strength of an
+    inbox.
+
+    Taking a rider off shift does not touch what they are already holding —
+    those orders are in a bag on a motorcycle, and unassigning them would
+    strand the customer rather than recall the food.
+    """
+    rider = await rider_roster_service.set_flags(
+        db,
+        rider_id,
+        is_online=body.is_online,
+        is_verified=body.is_verified,
+        password=body.password,
+    )
+    await db.commit()
+    return ok(rider.model_dump())
+
+
+@router.post("/orders/{order_id}/assign-rider", summary="Assign or reassign a rider [EXTENDED]")
+async def assign_rider(
+    order_id: uuid.UUID, body: AssignRiderRequest, admin: AdminUser, db: DbSession
+):
+    """The operator override on dispatch — foodpanda's control-centre reassign.
+
+    Orders are assigned automatically when a vendor accepts them, and again at
+    READY if the pool was empty the first time. This is what an operator uses
+    when the automatic choice is wrong: a rider whose bike broke down, a
+    no-show, a manual rebalance. Omit `rider_id` to ask dispatch to pick again
+    instead of naming someone.
+
+    The vendor API deliberately has no equivalent. A vendor choosing their own
+    rider is not how any delivery platform works, and adding it later would be
+    a breaking change to a shipped app.
+    """
+    order, rider = await dispatch_service.assign_to_order(db, order_id, body.rider_id)
+    await db.commit()
+
+    user, profile = await rider_roster_service.get_rider(db, rider.id)
+    in_flight = await dispatch_service.count_in_flight(db, rider.id)
+    return ok(
+        RiderAssignment(
+            order_id=str(order.id),
+            status=str(order.status),
+            rider=rider_roster_service.to_out(user, profile, in_flight),
+            chosen_by="operator" if body.rider_id else "dispatch",
+            message=f"{rider.full_name or 'The rider'} is now carrying this order",
+        ).model_dump()
+    )
+
+
+@router.post("/orders/{order_id}/deliver", summary="Confirm a delivery [EXTENDED]")
+async def force_deliver(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
+    """The fallback for when the rider cannot mark it themselves — a dead phone,
+    an uninstalled app, a dispute resolved in the customer's favour.
+
+    Deliberately separate from `POST /rider/orders/{id}/deliver` rather than a
+    shared endpoint with a role switch: the status history records ADMIN as the
+    actor, so a delivery nobody was present for is visibly not the same event as
+    one a courier confirmed at the door. Use it when the rider genuinely cannot,
+    not as the normal path.
+    """
+    result = await rider_jobs_service.deliver_as_admin(db, admin, order_id)
+    await db.commit()
+    await realtime.publish_order_status(
+        result.order_id, result.restaurant_id, result.status, delivered_at=result.delivered_at
+    )
+    return ok(result.model_dump())

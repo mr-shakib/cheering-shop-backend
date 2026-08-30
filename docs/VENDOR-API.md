@@ -9,10 +9,11 @@ Interactive docs: `https://api.cheeringshop.online/docs`
 Signing up as a vendor is covered in [AUTH-API.md](AUTH-API.md) §11. Everything
 in this document assumes you already hold a `VENDOR` access token.
 
-Everything below is implemented and covered by tests. Two things this document
-describes are **not** live yet and are called out where they matter: the
-customer ordering flow that fills the queue, and the rider app that receives the
-handoff PIN. See [Known limitations](#known-limitations).
+Everything below is implemented and covered by tests. The customer ordering
+flow that fills your queue is live, riders are dispatched automatically, and an
+order now runs all the way to DELIVERED. What is still missing is real-time
+push and the rider-side display of the handoff code — see
+[Known limitations](#known-limitations).
 
 ---
 
@@ -429,8 +430,29 @@ Every row also carries `seconds_to_auto_decline`, which is non-null only while
 the order is `PENDING`. Drive your countdown from it rather than from a local
 timer, so a backgrounded app resumes with the right number.
 
-`WS /ws/vendor/live` exists in the route table for push alerts but is **not
-implemented yet** — poll for now.
+### Live push
+
+`WS /ws/vendor/live?token=<access_token>` streams your restaurant's feed, so the
+tablet learns about an order when it is placed rather than when it next polls.
+That matters: the accept window is 60 seconds, and half of it can be gone before
+a poll fires.
+
+The restaurant is resolved from your token, never from a parameter — no vendor
+can subscribe to a competitor's feed by editing a query string. Browsers cannot
+set an `Authorization` header on a WebSocket handshake, so the token goes in the
+query string and is validated **before** the socket is accepted.
+
+Frames:
+
+| `type` | When |
+|---|---|
+| `order.placed` | A customer placed an order with you. Carries the full order |
+| `order.status` | An order moved — accept, reject, ready, handoff, delivered |
+| `ping` | Keepalive every 25s. An idle socket through a proxy dies inside a minute |
+
+Keep polling as a fallback. Publishing is best-effort by design: an order must
+still be placed when Redis is unreachable, so a missed frame is possible and a
+socket is an optimisation, not a source of truth.
 
 ---
 
@@ -500,6 +522,19 @@ Success moves the order to `PICKED_UP` and burns the code.
 Where to read the code: `handoff_code` in the `ready` response, and again in
 `GET /vendor/orders/{id}` **while the order is READY** — so an app restart
 cannot strand a pickup. After pickup it is `null` everywhere.
+
+**Reissuing a code.** Calling `POST /vendor/orders/{id}/ready` again on an order
+that is already READY issues a fresh code and restores the full attempt budget.
+That is the way out of the lockout below, and the only one: the order stays
+READY, `ready_at` keeps its original value, and no status-history row is
+written, because nothing changed status. Expect a new `handoff_code` in the
+response and show that one.
+
+**Who the rider is.** You do not choose. A rider is assigned automatically when
+you accept the order — during the cooking window, so they have time to reach
+you — and again at `ready` if nobody was on shift the first time. There is no
+vendor endpoint to pick or change a rider; an operator does that from the admin
+side when something goes wrong.
 
 > Displaying the code to the vendor is a deliberate interim posture: with no
 > rider app shipped yet, nothing else could receive it. When the rider app
@@ -643,6 +678,11 @@ All require a `VENDOR` bearer token unless noted.
 | GET | `/admin/payouts` | admin | Transfer work queue |
 | POST | `/admin/payouts/{id}/complete` | admin | Confirm a transfer |
 | POST | `/admin/payouts/{id}/fail` | admin | Bounce a transfer (auto-refunds) |
+| GET | `/admin/riders` | admin | The dispatch pool, most idle first |
+| POST | `/admin/riders` | admin | Enrol a rider |
+| PATCH | `/admin/riders/{id}` | admin | Shift state and clearance |
+| POST | `/admin/orders/{id}/assign-rider` | admin | Assign or reassign a rider |
+| POST | `/admin/orders/{id}/deliver` | admin | Confirm a delivery the rider could not |
 
 Vendor **registration** and login are in [AUTH-API.md](AUTH-API.md).
 
@@ -826,9 +866,8 @@ PATCH /vendor/promotions/{id}
 Nothing else about a live promotion can change — repricing an offer customers
 have already seen is a bait-and-switch. Ended promotions are immutable.
 
-**Until the customer checkout module ships, nothing can redeem a promotion** —
-stats read zero. The offer goes live the moment checkout does; see Known
-limitations.
+Promotions are redeemed at checkout, which is live, so a launched offer starts
+accumulating real stats as soon as customers use it.
 
 ---
 
@@ -836,38 +875,38 @@ limitations.
 
 Be aware of these when planning screens:
 
-1. **Nothing fills the queue yet.** The customer ordering flow (`/cart`,
-   `/checkout/summary`, `POST /orders`) is still `501`, so on a live server your
-   order queue will be empty no matter what you do. Every endpoint in §5–§7
-   works and is tested; there is simply no way for a real order to arrive until
-   that module ships. Build against the contracts and seed test data directly if
-   you need a populated screen.
-2. **No live push.** `WS /ws/vendor/live` is routed but not implemented, so
-   there are no instant new-order alerts. Poll `GET /vendor/orders?status=ACTIVE`
-   — and mind the 60-second accept window when you choose an interval.
-3. **No rider app.** Nothing delivers the handoff code to a rider yet, and no
-   rider is ever assigned to an order. `POST /vendor/orders/{id}/handoff` will
-   therefore return `409 "No rider has been assigned to this order yet"` on a
-   real order. The `handoff_code` flow (§7) is fully exercisable end to end
-   regardless.
-4. **No scheduled opening hours.** `status` is a manual toggle, and the
+1. **A dropped socket is silent.** `WS /ws/vendor/live` pushes orders and
+   status changes (§5), but publishing is best-effort — a Redis outage must not
+   fail an order that is already placed. Keep a polling fallback on
+   `GET /vendor/orders?status=ACTIVE`, and mind the 60-second accept window when
+   choosing its interval.
+2. **You still see the handoff code.** Riders now have their own API
+   ([RIDER-API.md](RIDER-API.md)) and read the same code from their job screen,
+   which is what makes typing it back proof of presence. Your copy of the field
+   remains only because this app was built against it: removing `handoff_code`
+   from the `ready` response and the order detail is the whole change whenever
+   you are ready, and the verification underneath does not move. Until then,
+   keep the code display separable from the input.
+   `POST /vendor/orders/{id}/handoff` returns `409 "No rider is available to
+   take this order"` only when no verified rider is on shift.
+3. **No scheduled opening hours.** `status` is a manual toggle, and the
    business hours saved via `PUT /vendor/hours` (§13) are informational — a
    vendor who forgets to close stays open. Consider a client-side reminder.
-5. **Refunds and payouts are recorded, not executed.** Rejecting a paid order
+4. **Refunds and payouts are recorded, not executed.** Rejecting a paid order
    sets `payment_status` to `REFUNDED`, and `POST /vendor/payouts` records a
    PROCESSING withdrawal — no payment gateway is connected, so in both cases a
    person moves the actual money and then confirms it.
-6. **No push notification registration.** `POST /users/me/devices` is not built,
+5. **No push notification registration.** `POST /users/me/devices` is not built,
    so a backgrounded tablet learns nothing until it polls.
-7. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
+6. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
    wherever the Cloudflare R2 variables are unset, which today includes local
    development. `GET /health/ready` reports storage status without you having
    to attempt an upload.
-8. **One restaurant per vendor.** The API is shaped for multi-outlet support —
+7. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.
-9. **Promotions cannot be redeemed yet.** They depend on the same unshipped
-   checkout module as the order queue (limitation 1). Launching, pausing and
+8. **Promotion analytics are thin.** Redemptions are counted at checkout, but
+   there is no per-customer breakdown or cohort view. Launching, pausing and
    reporting all work; `redemptions` and `budget_spent` stay zero until
    checkout ships, and the budget-cap cutoff is enforced there.
 

@@ -130,6 +130,151 @@ async def admin_token():
 
 
 @pytest.fixture
+async def kitchen(vendor):
+    """An OPEN restaurant with a real menu: two dishes, variants and add-ons.
+
+    Burger has variants (so it exercises the "variant required" rule); Coke has
+    none (so it exercises the opposite).
+    """
+    from sqlalchemy import update
+
+    from app.core.database import SessionLocal
+    from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
+    from app.models.restaurant import Restaurant
+
+    async with SessionLocal() as s:
+        await s.execute(
+            update(Restaurant)
+            .where(Restaurant.id == vendor.restaurant.id)
+            .values(status="OPEN", delivery_fee_base=4000, min_order_amount=0)
+        )
+        category = MenuCategory(
+            id=uuid.uuid4(), restaurant_id=vendor.restaurant.id, name="Mains", sort_order=1
+        )
+        s.add(category)
+        await s.flush()
+
+        burger = MenuItem(
+            id=uuid.uuid4(),
+            category_id=category.id,
+            restaurant_id=vendor.restaurant.id,
+            name="Beef Burger",
+            base_price=30000,  # 300 taka
+        )
+        coke = MenuItem(
+            id=uuid.uuid4(),
+            category_id=category.id,
+            restaurant_id=vendor.restaurant.id,
+            name="Coke",
+            base_price=6000,  # 60 taka
+        )
+        s.add_all([burger, coke])
+        await s.flush()
+
+        large = ItemVariant(
+            id=uuid.uuid4(), menu_item_id=burger.id, name="Large", price=30000, is_default=True
+        )
+        cheese = ItemAddOn(
+            id=uuid.uuid4(), menu_item_id=burger.id, name="Extra cheese", price=3000
+        )
+        s.add_all([large, cheese])
+        await s.commit()
+
+    vendor.category_id = str(category.id)
+    vendor.burger_id = str(burger.id)
+    vendor.variant_id = str(large.id)
+    vendor.addon_id = str(cheese.id)
+    vendor.coke_id = str(coke.id)
+    return vendor
+
+
+@pytest.fixture
+async def shopper(order_customer):
+    """A signed-in customer with one saved address, ~1.6 km from the kitchen."""
+    from app.core.database import SessionLocal
+    from app.core.security import create_access_token
+    from app.models.address import Address
+
+    address = Address(
+        id=uuid.uuid4(),
+        user_id=order_customer.id,
+        type="HOME",
+        street_address="House 4, Road 2, Dhanmondi, Dhaka",
+        latitude=23.8080,
+        longitude=90.4064,
+        is_default=True,
+    )
+    async with SessionLocal() as s:
+        s.add(address)
+        await s.commit()
+
+    token = create_access_token(str(order_customer.id), order_customer.role)
+    order_customer.headers = {"Authorization": f"Bearer {token}"}
+    order_customer.address_id = str(address.id)
+    yield order_customer
+
+    from sqlalchemy import delete
+
+    from app.models.cart import Cart
+
+    async with SessionLocal() as s:
+        await s.execute(delete(Cart).where(Cart.user_id == order_customer.id))
+        await s.execute(delete(Address).where(Address.user_id == order_customer.id))
+        await s.commit()
+
+
+@pytest.fixture
+async def riders(db_available):
+    """Factory for riders dispatch will actually consider.
+
+    The shared `rider` fixture in conftest deliberately has no
+    ``rider_profiles`` row — it exists to satisfy the orders FK, not to be
+    dispatched — so tests that need a dispatchable rider build one here.
+    """
+    from sqlalchemy import delete
+
+    from app.core.database import SessionLocal
+    from app.models.order import Order
+    from app.models.rider import RiderProfile
+    from app.models.user import User
+
+    made: list[User] = []
+
+    async def _make(*, is_online: bool = True, is_verified: bool = True, name: str = "Demo Rider"):
+        user = User(
+            id=uuid.uuid4(),
+            role="RIDER",
+            email=f"rider-{uuid.uuid4().hex[:12]}@example.com",
+            full_name=name,
+        )
+        async with SessionLocal() as session:
+            session.add(user)
+            await session.flush()
+            session.add(
+                RiderProfile(
+                    user_id=user.id,
+                    user_role="RIDER",
+                    is_online=is_online,
+                    is_verified=is_verified,
+                    vehicle_type="MOTORCYCLE",
+                )
+            )
+            await session.commit()
+        made.append(user)
+        return user
+
+    yield _make
+
+    # fk_orders_rider is ON DELETE RESTRICT, so the orders go first. The
+    # profile cascades with the user.
+    async with SessionLocal() as session:
+        for user in made:
+            await session.execute(delete(Order).where(Order.rider_id == user.id))
+            await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()
+
+
+@pytest.fixture
 async def cleanup_users():
     """Remove users created by identifier during a test, plus their OTP rows.
 

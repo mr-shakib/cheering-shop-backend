@@ -184,6 +184,8 @@ class Settings(BaseSettings):
     RIDER_PING_INTERVAL_SECONDS: int = 5  # what the rider app sends
     RIDER_TRAIL_DECIMATION_SECONDS: int = 30  # what actually lands in Postgres
     RIDER_LOCATION_TTL_SECONDS: int = 300  # Redis key expiry for a stale rider
+    DISPATCH_SEARCH_RADIUS_M: int = 5000   # how far to look for a nearby rider
+    MAX_CONCURRENT_JOBS: int = 3           # orders one rider may hold at once
 
     @field_validator("CORS_ORIGINS", "ALLOWED_UPLOAD_TYPES", mode="before")
     @classmethod

@@ -45,6 +45,13 @@ from app.schemas.requests.promotions import (
     PromotionCreateRequest,
     PromotionUpdateRequest,
 )
+from app.schemas.requests.riders import (
+    AssignRiderRequest,
+    RiderCreateRequest,
+    RiderLocationRequest,
+    RiderShiftRequest,
+    RiderUpdateRequest,
+)
 from app.schemas.requests.users import (
     AddressCreateRequest,
     ChangePasswordRequest,
@@ -145,4 +152,10 @@ __all__ = [
     # promotions
     "PromotionCreateRequest",
     "PromotionUpdateRequest",
+    # riders & dispatch
+    "RiderCreateRequest",
+    "RiderUpdateRequest",
+    "RiderShiftRequest",
+    "RiderLocationRequest",
+    "AssignRiderRequest",
 ]

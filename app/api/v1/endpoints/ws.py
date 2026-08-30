@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
-from app.core.errors import NotImplementedYetError
+from app.core.errors import AppError
 from app.core.security import decode_token
 from app.services import realtime
 
@@ -61,21 +61,47 @@ async def order_live_tracking(
 ):
     """Spec #33. Streams rider telemetry to the customer.
 
-    **Not implemented, and deliberately so.** The payload this channel exists
-    to carry is `{lat, lng, heading, eta_mins}`, and nothing produces it: there
-    is no rider client, so `rider_location_pings` is never written and Redis
-    never receives a position. Accepting the socket and streaming an
-    interpolated dot between restaurant and customer would show a courier who
-    is not there — worse than an honest 501.
+    Two parties may listen: the customer who placed the order and the rider
+    carrying it. The vendor is excluded — they have their own restaurant-scoped
+    feed, and where a courier is minute by minute after the food left the
+    kitchen is not theirs to watch. Anyone else gets the same close code as a
+    non-existent order, because distinguishing them confirms which ids are real.
 
-    `GET /orders/{id}/tracking` already returns everything that IS real: the
-    status timeline, the ETA, and both endpoints of the journey.
+    A snapshot goes out before the stream, so a client connecting mid-journey
+    draws immediately instead of holding a blank map until the next ping. After
+    that the channel carries `rider.location` frames from `POST /rider/location`
+    and `order.status` frames from the lifecycle, interleaved with `ping`
+    keepalives.
+
+    `live_tracking_available: false` in the snapshot means exactly what it says:
+    nobody has heard from the rider recently. The socket stays open — the app
+    may come back — but nothing invents a position in the meantime.
     """
-    _ = await _authenticate(websocket, token)
-    raise NotImplementedYetError(
-        "Live rider tracking needs a rider client to report positions. "
-        "Use GET /orders/{order_id}/tracking for status, timeline and ETA."
-    )
+    payload = await _authenticate(websocket, token)
+    user_id = payload.get("sub")
+    if not user_id:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Malformed token")
+        return
+
+    from app.core.database import SessionLocal
+    from app.services import rider_tracking_service
+
+    async with SessionLocal() as db:
+        try:
+            order = await rider_tracking_service.authorize_order_channel(
+                db, uuid.UUID(user_id), order_id
+            )
+        except AppError:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Not your order")
+            return
+        snapshot = await rider_tracking_service.snapshot(db, order)
+
+    await websocket.accept()
+    await websocket.send_json(snapshot)
+    try:
+        await _pump(websocket, realtime.order_channel(str(order_id)))
+    except WebSocketDisconnect:
+        return
 
 
 @router.websocket("/vendor/live")

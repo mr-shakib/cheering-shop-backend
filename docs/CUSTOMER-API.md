@@ -144,11 +144,41 @@ PREPARING, READY or PICKED_UP in one filter.
 `GET /orders/{id}/tracking` bootstraps the map: status, the timeline that draws
 the dots on Ride Assign, both endpoints of the journey, and `eta_minutes`.
 
-> **`rider_location` is always `null` today and `live_tracking_available` is
-> `false`.** There is no rider app, so nothing reports a position. This is
-> deliberate rather than unfinished — an interpolated dot would show a courier
-> who is not there. `WS /ws/orders/{id}/live-tracking` returns **501** for the
-> same reason. Everything else on the tracking screen is real.
+`rider` names who is bringing it once dispatch has assigned someone — name,
+photo, rating and vehicle, never a phone number (`POST /orders/{id}/call`
+bridges the two of you without either side learning the other's).
+
+**`rider_location` is live while the order is READY or PICKED_UP**, and `null`
+otherwise. Before READY the rider is not yet travelling on your behalf; after
+delivery the journey is over. It is also `null` whenever the rider's app has
+gone quiet — `live_tracking_available` tells you which case you are in, and a
+dot frozen where a courier was ten minutes ago would read as someone who had
+stopped moving, so the absence is reported rather than papered over.
+
+### Live tracking
+
+`WS /ws/orders/{id}/live-tracking?token=<access_token>` streams the journey.
+Browsers cannot set an `Authorization` header on a WebSocket handshake, so the
+token goes in the query string; it is validated before the socket is accepted.
+Only you and your rider may open it.
+
+The first frame is a snapshot, so a screen opened mid-journey draws immediately:
+
+```json
+{
+  "type": "tracking.snapshot",
+  "order_id": "…",
+  "status": "PICKED_UP",
+  "eta_minutes": 12,
+  "rider_location": {"latitude": 23.7936, "longitude": 90.4064, "heading": 47},
+  "live_tracking_available": true
+}
+```
+
+Then: `rider.location` frames roughly every five seconds while the rider is
+moving, `order.status` frames as the order advances, and `{"type":"ping"}`
+keepalives every 25 seconds. Keep the HTTP call as your fallback — publishing is
+best-effort, so a socket is an optimisation rather than a source of truth.
 
 `POST /orders/{id}/cancel` works **only while PENDING**. After the vendor
 accepts, food is being cooked and the answer is a 409.

@@ -43,6 +43,7 @@ from app.schemas.vendor import (
     VendorOrderItemOut,
     VendorOrderSummary,
 )
+from app.services.rider import dispatch
 
 log = structlog.get_logger()
 
@@ -225,6 +226,12 @@ async def accept_order(
     order.auto_decline_at = None
     await db.flush()
 
+    # Dispatch here, not at READY: a rider needs the cooking window to travel to
+    # the restaurant, which is the whole point of assigning before the food is
+    # done. Best effort — see `dispatch.auto_assign` for why an empty rider pool
+    # must not fail a vendor's accept.
+    await dispatch.auto_assign(db, order)
+
     log.info("order_accepted", order_id=str(order.id), restaurant_id=str(restaurant.id))
     return to_summary(order)
 
@@ -297,9 +304,26 @@ async def mark_ready(
     Stored twice on purpose: the HMAC is what `handoff_order` verifies; the
     Fernet ciphertext is what lets the detail endpoint re-display the code
     while READY (an app restart must not strand a pickup).
+
+    **Calling this on an order that is already READY reissues the PIN.** That
+    is the only way out of the attempt lockout: `handoff_order` kills a code
+    after `HANDOFF_MAX_ATTEMPTS` wrong guesses and tells the vendor to mark the
+    order ready again, so this has to answer. It deliberately does not go
+    through `_transition` to do it — ORDER_TRANSITIONS has no READY -> READY
+    edge, adding one would loosen the state machine for every other caller, and
+    a self-transition would write a status-history row recording a change that
+    did not happen. `ready_at` keeps its original value for the same reason:
+    the food became ready once, and prep-time analytics should not be rewritten
+    by a reissue.
     """
     order = await _get_order(db, restaurant, order_id)
-    await _transition(db, order, OrderStatus.READY, actor)
+    reissue = str(order.status) == OrderStatus.READY
+    if not reissue:
+        await _transition(db, order, OrderStatus.READY, actor)
+        order.ready_at = datetime.now(UTC)
+        # A rider may still be missing if nobody was on shift when the kitchen
+        # accepted. Last chance to find one before the handoff has to refuse.
+        await dispatch.auto_assign(db, order)
 
     pin = generate_rider_pin()
     order.rider_pin_hash = hash_rider_pin(pin, str(order.id))
@@ -308,10 +332,13 @@ async def mark_ready(
     # Reset per issuance: a fresh secret deserves a fresh attempt budget, and
     # carrying a spent one over would lock out a legitimate rider.
     order.handoff_attempts = 0
-    order.ready_at = datetime.now(UTC)
     await db.flush()
 
-    log.info("order_ready", order_id=str(order.id), restaurant_id=str(restaurant.id))
+    log.info(
+        "handoff_pin_reissued" if reissue else "order_ready",
+        order_id=str(order.id),
+        restaurant_id=str(restaurant.id),
+    )
     return to_summary(order), pin
 
 

@@ -76,4 +76,33 @@ async def subscribe(channel: str) -> AsyncIterator[AsyncIterator[dict]]:
         await pubsub.aclose()
 
 
-__all__ = ["order_channel", "publish", "subscribe", "vendor_channel"]
+async def publish_order_status(
+    order_id: str,
+    restaurant_id: str,
+    status: str,
+    **extra: Any,
+) -> None:
+    """Announce a lifecycle change on both channels that care about it.
+
+    Two audiences, one event: the vendor tablet watches its restaurant's feed
+    and the customer watches their own order's. Publishing to both here is what
+    stops the two from drifting — a status that reached one screen and not the
+    other is worse than one that reached neither, because only one side knows
+    it is out of date.
+
+    **Call this after the commit, never inside the transaction.** Announcing a
+    transition that a rollback then erased puts a phantom ticket on a kitchen
+    screen, and nothing takes it off again.
+    """
+    event = {"type": "order.status", "order_id": order_id, "status": status, **extra}
+    await publish(vendor_channel(restaurant_id), event)
+    await publish(order_channel(order_id), event)
+
+
+__all__ = [
+    "order_channel",
+    "publish",
+    "publish_order_status",
+    "subscribe",
+    "vendor_channel",
+]
