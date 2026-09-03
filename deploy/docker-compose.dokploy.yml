@@ -90,6 +90,10 @@ services:
       DEBUG: ${DEBUG:-false}
       ENABLE_DOCS: ${ENABLE_DOCS:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # The admin console's subdomain. Attach it to THIS service in Dokploy
+      # (Domains tab, port 8000) alongside the API host; the app serves the
+      # console at "/" for requests carrying this Host. See docs/ADMIN-APP.md.
+      ADMIN_UI_HOST: ${ADMIN_UI_HOST:-}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       RIDER_PIN_PEPPER: ${RIDER_PIN_PEPPER}
       OTP_PEPPER: ${OTP_PEPPER}

@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # NoDecode: without it, pydantic-settings tries json.loads() on the raw
     # .env value before any validator runs, so `a,b` raises a SettingsError.
     CORS_ORIGINS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Hostname on which the admin console is served at "/" instead of "/admin/",
+    # e.g. "admin.cheeringshop.online". Point that subdomain at the SAME api
+    # service; AdminHostMiddleware rewrites its paths. Unset = console is only
+    # reachable at /admin/ on the API host.
+    ADMIN_UI_HOST: str | None = None
 
     # Reverse-proxy trust. Behind Caddy/nginx, request.client.host is the PROXY's
     # address unless uvicorn is told which peers may set X-Forwarded-For.

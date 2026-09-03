@@ -3,17 +3,23 @@
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import check_database, dispose_engine
 from app.core.errors import register_exception_handlers
-from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import (
+    AdminHostMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.core.redis import check_redis, close_redis
 from app.core.responses import ok
 from app.services.email_service import check_email_config
@@ -79,10 +85,25 @@ if settings.CORS_ORIGINS:
         allow_headers=["*"],
     )
 
+# Added last, so it is OUTERMOST: the path rewrite for the admin subdomain
+# must land before the security-headers middleware decides which CSP applies.
+app.add_middleware(AdminHostMiddleware)
+
 register_exception_handlers(app)
 
 # Spec §2: every endpoint lives under /api/v1
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# The admin console: static HTML/JS served by the API itself, so it needs no
+# build step, no separate host and no CORS entry. It lives at /admin (outside
+# the /api/v1 prefix, so it cannot collide with the /api/v1/admin endpoints)
+# and calls the API on the same origin. `SecurityHeadersMiddleware` relaxes the
+# CSP for exactly this path prefix.
+app.mount(
+    "/admin",
+    StaticFiles(directory=Path(__file__).parent / "static" / "admin", html=True),
+    name="admin_ui",
+)
 
 
 @app.get("/health", tags=["System"], summary="Liveness probe")

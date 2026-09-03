@@ -9,7 +9,11 @@
 	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 }
 
-{$DOMAIN} {
+# ADMIN_DOMAIN is the admin console's subdomain (ADMIN_UI_HOST in .env). It is
+# served by the same upstream: the app looks at the Host header and serves the
+# console at "/" for that name. When unset Caddy sees an empty label and simply
+# serves DOMAIN alone.
+{$DOMAIN} {$ADMIN_DOMAIN} {
 	encode zstd gzip
 
 	header {
@@ -19,8 +23,10 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# The API serves JSON, never HTML with scripts.
-		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		# No Content-Security-Policy here: the app sets one per path in
+		# SecurityHeadersMiddleware — strict for the JSON API, script-friendly
+		# for the admin console. A CSP set in Caddy would override the app's
+		# and break the console.
 		-Server
 	}
 

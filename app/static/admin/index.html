@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CR Shop Admin</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <!-- Sign in -->
+  <section id="login-view" class="centered" hidden>
+    <form id="login-form" class="card narrow">
+      <h1>CR Shop Admin</h1>
+      <p class="muted">Sign in with an administrator account.</p>
+      <label>Email <input id="login-email" type="email" autocomplete="username" required></label>
+      <label>Password <input id="login-password" type="password" autocomplete="current-password" required minlength="8"></label>
+      <label id="login-2fa-row" hidden>Authenticator code <input id="login-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"></label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" id="login-submit">Sign in</button>
+    </form>
+  </section>
+
+  <!-- Console -->
+  <section id="app-view" hidden>
+    <header class="topbar">
+      <strong>CR Shop Admin</strong>
+      <nav>
+        <button class="tab active" data-tab="applications">Vendor applications</button>
+        <button class="tab" data-tab="restaurants">Restaurants awaiting approval</button>
+      </nav>
+      <span class="spacer"></span>
+      <span id="who" class="muted"></span>
+      <button id="logout" class="ghost">Sign out</button>
+    </header>
+
+    <p id="flash" class="flash" hidden></p>
+
+    <main class="split">
+      <div class="list card">
+        <div class="list-head">
+          <h2 id="list-title">Vendor applications</h2>
+          <select id="status-filter" title="Status">
+            <option value="PENDING">Pending</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+          <button id="refresh" class="ghost">Refresh</button>
+        </div>
+        <table>
+          <thead id="list-thead"></thead>
+          <tbody id="list-body"></tbody>
+        </table>
+        <p id="list-empty" class="muted" hidden>Nothing here.</p>
+        <p id="list-meta" class="muted"></p>
+      </div>
+
+      <aside id="detail" class="card detail">
+        <p class="muted">Select a row to review it.</p>
+      </aside>
+    </main>
+  </section>
+
+  <script src="admin.js"></script>
+</body>
+</html>

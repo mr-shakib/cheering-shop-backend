@@ -136,6 +136,11 @@ Let Dokploy generate the Traefik labels. Hand-writing them means guessing at the
 label schema for whatever Traefik version Dokploy ships, and getting it subtly
 wrong produces a 404 or 502 that is tedious to debug.
 
+**Admin console on its own subdomain (optional):** add a second domain to the
+same `api` service, e.g. `admin.yourdomain.com`, port 8000, HTTPS on, and set
+`ADMIN_UI_HOST=admin.yourdomain.com` in the Environment tab. Full steps in
+[docs/ADMIN-APP.md](../docs/ADMIN-APP.md).
+
 ---
 
 ## Step 6 — Deploy

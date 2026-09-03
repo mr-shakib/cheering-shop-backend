@@ -526,6 +526,7 @@ PREFIX = "/api/v1"
 
 # Routes the app owns that are not part of the spec's 47.
 INFRA_PATHS = {
+    "/admin",  # the static admin console mount — not an API endpoint
     "/health",
     "/health/ready",
     "/docs",
