@@ -13,7 +13,8 @@ FastAPI · PostgreSQL 16 + PostGIS · SQLAlchemy 2.0 (async) · Alembic · Redis
 | **Step 1** Stack alignment | Complete |
 | **Step 2** Database schema | Complete — 25 tables, 21 invariant assertions passing |
 | **Step 3** Project scaffolding | Complete — all 47 endpoints routed, zero model drift |
-| **Step 4** API implementation | **Auth and Vendor modules complete** (35 endpoints, 129 tests). Discovery, cart and orders return `501 NOT_IMPLEMENTED` |
+| **Step 4** API implementation | Complete — all 47 spec endpoints plus the [EXTENDED] vendor, admin, rider and chat routes (105 routes). Nothing returns 501 |
+| **Step 5** Admin console | Basic — vendor approval at `/admin/`, see [docs/ADMIN-APP.md](docs/ADMIN-APP.md) |
 
 ---
 
@@ -30,7 +31,7 @@ make run         # http://localhost:8000/docs
 ```
 
 ```bash
-make test        # pytest — 39 tests, real Postgres + Redis
+make test        # pytest — real Postgres + Redis
 make smoke       # HTTP smoke test vs a local server (27 checks, full auth journey)
 make smoke-prod  # HTTP smoke test vs the live deployment (15 checks)
 make lint        # ruff + mypy
@@ -41,6 +42,7 @@ make verify-db   # the 21 schema invariant assertions
 **Setting up OTP email?** Read [docs/email-setup-resend.md](docs/email-setup-resend.md).
 **Frontend integrating auth?** Send them [docs/AUTH-API.md](docs/AUTH-API.md).
 **Building the restaurant app?** Send them [docs/VENDOR-API.md](docs/VENDOR-API.md).
+**Approving vendors?** Open `/admin/` on the API host — see [docs/ADMIN-APP.md](docs/ADMIN-APP.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
 > so often already taken. Override with `POSTGRES_HOST_PORT` in `.env`.
@@ -60,6 +62,7 @@ app/
     vendor/      the vendor domain: storefront, applications, orders, insights,
                  finance, promotions — aliased as vendor_*_service in app.services
     *_service.py auth, menu, OTP, tokens, storage, email
+  static/admin/  the admin console — static HTML/JS served at /admin/
   api/
     deps.py      auth, RBAC, pagination, idempotency
     v1/

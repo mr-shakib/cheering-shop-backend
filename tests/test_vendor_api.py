@@ -166,15 +166,31 @@ async def test_pending_vendor_can_read_their_own_restaurant(client, pending_vend
 async def test_profile_update_applies_only_what_was_sent(client, vendor):
     r = await client.patch(
         f"{V1}/vendor/profile",
-        json={"description": "Authentic Bengali", "delivery_fee_base": 70},
+        json={"description": "Authentic Bengali", "min_order_amount": 70},
         headers=vendor.headers,
     )
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["description"] == "Authentic Bengali"
-    assert data["delivery_fee_base"] == 70
+    assert data["min_order_amount"] == 70
     # Untouched by a PATCH that never mentioned it.
     assert data["name"] == vendor.restaurant.name
+
+
+async def test_a_vendor_cannot_price_their_own_delivery(client, vendor):
+    """Delivery costs the same from every kitchen. A vendor who could set it
+    would be competing on the rider's cost rather than on their food."""
+    from app.core.config import settings
+
+    r = await client.patch(
+        f"{V1}/vendor/profile", json={"delivery_fee_base": 70}, headers=vendor.headers
+    )
+    assert r.status_code == 400, r.text
+    assert "delivery_fee_base" in " ".join(r.json()["error"]["details"])
+
+    # It is still reported, as the platform policy it now is.
+    r = await client.get(f"{V1}/vendor/profile", headers=vendor.headers)
+    assert r.json()["data"]["delivery_fee_base"] == settings.DELIVERY_FEE_BASE
 
 
 async def test_renaming_does_not_change_the_slug(client, vendor):

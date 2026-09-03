@@ -110,8 +110,7 @@ restaurant is open for business.
 
 Until an administrator approves you:
 
-- you **can** sign in, build your entire menu, upload images and set your
-  delivery fee;
+- you **can** sign in, build your entire menu and upload images;
 - you **cannot** appear in customer discovery or receive an order.
 
 There is no queue-position endpoint and no push when approval happens. Signed
@@ -161,14 +160,18 @@ until you are approved.
 
 ```http
 PATCH /vendor/profile
-{ "name": "Test Kitchen & Grill", "delivery_fee_base": 70 }
+{ "name": "Test Kitchen & Grill", "min_order_amount": 70 }
 ```
 
 PATCH semantics: a field you omit is untouched, and an explicit `null` clears
 it. Send only what changed.
 
-Two rules worth knowing before you build the form:
+Three rules worth knowing before you build the form:
 
+- **`delivery_fee_base` is read-only.** It comes back on the profile so you can
+  show what your customers pay, but sending it is a `400`. Delivery is priced
+  the same from every restaurant — ৳10 covering the first kilometre, then ৳8 per
+  started kilometre — so it is platform policy, not a field on your form.
 - **`latitude` and `longitude` move together.** Sending one alone is a `400`.
   Half an update would place the restaurant at a coordinate it has never
   occupied — and discovery indexes that point.

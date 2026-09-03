@@ -15,3 +15,6 @@ htmlcov/
 # Production secrets — never commit
 deploy/.env.production
 backups/
+
+# Pasted Dokploy environment (contains production secrets) — never commit.
+dokploy.env

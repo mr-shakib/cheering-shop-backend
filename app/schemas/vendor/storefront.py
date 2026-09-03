@@ -39,7 +39,11 @@ class RestaurantProfile(BaseModel):
     latitude: float
     longitude: float
 
-    delivery_fee_base: Decimal
+    delivery_fee_base: Decimal = Field(
+        description="Flat platform delivery base, in taka. Read-only: delivery "
+        "is priced the same from every restaurant, so this is policy rather "
+        "than something a vendor sets."
+    )
     min_order_amount: Decimal
     avg_prep_time_mins: int
     commission_rate: Decimal = Field(

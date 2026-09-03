@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Float, and_, cast, func, null, or_, select
+from sqlalchemy import Float, and_, cast, false, func, null, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -74,7 +74,10 @@ def _to_card(row, favorite_ids: set[uuid.UUID] | None = None) -> RestaurantCard:
         rating_avg=float(restaurant.rating_avg or 0),
         rating_count=restaurant.rating_count,
         avg_prep_time_mins=restaurant.avg_prep_time_mins,
-        delivery_fee=to_major(restaurant.delivery_fee_base),
+        # Platform policy, identical everywhere. The card shows the base a
+        # customer pays before distance; the real fee for their address is
+        # quoted at checkout, which is the first point we know where they are.
+        delivery_fee=Decimal(settings.DELIVERY_FEE_BASE),
         min_order_amount=to_major(restaurant.min_order_amount),
         is_open=str(restaurant.status) == RestaurantStatus.OPEN,
         distance_km=round(distance_m / 1000, 2) if distance_m is not None else None,
@@ -131,8 +134,11 @@ async def list_restaurants(
         conditions.append(Restaurant.cuisine_types.contains([cuisine]))
     if search:
         conditions.append(Restaurant.name.ilike(f"%{search}%"))
-    if max_delivery_fee is not None:
-        conditions.append(Restaurant.delivery_fee_base <= max_delivery_fee)
+    if max_delivery_fee is not None and max_delivery_fee < settings.DELIVERY_FEE_BASE:
+        # Delivery costs the same from every restaurant now, so this filter is
+        # all-or-nothing rather than a discriminator. Still honoured, because a
+        # client that asks for "under ৳5 delivery" must not be shown ৳10 ones.
+        conditions.append(false())
     if min_rating is not None:
         conditions.append(Restaurant.rating_avg >= min_rating)
     if is_open is not None:
@@ -144,7 +150,10 @@ async def list_restaurants(
 
     order_by = {
         "rating": (Restaurant.rating_avg.desc(), Restaurant.rating_count.desc()),
-        "delivery_fee": (Restaurant.delivery_fee_base.asc(),),
+        # Accepted and stable, but no longer a discriminator: every
+        # restaurant carries the same platform delivery base. Kept so a
+        # shipped client asking for it gets a list rather than a 400.
+        "delivery_fee": (Restaurant.rating_avg.desc(),),
         "prep_time": (Restaurant.avg_prep_time_mins.asc(),),
         # NULLS LAST so an unlocated caller does not get a list ordered by
         # nothing in particular ahead of the rating tiebreak.

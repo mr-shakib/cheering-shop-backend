@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # NoDecode: without it, pydantic-settings tries json.loads() on the raw
     # .env value before any validator runs, so `a,b` raises a SettingsError.
     CORS_ORIGINS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Hostname on which the admin console is served at "/" instead of "/admin/",
+    # e.g. "admin.cheeringshop.online". Point that subdomain at the SAME api
+    # service; AdminHostMiddleware rewrites its paths. Unset = console is only
+    # reachable at /admin/ on the API host.
+    ADMIN_UI_HOST: str | None = None
 
     # Reverse-proxy trust. Behind Caddy/nginx, request.client.host is the PROXY's
     # address unless uvicorn is told which peers may set X-Forwarded-For.
@@ -95,10 +100,10 @@ class Settings(BaseSettings):
     PAYOUT_MIN_AMOUNT: int = 100
 
     # --- Order pricing (spec §5 checkout summary) --------------------------
-    # Every line of the bill is platform policy except delivery_fee_base and
-    # commission_rate, which are per-restaurant columns. Basis points keep the
-    # whole computation in integers — see core/money.percentage_of — so a 5%
-    # VAT on an odd subtotal never produces a fractional paisa.
+    # Every line of the bill is platform policy except commission_rate, which
+    # is a per-restaurant column. Basis points keep the whole computation in
+    # integers — see core/money.percentage_of — so a 5% VAT on an odd subtotal
+    # never produces a fractional paisa.
     # What a newly created restaurant starts on, in basis points (1500 == 15%).
     # The column default is 0, which silently means "this vendor pays us
     # nothing" — a restaurant created before an admin gets round to pricing it
@@ -109,8 +114,14 @@ class Settings(BaseSettings):
     TAX_BASIS_POINTS: int = 500  # 5% VAT on the food, not on delivery or tip
     PLATFORM_FEE_BASIS_POINTS: int = 200  # 2% service fee
     PACKAGING_FEE_PER_ORDER: int = 10  # whole taka, flat
-    # Delivery is the restaurant's base fee plus distance beyond the first km.
-    DELIVERY_FEE_PER_KM: int = 10  # whole taka
+    # Delivery: a flat base that covers the first kilometre, then per started
+    # kilometre after it. Platform-wide and not negotiable per restaurant —
+    # `restaurants.delivery_fee_base` is no longer read (see pricing.py). What a
+    # customer pays to be brought food should not depend on which kitchen cooked
+    # it, and a column every vendor could edit made the fee a competitive lever
+    # rather than a cost.
+    DELIVERY_FEE_BASE: int = 10  # whole taka, covers the first DELIVERY_FREE_KM
+    DELIVERY_FEE_PER_KM: int = 8  # whole taka, per started km beyond that
     DELIVERY_FREE_KM: float = 1.0  # covered by the base fee
     # Above this order value delivery is on us. 0 disables the promotion.
     FREE_DELIVERY_THRESHOLD: int = 0  # whole taka

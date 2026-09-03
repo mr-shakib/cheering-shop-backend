@@ -70,6 +70,47 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class AdminHostMiddleware:
+    """Serve the admin console at the root of its own hostname.
+
+    The console is a static mount at /admin/. Giving it a subdomain does not
+    need a second service or a build pipeline: attach the subdomain to the
+    same `api` service and set ADMIN_UI_HOST. Requests arriving with that Host
+    header have their path rewritten onto the mount, so `/` becomes `/admin/`
+    and `/admin.js` becomes `/admin/admin.js`. API, health and docs paths pass
+    through untouched, which is what lets the console call `/api/v1` on its
+    own origin with no CORS entry.
+
+    Pure ASGI rather than BaseHTTPMiddleware: the rewrite must happen on the
+    scope before any inner middleware reads `request.url.path` — the CSP
+    choice in SecurityHeadersMiddleware depends on it — and BaseHTTPMiddleware
+    cannot mutate the scope the inner app sees.
+    """
+
+    # "/admin/" with the slash: "/admin.js" is a console asset and must be
+    # rewritten, while "/admin" and "/admin/…" already point at the mount.
+    PASSTHROUGH_PREFIXES = ("/api/", "/health", "/docs", "/redoc", "/openapi.json", "/admin/")
+
+    def __init__(self, app) -> None:  # noqa: ANN001 — ASGI app callable
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        admin_host = settings.ADMIN_UI_HOST
+        if admin_host and scope["type"] in ("http", "websocket"):
+            host = b""
+            for name, value in scope.get("headers", ()):
+                if name == b"host":
+                    host = value
+                    break
+            if host.decode("latin-1").split(":", 1)[0].lower() == admin_host.lower():
+                path = scope["path"]
+                if path != "/admin" and not path.startswith(self.PASSTHROUGH_PREFIXES):
+                    scope = dict(scope)
+                    scope["path"] = "/admin" + path
+                    scope["raw_path"] = scope["path"].encode("latin-1")
+        await self.app(scope, receive, send)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Defence-in-depth headers.
 
@@ -85,6 +126,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # so the obvious "set then remove" spelling raises AttributeError and turns
     # every docs request into a 500.
     CSP_EXEMPT_PATHS = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
+    ADMIN_UI_CSP = (
+        "default-src 'self'; img-src 'self' https: data:; connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
@@ -93,9 +138,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
 
-        # This API returns JSON, never HTML with scripts, so everywhere else the
-        # policy can be maximally restrictive.
-        if request.url.path not in self.CSP_EXEMPT_PATHS:
+        # The admin console under /admin is the one place this process serves
+        # HTML with scripts. Its assets are same-origin files (no inline code),
+        # so 'self' is enough; images may come from object storage over https.
+        # Everywhere else the API returns JSON, so the policy can be maximally
+        # restrictive.
+        path = request.url.path
+        if path == "/admin" or path.startswith("/admin/"):
+            response.headers.setdefault("Content-Security-Policy", self.ADMIN_UI_CSP)
+            # Always revalidate the console's files. Without this a browser
+            # heuristically caches admin.js/admin.css and keeps running a stale
+            # copy for days after a deploy; the 304 round-trip is cheap.
+            response.headers.setdefault("Cache-Control", "no-cache")
+        elif path not in self.CSP_EXEMPT_PATHS:
             response.headers.setdefault(
                 "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
             )
