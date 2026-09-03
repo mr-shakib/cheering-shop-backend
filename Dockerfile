@@ -24,6 +24,9 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app ./app
 COPY migrations ./migrations
+# Operator tooling (create_admin.py) — the README tells people to run it with
+# `docker exec`, which only works if it is actually in the image.
+COPY scripts ./scripts
 COPY alembic.ini pyproject.toml ./
 COPY docker-entrypoint.sh /usr/local/bin/
 
