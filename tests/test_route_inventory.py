@@ -80,6 +80,21 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "GET",
+        "/auth/google/authorize",
+        "The spec's only sign-up path is an emailed OTP, which costs a new "
+        "customer a mailbox round trip before they can browse. Sign in with "
+        "Google removes it — and the App Store expects a modern food app to "
+        "offer at least one federated login.",
+    ),
+    (
+        "GET",
+        "/auth/google/callback",
+        "The other half: Google redirects the browser here, and this is where "
+        "the authorization code is exchanged, the identity token verified and "
+        "the session issued. Without it the authorize redirect goes nowhere.",
+    ),
+    (
+        "GET",
         "/users/me",
         "A mobile client restoring a saved token needs to resolve who it "
         "belongs to before rendering. Decoding the JWT client-side cannot "

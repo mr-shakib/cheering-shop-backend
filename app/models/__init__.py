@@ -17,6 +17,7 @@ from app.models.restaurant import Favorite, Restaurant
 from app.models.review import Review
 from app.models.rider import RiderLocationPing, RiderProfile
 from app.models.user import (
+    AuthIdentity,
     BiometricCredential,
     IdempotencyKey,
     OtpCode,
@@ -30,6 +31,7 @@ __all__ = [
     "Base",
     # Identity & security
     "User",
+    "AuthIdentity",
     "BiometricCredential",
     "UserDevice",
     "RefreshToken",

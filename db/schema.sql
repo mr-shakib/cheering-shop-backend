@@ -118,6 +118,30 @@ CREATE TABLE biometric_credentials (
     CONSTRAINT uq_biometric_user_device UNIQUE (user_id, device_id)
 );
 
+-- [EXTENDED] Federated logins (Sign in with Google).
+-- A join table rather than google_id/apple_id columns on users: Apple sign-in
+-- is required by the App Store of any iOS app offering a third-party login, so
+-- a second provider is a certainty and each one should be a row, not another
+-- migration against the identity table.
+--
+-- The link key is `subject` -- the provider's stable `sub` claim -- and never
+-- the email. Workspace addresses get renamed and consumer primaries change; a
+-- link keyed on email would break silently, and a recycled address would
+-- resolve to the wrong account.
+CREATE TABLE auth_identities (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       uuid         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider      varchar(32)  NOT NULL,
+    subject       varchar(255) NOT NULL,   -- the provider's stable user id ('sub')
+    email         citext,                  -- support lookups only, never the join key
+    last_login_at timestamptz,
+    created_at    timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_auth_identity_provider_subject UNIQUE (provider, subject),
+    CONSTRAINT uq_auth_identity_user_provider UNIQUE (user_id, provider),
+    CONSTRAINT ck_auth_identity_provider CHECK (provider IN ('google', 'apple'))
+);
+CREATE INDEX ix_auth_identities_user ON auth_identities (user_id);
+
 -- [EXTENDED] FCM tokens — required by spec §9 (POST /users/me/devices).
 CREATE TABLE user_devices (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -67,6 +67,13 @@ def otp_verify_key(identifier: str) -> str:
     return f"rl:otpverify:{identifier}"
 
 
+def google_authorize_key(ip: str) -> str:
+    """Per source IP: /auth/google/authorize takes no credentials, so there is
+    no identifier to key on. Each hit writes a Redis entry, so the ceiling is
+    what stops an unauthenticated caller filling the keyspace."""
+    return f"rl:google:authorize:{ip}"
+
+
 def application_submit_key(ip: str) -> str:
     return f"rl:vendorapp:submit:{ip}"
 

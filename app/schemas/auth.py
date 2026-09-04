@@ -53,6 +53,12 @@ class SecurityState(BaseModel):
     is_biometrics_enabled: bool
     biometric_device_count: int = 0
     has_password: bool = True
+    linked_providers: list[str] = Field(
+        default_factory=list,
+        description="Federated logins linked to this account, e.g. ['google']. "
+        "A user with no password and no provider here cannot sign in at all, "
+        "so the settings screen must refuse to unlink the last one.",
+    )
 
 
 class TotpProvisioning(BaseModel):

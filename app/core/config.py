@@ -170,6 +170,42 @@ class Settings(BaseSettings):
     EMAIL_TIMEOUT_SECONDS: float = 10.0
     EMAIL_REPLY_TO: str = ""
 
+    # --- Google sign-in (OIDC authorization-code flow) ---------------------
+    # Empty GOOGLE_CLIENT_ID disables the endpoints, the same "no key, no
+    # feature" pattern RESEND_API_KEY uses. That keeps local development and
+    # the test suite working with no Google project.
+    #
+    # This is the SERVER-SIDE flow: the browser is redirected to Google and
+    # comes back to GOOGLE_REDIRECT_URI, so the credential is a "Web
+    # application" OAuth client. Android/iOS client IDs are not used here --
+    # Google never talks to the mobile app, only to this backend.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    # Must match a URI registered on the Google client byte-for-byte, or the
+    # authorize call fails with redirect_uri_mismatch before the user ever
+    # sees a consent screen.
+    GOOGLE_REDIRECT_URI: str = ""
+
+    # Where the callback sends the browser once tokens exist. The mobile app
+    # claims a custom scheme (AndroidManifest intent-filter / CFBundleURLTypes)
+    # and the phone routes the redirect back into it.
+    #
+    # This is an ALLOWLIST rather than a single value because the caller picks
+    # one via ?redirect= on /auth/google/authorize. Echoing an arbitrary
+    # caller-supplied target would be an open redirect that hands the session
+    # tokens to whoever asked -- the allowlist is what makes that parameter
+    # safe, so never widen it to "any URL the client sent".
+    GOOGLE_POST_AUTH_REDIRECTS: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["crshop://auth/callback"]
+    )
+    # How long a pending authorization may sit in Redis. Ten minutes is longer
+    # than any real consent screen and short enough that an abandoned attempt
+    # cannot be resumed later from a shared machine.
+    GOOGLE_STATE_TTL_SECONDS: int = 600
+    # /auth/google/authorize is unauthenticated, so the ceiling is per source IP.
+    GOOGLE_AUTHORIZE_MAX_PER_HOUR: int = 30
+    GOOGLE_HTTP_TIMEOUT_SECONDS: float = 10.0
+
     # --- Object storage (spec §2: presigned uploads to Cloudflare R2) ------
     # R2 speaks the S3 API, so the signing in storage_service is plain SigV4.
     # What it does NOT give you is a readable URL: an R2 bucket is private, and
@@ -198,7 +234,9 @@ class Settings(BaseSettings):
     DISPATCH_SEARCH_RADIUS_M: int = 5000   # how far to look for a nearby rider
     MAX_CONCURRENT_JOBS: int = 3           # orders one rider may hold at once
 
-    @field_validator("CORS_ORIGINS", "ALLOWED_UPLOAD_TYPES", mode="before")
+    @field_validator(
+        "CORS_ORIGINS", "ALLOWED_UPLOAD_TYPES", "GOOGLE_POST_AUTH_REDIRECTS", mode="before"
+    )
     @classmethod
     def _split_csv(cls, v: object) -> object:
         """Accept either a comma-separated string or a real list."""
@@ -217,6 +255,16 @@ class Settings(BaseSettings):
     @property
     def email_enabled(self) -> bool:
         return bool(self.RESEND_API_KEY)
+
+    @property
+    def google_auth_enabled(self) -> bool:
+        """All three are needed: the ID names the client, the secret
+        authenticates the token exchange, and the redirect URI must be known
+        before an authorize URL can be built at all.
+        """
+        return bool(
+            self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET and self.GOOGLE_REDIRECT_URI
+        )
 
     @property
     def docs_enabled(self) -> bool:

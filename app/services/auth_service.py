@@ -27,7 +27,7 @@ from app.core.security import (
     verify_totp,
 )
 from app.models.enums import UserRole
-from app.models.user import BiometricCredential, User
+from app.models.user import AuthIdentity, BiometricCredential, User
 from app.schemas.auth import SecurityState, TotpProvisioning, UserProfile
 
 log = structlog.get_logger()
@@ -102,6 +102,141 @@ async def upsert_provisional_user(db: AsyncSession, identifier: str, role: UserR
 
     log.info("provisional_user_created", user_id=str(user.id), role=role.value)
     return user
+
+
+async def link_or_create_google_user(
+    db: AsyncSession,
+    *,
+    subject: str,
+    email: str,
+    email_verified: bool,
+    full_name: str | None = None,
+    avatar_url: str | None = None,
+) -> User:
+    """Resolve a verified Google profile to a local account.
+
+    Three cases, in the order they are tried:
+
+    1. **The Google account is already linked.** Matched on `subject`, never on
+       email — see the note on `auth_identities`. Returns that user whatever
+       their email says today.
+    2. **An account already exists with this email.** Linked automatically, but
+       only when Google reports the address verified. That claim is the whole
+       basis for the merge: it proves control of the mailbox, which is exactly
+       the proof the OTP flow demands before it will trust an address. Without
+       it, a provider that let an unverified address through would hand over
+       any account whose email an attacker could guess.
+    3. **Nobody matches.** A new CUSTOMER is created. Only CUSTOMER, because
+       vendors are gated on an application an administrator reviews and riders
+       and admins are created out of band -- letting a Google sign-in mint
+       either would route around that gate entirely. An existing vendor whose
+       email matches still links fine under case 2; it is *creation* that is
+       restricted, not access.
+    """
+    existing_link = await db.execute(
+        select(AuthIdentity).where(
+            AuthIdentity.provider == "google", AuthIdentity.subject == subject
+        )
+    )
+    link = existing_link.scalar_one_or_none()
+
+    if link is not None:
+        user = await db.get(User, link.user_id)
+        if user is None:  # pragma: no cover - FK is ON DELETE CASCADE
+            raise UnauthorizedError("This account no longer exists")
+        _reject_if_inactive(user)
+        link.last_login_at = datetime.now(UTC)
+        link.email = email
+        _backfill_profile(user, full_name=full_name, avatar_url=avatar_url)
+        return user
+
+    if not email_verified:
+        # Refused for both remaining cases. Linking is unsafe for the reason
+        # above, and creating an account on an address nobody has proven
+        # control of would let one person squat another's future signup.
+        log.warning("google_email_unverified", subject_hint=subject[-6:])
+        raise ValidationError(
+            "This Google account's email address is not verified. "
+            "Verify it with Google, then try again."
+        )
+
+    user = await find_by_identifier(db, email)
+
+    if user is None:
+        user = User(
+            role=UserRole.CUSTOMER.value,
+            email=email,
+            full_name=full_name,
+            avatar_url=avatar_url,
+            # Google verified it, and re-verifying with our own OTP would ask
+            # the user to prove something we already have proof of.
+            is_email_verified=True,
+        )
+        db.add(user)
+    else:
+        _reject_if_inactive(user)
+        user.is_email_verified = True
+        _backfill_profile(user, full_name=full_name, avatar_url=avatar_url)
+
+    # SELECT-then-INSERT is a race on both unique constraints: a user
+    # double-tapping "Sign in with Google" can have two callbacks in flight.
+    # The savepoint lets the loser be caught without poisoning the surrounding
+    # transaction, exactly as in upsert_provisional_user.
+    try:
+        async with db.begin_nested():
+            await db.flush()
+            db.add(
+                AuthIdentity(
+                    user_id=user.id,
+                    provider="google",
+                    subject=subject,
+                    email=email,
+                    last_login_at=datetime.now(UTC),
+                )
+            )
+            await db.flush()
+    except IntegrityError:
+        log.info("google_link_race_resolved", subject_hint=subject[-6:])
+        winner = await db.execute(
+            select(AuthIdentity).where(
+                AuthIdentity.provider == "google", AuthIdentity.subject == subject
+            )
+        )
+        won = winner.scalar_one_or_none()
+        if won is None:  # pragma: no cover - would mean a different constraint
+            raise
+        resolved = await db.get(User, won.user_id)
+        if resolved is None:  # pragma: no cover
+            raise
+        return resolved
+
+    log.info("google_identity_linked", user_id=str(user.id), role=str(user.role))
+    return user
+
+
+def _reject_if_inactive(user: User) -> None:
+    if not user.is_active:
+        raise UnauthorizedError("This account has been deactivated")
+
+
+def _backfill_profile(user: User, *, full_name: str | None, avatar_url: str | None) -> None:
+    """Fill blanks from the Google profile, never overwrite.
+
+    A user who set their own display name or uploaded an avatar should not have
+    it silently replaced by their Google one on every sign-in.
+    """
+    if full_name and not user.full_name:
+        user.full_name = full_name
+    if avatar_url and not user.avatar_url:
+        user.avatar_url = avatar_url
+
+
+async def linked_providers(db: AsyncSession, user_id: uuid.UUID) -> list[str]:
+    """Which federated logins this account has, for GET /users/me/security."""
+    result = await db.execute(
+        select(AuthIdentity.provider).where(AuthIdentity.user_id == user_id)
+    )
+    return sorted(result.scalars().all())
 
 
 async def mark_identifier_verified(db: AsyncSession, user: User, identifier: str) -> None:
@@ -359,6 +494,7 @@ async def get_security_state(db: AsyncSession, user: User) -> SecurityState:
         is_biometrics_enabled=user.is_biometrics_enabled,
         biometric_device_count=count or 0,
         has_password=user.password_hash is not None,
+        linked_providers=await linked_providers(db, user.id),
     )
 
 
