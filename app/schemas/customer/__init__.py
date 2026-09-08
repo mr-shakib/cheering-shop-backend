@@ -19,6 +19,8 @@ from app.schemas.customer.cart import CartLineOut, CartOut, CheckoutSummary
 from app.schemas.customer.chat import ChatMessageOut, ChatMessageSent, ChatThread
 from app.schemas.customer.discovery import (
     AddOnOut,
+    CategoryChip,
+    CategoryDish,
     CuisineChip,
     HomeFeed,
     MenuCategoryOut,
@@ -46,6 +48,8 @@ __all__ = [
     "AddressOut",
     "CartLineOut",
     "CartOut",
+    "CategoryChip",
+    "CategoryDish",
     "ChatMessageOut",
     "ChatMessageSent",
     "ChatThread",

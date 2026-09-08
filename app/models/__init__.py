@@ -8,6 +8,7 @@ table silently vanishing from a migration.
 from app.models.address import Address
 from app.models.base import Base
 from app.models.cart import Cart, CartItem, CartItemAddOn
+from app.models.category import Category
 from app.models.chat import OrderMessage
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
 from app.models.order import Order, OrderItem, OrderItemAddOn, OrderStatusHistory
@@ -43,6 +44,7 @@ __all__ = [
     "Restaurant",
     "Favorite",
     "VendorApplication",
+    "Category",
     "OrderMessage",
     "VendorPayout",
     "MenuCategory",

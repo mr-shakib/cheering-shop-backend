@@ -33,6 +33,11 @@ from app.schemas.requests.auth import (
     TotpEnableRequest,
 )
 from app.schemas.requests.base import Money
+from app.schemas.requests.categories import (
+    CategoryCreateRequest,
+    CategoryMergeRequest,
+    CategoryUpdateRequest,
+)
 from app.schemas.requests.commerce import (
     CartItemRequest,
     ChatMessageRequest,
@@ -152,6 +157,10 @@ __all__ = [
     # promotions
     "PromotionCreateRequest",
     "PromotionUpdateRequest",
+    # platform categories (admin)
+    "CategoryCreateRequest",
+    "CategoryUpdateRequest",
+    "CategoryMergeRequest",
     # riders & dispatch
     "RiderCreateRequest",
     "RiderUpdateRequest",

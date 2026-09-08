@@ -377,6 +377,29 @@ CREATE TABLE favorites (
 );
 CREATE INDEX ix_favorites_restaurant ON favorites (restaurant_id);
 
+-- [EXTENDED] Platform browse categories — the "Burger", "Pizza" chips on the
+-- customer home screen. A menu section (below) links to one of these by name,
+-- so a vendor creating a "Burger" section is what puts their restaurant behind
+-- the Burger chip. Curated by administrators: image, pin order, hide, merge.
+-- A category a vendor's section name created starts hidden with reviewed_at
+-- NULL, and reaches customers only once an administrator approves it.
+CREATE TABLE categories (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        varchar(80)  NOT NULL,
+    slug        varchar(100) NOT NULL,        -- public id; stable across renames
+    image_url   text,
+    sort_order  smallint,                     -- NULL = not pinned
+    aliases     text[]       NOT NULL DEFAULT '{}',  -- match keys, lower-cased
+    is_active   boolean      NOT NULL DEFAULT true,
+    reviewed_at timestamptz,                  -- NULL = awaiting an admin's decision
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_categories_slug UNIQUE (slug),
+    CONSTRAINT ck_categories_slug CHECK (slug <> '')
+);
+CREATE TRIGGER trg_categories_updated_at BEFORE UPDATE ON categories
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- [SPEC] MenuCategory
 CREATE TABLE menu_categories (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -384,6 +407,9 @@ CREATE TABLE menu_categories (
     name          varchar(120) NOT NULL,
     sort_order    smallint     NOT NULL DEFAULT 0,
     is_active     boolean      NOT NULL DEFAULT true,
+    -- The platform category this section lists under. SET NULL, never CASCADE:
+    -- deleting a chip must not delete a vendor's menu section.
+    category_id   uuid         REFERENCES categories(id) ON DELETE SET NULL,
     created_at    timestamptz  NOT NULL DEFAULT now(),
     updated_at    timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT uq_menu_categories_name UNIQUE (restaurant_id, name),
@@ -391,6 +417,7 @@ CREATE TABLE menu_categories (
     CONSTRAINT uq_menu_categories_id_restaurant UNIQUE (id, restaurant_id)
 );
 CREATE INDEX ix_menu_categories_restaurant ON menu_categories (restaurant_id, sort_order);
+CREATE INDEX ix_menu_categories_category ON menu_categories (category_id);
 CREATE TRIGGER trg_menu_categories_updated_at BEFORE UPDATE ON menu_categories
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 

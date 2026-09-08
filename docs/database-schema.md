@@ -58,6 +58,7 @@ erDiagram
     users ||--o{ biometric_credentials : "enrolls"
 
     restaurants ||--o{ menu_categories : "organizes"
+    categories ||--o{ menu_categories : "lists under"
     restaurants ||--o{ favorites : "bookmarked by"
     restaurants ||--o{ orders : "fulfils"
     restaurants ||--o{ reviews : "receives"
@@ -91,6 +92,7 @@ erDiagram
 | User(RIDER) → RiderProfile | 1:1 | shared PK |
 | User ↔ Restaurant (favorites) | **N:M** | composite PK join table |
 | Restaurant → MenuCategory → MenuItem | 1:N → 1:N | cascading FKs |
+| Category → MenuCategory | 1:N, optional | FK + `ON DELETE SET NULL` — a chip can go without taking sections with it |
 | MenuItem → ItemVariant / ItemAddOn | 1:N | cascade on item delete |
 | Cart → CartItem | 1:N | composite FK, see §3 |
 | CartItem ↔ ItemAddOn | **N:M** | `cart_item_add_ons` |
@@ -156,6 +158,7 @@ behaviour, but it does mean role changes need a deliberate migration path.
 | `ix_restaurants_name_trgm` | GIN trigram | `GET /search` fuzzy restaurant names |
 | `ix_menu_items_search` | GIN tsvector | `GET /search` dish names + descriptions |
 | `ix_restaurants_cuisines` | GIN on `text[]` | cuisine filter chips |
+| `ix_menu_categories_category` | B-tree | category chip counts and `GET /restaurants?category=` |
 | `ix_orders_vendor_queue` | `(restaurant_id, status, placed_at DESC)` | `GET /vendor/orders` |
 | `ix_orders_customer_history` | `(customer_id, placed_at DESC)` | `GET /orders?sort=-created_at` |
 | `ix_orders_auto_decline` | partial `WHERE status='PENDING'` | the 60s auto-decline sweeper — index stays tiny because only unaccepted orders qualify |
@@ -186,6 +189,7 @@ including distance refinement and sort.
 | `user_devices` | §9's FCM requirement. |
 | `biometric_credentials` | `POST /auth/biometrics/enable` as a bare boolean is security theater — verifying a signed challenge needs a stored per-device public key. |
 | `cart_item_add_ons` | The N:M half of `add_on_ids: ["uuid"]` in the cart payload. |
+| `categories` | The browse chips on the home screen. §6 has only free-text `cuisine_types` on a restaurant; a vendor's "Burger" menu section had no way to reach the customer end. Sections link here by name (`menu_categories.category_id`), so counts and filters go through one curated row per category rather than through whatever each vendor typed. |
 
 ---
 

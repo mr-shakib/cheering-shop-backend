@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -21,6 +22,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, Money, TimestampMixin, UUIDPrimaryKey
 
+if TYPE_CHECKING:
+    from app.models.category import Category
+    from app.models.restaurant import Restaurant
+
 
 class MenuCategory(Base, UUIDPrimaryKey, TimestampMixin):
     __tablename__ = "menu_categories"
@@ -31,15 +36,28 @@ class MenuCategory(Base, UUIDPrimaryKey, TimestampMixin):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # The platform-wide browse category this section lists under — what puts
+    # the restaurant behind the "Burger" chip on the customer home screen.
+    # Resolved from the section name on create (see services.category_service),
+    # or pinned explicitly by the vendor. Nullable: an unlinked section is
+    # still a perfectly good menu section, it just is not browsable by chip.
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL")
+    )
 
-    restaurant: Mapped["Restaurant"] = relationship(back_populates="categories", lazy="raise")  # noqa: F821
+    restaurant: Mapped["Restaurant"] = relationship(back_populates="categories", lazy="raise")
     items: Mapped[list["MenuItem"]] = relationship(back_populates="category", lazy="raise")
+    platform_category: Mapped["Category | None"] = relationship(
+        back_populates="menu_categories", lazy="raise"
+    )
 
     __table_args__ = (
         UniqueConstraint("restaurant_id", "name", name="uq_menu_categories_name"),
         # FK target letting menu_items carry a *verified* restaurant_id.
         UniqueConstraint("id", "restaurant_id", name="uq_menu_categories_id_restaurant"),
         Index("ix_menu_categories_restaurant", "restaurant_id", "sort_order"),
+        # "Which restaurants sell under Burger?" — the customer-side join.
+        Index("ix_menu_categories_category", "category_id"),
     )
 
 

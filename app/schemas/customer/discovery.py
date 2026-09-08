@@ -98,11 +98,53 @@ class PromotionBanner(BaseModel):
 
 
 class CuisineChip(BaseModel):
-    """A cuisine filter chip on the home feed, with how many places match."""
+    """A cuisine filter chip on the home feed, with how many places match.
+
+    Cuisines are restaurant-level tags ("Bengali", "Chinese") and predate the
+    platform categories below. Kept for clients already rendering them; the
+    chip row on the home screen should now use `categories`.
+    """
 
     name: str
     restaurant_count: int
     image_url: str | None = None
+
+
+class CategoryChip(BaseModel):
+    """A browse category — the "Burger" chip.
+
+    `slug` is what to send back: `GET /restaurants?category={slug}` for the
+    restaurants, `GET /categories/{slug}/items` for the dishes. Only categories
+    at least one visible restaurant sells under are ever returned, so a chip
+    never opens onto an empty screen.
+    """
+
+    id: str
+    name: str
+    slug: str
+    image_url: str | None = None
+    restaurant_count: int
+
+
+class CategoryDish(BaseModel):
+    """One dish in a category listing — "all burgers near me".
+
+    Carries enough of the restaurant to render the card without a second
+    request, and `distance_km` when the caller sent coordinates.
+    """
+
+    id: str
+    name: str
+    description: str | None = None
+    image_url: str | None = None
+    base_price: Decimal
+    is_veg: bool
+    is_available: bool
+    restaurant_id: str
+    restaurant_name: str
+    restaurant_is_open: bool
+    restaurant_rating_avg: float
+    distance_km: float | None = None
 
 
 class HomeFeed(BaseModel):
@@ -113,6 +155,9 @@ class HomeFeed(BaseModel):
     """
 
     cuisines: list[CuisineChip] = Field(default_factory=list)
+    # The chip row. Pinned categories first, then by how many restaurants sell
+    # under each; at most twelve — `GET /categories` has the full list.
+    categories: list[CategoryChip] = Field(default_factory=list)
     promoted: list[RestaurantCard] = Field(default_factory=list)
     nearby: list[RestaurantCard] = Field(default_factory=list)
     top_rated: list[RestaurantCard] = Field(default_factory=list)
@@ -127,6 +172,8 @@ class SearchResults(BaseModel):
 
     restaurants: list[RestaurantCard] = Field(default_factory=list)
     items: list["SearchItemHit"] = Field(default_factory=list)
+    # Typing "bur" should offer the Burger chip, not only burger-named dishes.
+    categories: list[CategoryChip] = Field(default_factory=list)
 
 
 class SearchItemHit(BaseModel):

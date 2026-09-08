@@ -37,10 +37,54 @@ screen is wrong.
 
 ## 2. Discovery
 
-`GET /home/feed` is one request per app launch: cuisine chips, restaurants with
-live offers, nearby, and top rated. Send `lat`/`lng` when you have them —
-without coordinates `nearby` comes back as an empty list (not absent) and every
-`distance_km` is `null`.
+`GET /home/feed` is one request per app launch: the category chip row, cuisine
+chips, restaurants with live offers, nearby, and top rated. Send `lat`/`lng`
+when you have them — without coordinates `nearby` comes back as an empty list
+(not absent) and every `distance_km` is `null`.
+
+### Categories — the chip row
+
+`categories` on the feed is the row of chips under the search bar: Burger,
+Pizza, Biryani. Each one is a **platform category** — a bucket vendors' menu
+sections are filed under. A vendor who names a section "Burgers" has put their
+restaurant behind the Burger chip; they never see the taxonomy, and you never
+see their section names.
+
+```json
+{ "id": "…", "name": "Burger", "slug": "burger", "image_url": "https://…/burger.png", "restaurant_count": 14 }
+```
+
+Render `image_url` (null when the operator has not set one — show a placeholder,
+not a broken image). `slug` is what you send back. Only categories at least one
+visible restaurant sells under are ever returned, so a chip never opens onto an
+empty screen. The feed carries the first twelve — pinned ones first, then by
+`restaurant_count`; `GET /categories` returns the full list for an "all
+categories" screen.
+
+A tap opens one of two screens, and both take the slug:
+
+| Screen | Call |
+|---|---|
+| Restaurants in the category | `GET /restaurants?category={slug}` — the normal list, with every other filter and sort available |
+| Dishes in the category ("all burgers near me") | `GET /categories/{slug}/items?lat=&lng=` — paginated dishes across restaurants, each carrying its restaurant's id, name, open state and rating |
+
+The restaurant list is exactly as long as the chip's `restaurant_count`: both
+are computed from the same rule (a visible restaurant with an active section
+under the category holding at least one live dish). Dishes come back orderable
+first, then open kitchens, then nearest, then best rated — a sold-out dish from
+a closed restaurant is still a true answer, so it is last rather than missing.
+
+`GET /categories/{slug}` resolves a slug on its own, for deep links. Unlike the
+list, an empty category comes back here with `restaurant_count: 0` rather than
+404 — a shared link should open onto "nothing here yet". A slug that was merged
+into another category keeps working and returns the survivor; a hidden or
+unknown slug is 404.
+
+`GET /search` now also returns `categories` matching the query, so typing "bur"
+offers the Burger chip above the burger-named dishes.
+
+The whole feature, including how a chip comes to exist, is in
+[CATEGORIES.md](CATEGORIES.md).
 
 All discovery endpoints are **public**. Send the bearer token anyway when the
 user is signed in: it is what fills in `is_favorite` on each card. An expired
@@ -52,7 +96,8 @@ session.
 | Param | Values |
 |---|---|
 | `sort` | `distance` (default), `rating`, `prep_time`. `delivery_fee` is accepted but no longer discriminates — the fee is the same everywhere |
-| `cuisine` | one cuisine name |
+| `category` | a category `slug` from the chip row — see *Categories* above |
+| `cuisine` | one cuisine name (restaurant-level tag; predates categories) |
 | `is_open` | `true` / `false` — omit to get both |
 | `max_delivery_fee`, `min_rating` | numbers. `max_delivery_fee` is all-or-nothing now: below ৳10 it matches nothing |
 | `radius` | metres, capped at 25000 |
@@ -211,12 +256,15 @@ Auth column: **public** needs no token, **customer** needs a CUSTOMER token,
 
 | Method | Path | Auth | What |
 |---|---|---|---|
-| GET | `/home/feed` | public | Dashboard: cuisines, offers, nearby, top rated |
-| GET | `/restaurants` | public | Filtered + sorted list |
+| GET | `/home/feed` | public | Dashboard: category chips, cuisines, offers, nearby, top rated |
+| GET | `/categories` | public | Every browse category with restaurants under it |
+| GET | `/categories/{slug}` | public | One category, for deep links |
+| GET | `/categories/{slug}/items` | public | Dishes in a category, across restaurants |
+| GET | `/restaurants` | public | Filtered + sorted list (`category=` for a chip) |
 | GET | `/restaurants/{id}` | public | Details, with live offers |
 | GET | `/restaurants/{id}/menu` | public | Categorised menu, variants, add-ons |
 | GET | `/restaurants/{id}/schedule` | public | Bookable delivery slots |
-| GET | `/search` | public | Restaurants and dishes |
+| GET | `/search` | public | Restaurants, dishes and categories |
 | GET | `/cart` | customer | Current cart, live prices |
 | POST | `/cart/items` | customer | Add / update / remove a line |
 | GET | `/checkout/summary` | customer | The full bill |

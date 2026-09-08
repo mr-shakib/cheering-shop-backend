@@ -49,6 +49,11 @@ tbody tr:hover, tbody tr.selected { background: #fff7f2; }
 .pill.PENDING { background: #fff4e5; color: #9a5b00; }
 .pill.APPROVED { background: #e7f5ec; color: var(--ok); }
 .pill.REJECTED { background: #fdecea; color: var(--bad); }
+.pill.SHOWN { background: #e7f5ec; color: var(--ok); }
+.pill.HIDDEN { background: #fdecea; color: var(--bad); }
+
+label.check { display: flex; align-items: center; gap: 8px; }
+label.check input { width: auto; margin: 0; }
 
 .detail dl { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; margin: 0; }
 .detail dt { color: var(--muted); }

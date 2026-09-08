@@ -13,6 +13,7 @@ import-path migration.
 
 from app.services import (
     auth_service,
+    category_service,
     idempotency,
     menu_service,
     oauth_service,
@@ -43,6 +44,7 @@ __all__ = [
     "account_service",
     "auth_service",
     "cart_service",
+    "category_service",
     "chat_service",
     "discovery_service",
     "dispatch_service",

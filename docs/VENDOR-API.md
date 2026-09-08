@@ -258,6 +258,55 @@ Item, variants and add-ons are created in one transaction — all of it lands or
 none of it does. At most one variant may be `is_default`; if you mark none, the
 first becomes the default so your client always has something to preselect.
 
+### Where customers find it
+
+Every category you create is filed under a **platform category** — the
+"Burger", "Pizza", "Biryani" chips on the customer home screen — and that is
+what puts your restaurant behind a chip. You do not manage the chips; naming
+the section is enough. The response tells you where it landed:
+
+```json
+{
+  "id": "…", "name": "Burgers", "sort_order": 1, "is_active": true, "item_count": 0,
+  "platform_category": { "id": "…", "name": "Burger", "slug": "burger", "image_url": "…" }
+}
+```
+
+Matching is by name, ignoring case and spacing, and includes spellings the
+platform knows ("Burgers", "Hamburgers" → Burger), so a recognisable name is
+browsable straight away.
+
+A name that matches nothing creates a **new chip awaiting approval**. Your
+section and its dishes are live on your menu page immediately; the chip
+appears on the home screen once an administrator approves it. Nothing in this
+API distinguishes the two cases and there is no status to poll — if you want a
+section browsable the moment you save it, name it something the platform
+already knows, or file it explicitly below.
+
+A section whose name says nothing about the food — "Chef's Picks", "Combo
+Deals" — can be filed explicitly. `GET /categories` (public) is the picker;
+send the chosen `id` as `platform_category_id` on create or on `PATCH`. It
+lists only approved chips, so an id from it is always browsable at once:
+
+```http
+POST /vendor/menu/categories
+{ "name": "Chef's Picks", "platform_category_id": "…" }
+```
+
+On `PATCH`, `platform_category_id` pins the section to that chip, an explicit
+`null` unlinks it (the section stays on your menu but is under no chip), and
+when you leave it out a **rename** re-matches by the new name — but keeps the
+current link if the new name matches nothing, so a typo cannot move you out of
+Burger. An unlinked section renamed to something recognisable gets a chip.
+
+Deactivating a section (`is_active: false`) takes your restaurant out of the
+chip as well as hiding the section from your menu page; a section with no live
+items does not count either, so an empty "Desserts" section does not advertise
+desserts you cannot sell.
+
+Full detail, including exactly when a restaurant counts under a chip, is in
+[CATEGORIES.md](CATEGORIES.md).
+
 ### Read it back
 
 ```http
@@ -686,6 +735,11 @@ All require a `VENDOR` bearer token unless noted.
 | PATCH | `/admin/riders/{id}` | admin | Shift state and clearance |
 | POST | `/admin/orders/{id}/assign-rider` | admin | Assign or reassign a rider |
 | POST | `/admin/orders/{id}/deliver` | admin | Confirm a delivery the rider could not |
+| GET | `/admin/categories` | admin | All browse categories, hidden and empty included |
+| POST | `/admin/categories` | admin | Create a browse category (image, pin, aliases) |
+| PATCH | `/admin/categories/{id}` | admin | Rename, illustrate, pin, hide, set aliases |
+| DELETE | `/admin/categories/{id}` | admin | Delete a category nothing links to |
+| POST | `/admin/categories/{id}/merge` | admin | Fold one category into another |
 
 Vendor **registration** and login are in [AUTH-API.md](AUTH-API.md).
 
