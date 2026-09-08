@@ -14,13 +14,16 @@ import uuid
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import AdminUser, DbSession, Paginated
 from app.core.responses import ok, paginated
 from app.schemas.requests import (
     ApplicationDecisionRequest,
     AssignRiderRequest,
+    CategoryCreateRequest,
+    CategoryMergeRequest,
+    CategoryUpdateRequest,
     PayoutFailRequest,
     RiderCreateRequest,
     RiderUpdateRequest,
@@ -29,6 +32,7 @@ from app.schemas.requests import (
 )
 from app.schemas.rider import RiderAssignment
 from app.services import (
+    category_service,
     dispatch_service,
     realtime,
     rider_jobs_service,
@@ -170,6 +174,113 @@ async def reject_vendor_application(
             "application": vendor_application_service.to_detail(application).model_dump(),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Browse categories — the chip row on the customer home screen
+#
+# Vendors populate this table by naming menu sections (see
+# services.category_service.resolve), but a category created that way is
+# HIDDEN until approved here: the home screen is the platform's most valuable
+# surface and must not be writable by anyone who signs up. The rest of the
+# job is making the result look like a product — an image on each chip, a
+# deliberate order at the top, and one "Burger" where three vendors typed
+# three spellings.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/categories", summary="All browse categories, hidden and empty included [EXTENDED]")
+async def list_categories(
+    admin: AdminUser,
+    db: DbSession,
+    page: Paginated,
+    pending: Annotated[
+        bool,
+        Query(description="Only categories awaiting a decision — the review queue"),
+    ] = False,
+):
+    """**[EXTENDED]** — the curation screen. Customer order (pinned, then by
+    restaurant count), but nothing filtered: a hidden category and one no
+    restaurant sells under yet both appear here, with their counts, because
+    those are exactly the rows an operator has decisions to make about.
+
+    `pending=true` narrows it to the review queue: categories a vendor's menu
+    section name brought into existence and nobody has decided about. Those
+    are invisible to customers until approved, so this is the list that
+    matters — anything sitting in it is a vendor whose food is not browsable.
+    """
+    rows, total = await category_service.admin_list(
+        db, page.limit, page.offset, pending_only=pending
+    )
+    return paginated(
+        [r.model_dump() for r in rows], total=total, limit=page.limit, offset=page.offset
+    )
+
+
+@router.post(
+    "/categories",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a browse category [EXTENDED]",
+)
+async def create_category(body: CategoryCreateRequest, admin: AdminUser, db: DbSession):
+    """**[EXTENDED]** — add a category deliberately: with an image, pinned,
+    and with the spellings vendors will type as `aliases`, before any vendor
+    has a section under it. A name another category already answers to —
+    as its name, its slug or one of its aliases — is a 409."""
+    category = await category_service.admin_create(db, body)
+    await db.commit()
+    return ok(category.model_dump())
+
+
+@router.patch("/categories/{category_id}", summary="Curate a category [EXTENDED]")
+async def update_category(
+    category_id: uuid.UUID, body: CategoryUpdateRequest, admin: AdminUser, db: DbSession
+):
+    """**[EXTENDED]** — approve, rename, set the image, pin (`sort_order`) or
+    un-pin (`sort_order: null`), hide (`is_active: false`), or replace the
+    alias list.
+
+    **Approving a pending category is `{"is_active": true}` here.** Any call
+    marks the row reviewed, including one that changes nothing, so an operator
+    can also say "I looked, it stays hidden" and have it leave the queue for
+    good rather than reappear on every refresh.
+
+    Renaming keeps the slug and records the old name as an alias, so links
+    already shared and vendor sections named the old way both still land here.
+    Hiding removes the chip everywhere but keeps every section's link, so
+    un-hiding restores it exactly.
+    """
+    category = await category_service.admin_update(db, category_id, body)
+    await db.commit()
+    return ok(category.model_dump())
+
+
+@router.delete("/categories/{category_id}", summary="Delete an unused category [EXTENDED]")
+async def delete_category(category_id: uuid.UUID, admin: AdminUser, db: DbSession):
+    """**[EXTENDED]** — remove a category no menu section links to.
+
+    409 while sections still point at it: deleting would silently drop those
+    restaurants out of the chip. Merge (the sections belong elsewhere) or hide
+    (the chip should not show) are the two operations that mean something.
+    """
+    await category_service.admin_delete(db, category_id)
+    await db.commit()
+    return ok({"message": "Category deleted", "category_id": str(category_id)})
+
+
+@router.post("/categories/{category_id}/merge", summary="Merge into another category [EXTENDED]")
+async def merge_category(
+    category_id: uuid.UUID, body: CategoryMergeRequest, admin: AdminUser, db: DbSession
+):
+    """**[EXTENDED]** — fold the category in the path into `into_id`.
+
+    Every menu section moves to the survivor, the survivor learns the old
+    name and slug as aliases (so "Burgers" resolves to Burger from now on and
+    old links keep working), and the old row is deleted. Returns the survivor.
+    """
+    category = await category_service.admin_merge(db, category_id, body)
+    await db.commit()
+    return ok(category.model_dump())
 
 
 # ---------------------------------------------------------------------------

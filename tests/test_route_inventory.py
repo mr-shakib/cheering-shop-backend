@@ -80,6 +80,21 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "GET",
+        "/auth/google/authorize",
+        "The spec's only sign-up path is an emailed OTP, which costs a new "
+        "customer a mailbox round trip before they can browse. Sign in with "
+        "Google removes it — and the App Store expects a modern food app to "
+        "offer at least one federated login.",
+    ),
+    (
+        "GET",
+        "/auth/google/callback",
+        "The other half: Google redirects the browser here, and this is where "
+        "the authorization code is exchanged, the identity token verified and "
+        "the session issued. Without it the authorize redirect goes nowhere.",
+    ),
+    (
+        "GET",
         "/users/me",
         "A mobile client restoring a saved token needs to resolve who it "
         "belongs to before rendering. Decoding the JWT client-side cannot "
@@ -519,6 +534,68 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "Postgres trail for disputes and a live channel for the customer's "
         "map — and nothing produced a position, so spec #33 streamed nothing "
         "and had to return 501. This is the write all three read from.",
+    ),
+    # --- Browse categories ---------------------------------------------------
+    # The chip row every food app opens on. Spec #19 offers cuisine chips
+    # derived from restaurants.cuisine_types, a free-text array set once at
+    # registration; a vendor creating a "Burger" section got a heading on
+    # their own menu page and nothing on the home screen.
+    (
+        "GET",
+        "/categories",
+        "The full chip list: every platform category a visible restaurant "
+        "sells under. The home feed carries the first twelve; a client "
+        "rendering an 'all categories' screen, or a vendor picker, needs the "
+        "rest.",
+    ),
+    (
+        "GET",
+        "/categories/{id}",
+        "A deep link or a shared URL carries only a slug. Resolving it to a "
+        "name and image needs an endpoint, and an empty category must open "
+        "onto 'nothing here yet' rather than a 404.",
+    ),
+    (
+        "GET",
+        "/categories/{id}/items",
+        "'All burgers near me': dishes across restaurants in one category. "
+        "GET /search matches dish names, but a dish filed under a Burgers "
+        "section is a burger whatever it is called.",
+    ),
+    (
+        "GET",
+        "/admin/categories",
+        "The curation screen. Vendors create categories by naming sections, "
+        "so without a list an operator cannot see that 'Burger', 'Burgers' "
+        "and 'Hamburgers' have become three chips.",
+    ),
+    (
+        "POST",
+        "/admin/categories",
+        "Seeding a chip with an image and the spellings vendors will type, "
+        "before any vendor has a section under it. The alternative is a home "
+        "screen whose taxonomy is whatever the first vendors happened to type.",
+    ),
+    (
+        "PATCH",
+        "/admin/categories/{id}",
+        "Image, pin order, hide, rename, aliases. Nothing else can write these "
+        "columns, and a chip row without images or a deliberate order does not "
+        "look like a product.",
+    ),
+    (
+        "DELETE",
+        "/admin/categories/{id}",
+        "A category created by a typo and linked to nothing has to go "
+        "somewhere. Refuses while sections still link to it, because the FK "
+        "would SET NULL and silently drop restaurants out of their chip.",
+    ),
+    (
+        "POST",
+        "/admin/categories/{id}/merge",
+        "The operation that fixes duplicates: moves every section to the "
+        "survivor and records the old spelling as an alias so it cannot come "
+        "back. Without it the only cure for 'Burgers' is hand-written SQL.",
     ),
 ]
 

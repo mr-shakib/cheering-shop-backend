@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
+from app.models.category import Category
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
 from app.models.restaurant import Restaurant
 from app.schemas.requests import (
@@ -49,6 +50,7 @@ from app.schemas.vendor import (
     VariantOut,
     VendorMenu,
 )
+from app.services import category_service
 
 log = structlog.get_logger()
 
@@ -122,7 +124,12 @@ def item_to_out(item: MenuItem) -> MenuItemOut:
     )
 
 
-def category_to_out(category: MenuCategory, item_count: int = 0) -> MenuCategoryOut:
+def category_to_out(
+    category: MenuCategory, item_count: int = 0, platform: Category | None = None
+) -> MenuCategoryOut:
+    """`platform` is passed in rather than read off the relationship: it is
+    `lazy="raise"`, and the callers that have it loaded (a selectinload on a
+    list, or the object `resolve()` just returned) know that they do."""
     return MenuCategoryOut(
         id=str(category.id),
         restaurant_id=str(category.restaurant_id),
@@ -130,6 +137,7 @@ def category_to_out(category: MenuCategory, item_count: int = 0) -> MenuCategory
         sort_order=category.sort_order,
         is_active=category.is_active,
         item_count=item_count,
+        platform_category=category_service.to_ref(platform) if platform is not None else None,
     )
 
 
@@ -175,23 +183,55 @@ async def list_categories(
     a deactivated category that vanished from the owner's screen could never be
     reactivated.
     """
-    stmt = select(MenuCategory).where(MenuCategory.restaurant_id == restaurant.id)
+    stmt = (
+        select(MenuCategory)
+        .where(MenuCategory.restaurant_id == restaurant.id)
+        .options(selectinload(MenuCategory.platform_category))
+    )
     if not include_inactive:
         stmt = stmt.where(MenuCategory.is_active.is_(True))
     result = await db.execute(stmt.order_by(MenuCategory.sort_order, MenuCategory.name))
     counts = await _item_counts(db, restaurant)
-    return [category_to_out(c, counts.get(c.id, 0)) for c in result.scalars().all()]
+    return [
+        category_to_out(c, counts.get(c.id, 0), c.platform_category)
+        for c in result.scalars().all()
+    ]
+
+
+async def _platform_for(
+    db: AsyncSession, explicit_id: str | None, name: str
+) -> Category:
+    """The platform category a section lists under.
+
+    An explicit id (from the picker fed by `GET /categories`) wins; otherwise
+    the name decides — "Burgers" lands under Burger, and a name nothing
+    matches becomes a new category. This is the only place a vendor's action
+    creates a platform category, and they never had to know it existed.
+    """
+    if explicit_id is not None:
+        return await category_service.get_active(
+            db, _as_uuid(explicit_id, "platform_category_id")
+        )
+    return await category_service.resolve(db, name)
 
 
 async def create_category(
     db: AsyncSession, restaurant: Restaurant, body: MenuCategoryCreateRequest
 ) -> MenuCategoryOut:
-    """[EXTENDED] The endpoint that unblocks menu building."""
+    """[EXTENDED] The endpoint that unblocks menu building.
+
+    Also the moment the section joins the customer-facing taxonomy: see
+    `_platform_for`. The platform row (if one had to be created) and the
+    section land in one transaction, so a duplicate-name rollback takes both.
+    """
+    name = body.name.strip()
+    platform = await _platform_for(db, body.platform_category_id, name)
     category = MenuCategory(
         restaurant_id=restaurant.id,
-        name=body.name.strip(),
+        name=name,
         sort_order=body.sort_order,
         is_active=body.is_active,
+        category_id=platform.id,
     )
     db.add(category)
     try:
@@ -199,14 +239,15 @@ async def create_category(
     except IntegrityError as exc:
         # uq_menu_categories_name — (restaurant_id, name).
         await db.rollback()
-        raise ConflictError(f"A category named '{body.name.strip()}' already exists") from exc
+        raise ConflictError(f"A category named '{name}' already exists") from exc
 
     log.info(
         "menu_category_created",
         restaurant_id=str(restaurant.id),
         category_id=str(category.id),
+        platform_category_id=str(platform.id),
     )
-    return category_to_out(category, 0)
+    return category_to_out(category, 0, platform)
 
 
 async def update_category(
@@ -215,12 +256,44 @@ async def update_category(
     category = await _get_category(db, restaurant, category_id)
     fields = body.model_dump(exclude_unset=True)
 
+    renamed = False
     if "name" in fields and fields["name"] is not None:
-        category.name = fields["name"].strip()
+        new_name = fields["name"].strip()
+        renamed = new_name != category.name
+        category.name = new_name
     if "sort_order" in fields and fields["sort_order"] is not None:
         category.sort_order = fields["sort_order"]
     if "is_active" in fields and fields["is_active"] is not None:
         category.is_active = fields["is_active"]
+
+    # The platform link. An explicit id pins, an explicit null unlinks. When
+    # the field is absent a rename re-matches by the new name — but only
+    # relinks when the new name matches something: "Burgres" must not become a
+    # brand-new chip because of a typo when the section was already under
+    # Burger. A section with no link at all does get one from the new name.
+    platform: Category | None
+    if "platform_category_id" in fields:
+        if fields["platform_category_id"] is None:
+            platform = None
+        else:
+            platform = await category_service.get_active(
+                db, _as_uuid(fields["platform_category_id"], "platform_category_id")
+            )
+        category.category_id = platform.id if platform is not None else None
+    elif renamed:
+        platform = await category_service.find_by_name(db, category.name)
+        if platform is None:
+            current = category.category_id
+            if current is None:
+                platform = await category_service.resolve(db, category.name)
+            else:
+                platform = await category_service.get_by_id(db, current)
+        category.category_id = platform.id if platform is not None else None
+    else:
+        current = category.category_id
+        platform = (
+            await category_service.get_by_id(db, current) if current is not None else None
+        )
 
     try:
         await db.flush()
@@ -229,7 +302,7 @@ async def update_category(
         raise ConflictError("Another category already uses that name") from exc
 
     counts = await _item_counts(db, restaurant)
-    return category_to_out(category, counts.get(category.id, 0))
+    return category_to_out(category, counts.get(category.id, 0), platform)
 
 
 async def delete_category(db: AsyncSession, restaurant: Restaurant, category_id) -> None:
@@ -843,6 +916,7 @@ async def get_menu(db: AsyncSession, restaurant: Restaurant) -> VendorMenu:
     cat_result = await db.execute(
         select(MenuCategory)
         .where(MenuCategory.restaurant_id == restaurant.id)
+        .options(selectinload(MenuCategory.platform_category))
         .order_by(MenuCategory.sort_order, MenuCategory.name)
     )
     categories = list(cat_result.scalars().all())
@@ -863,7 +937,9 @@ async def get_menu(db: AsyncSession, restaurant: Restaurant) -> VendorMenu:
         restaurant_id=str(restaurant.id),
         categories=[
             MenuCategoryWithItems(
-                **category_to_out(c, len(by_category.get(c.id, []))).model_dump(),
+                **category_to_out(
+                    c, len(by_category.get(c.id, [])), c.platform_category
+                ).model_dump(),
                 items=[item_to_out(i) for i in by_category.get(c.id, [])],
             )
             for c in categories

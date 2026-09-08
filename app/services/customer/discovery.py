@@ -24,12 +24,15 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.money import to_major
+from app.models.category import Category
 from app.models.enums import RestaurantStatus
 from app.models.menu import MenuCategory, MenuItem
 from app.models.promo import PromoCode
 from app.models.restaurant import Favorite, Restaurant
 from app.schemas.customer import (
     AddOnOut,
+    CategoryChip,
+    CategoryDish,
     CuisineChip,
     HomeFeed,
     MenuCategoryOut,
@@ -41,12 +44,15 @@ from app.schemas.customer import (
     SearchResults,
     VariantOut,
 )
+from app.services import category_service
 
 # A restaurant is only discoverable when the vendor is verified AND has not
 # deactivated the storefront. `status` (OPEN/CLOSED) is separate and does NOT
 # hide the listing: a closed kitchen still appears, greyed, because hiding it
-# makes customers think the restaurant has left the platform.
-_VISIBLE = and_(Restaurant.is_verified.is_(True), Restaurant.is_active.is_(True))
+# makes customers think the restaurant has left the platform. Defined once, in
+# category_service, so the chip counts and this module can never disagree
+# about who is visible.
+_VISIBLE = category_service.VISIBLE_RESTAURANT
 
 
 def _distance_expr(lat: float | None, lng: float | None):
@@ -99,6 +105,7 @@ async def list_restaurants(
     lat: float | None = None,
     lng: float | None = None,
     cuisine: str | None = None,
+    category: str | None = None,
     search: str | None = None,
     sort: str = "distance",
     max_delivery_fee: int | None = None,
@@ -132,6 +139,10 @@ async def list_restaurants(
         # `contains` maps to the array @> operator, which the GIN index on
         # cuisine_types can serve.
         conditions.append(Restaurant.cuisine_types.contains([cuisine]))
+    if category:
+        # The chip's slug. Same predicate the chip's count was built from, so
+        # the list is exactly as long as the number the customer just tapped.
+        conditions.append(category_service.sells_under(category))
     if search:
         conditions.append(Restaurant.name.ilike(f"%{search}%"))
     if max_delivery_fee is not None and max_delivery_fee < settings.DELIVERY_FEE_BASE:
@@ -198,6 +209,7 @@ async def home_feed(
         .limit(12)
     )
     cuisines = [CuisineChip(name=n, restaurant_count=c) for n, c in cuisine_rows.all()]
+    categories = await list_categories(db, limit=12)
 
     async def _cards(order_by, limit: int, extra=None) -> list[RestaurantCard]:
         where = _VISIBLE if extra is None else and_(_VISIBLE, extra)
@@ -237,7 +249,169 @@ async def home_feed(
         10,
         Restaurant.rating_count > 0,
     )
-    return HomeFeed(cuisines=cuisines, promoted=promoted, nearby=nearby, top_rated=top_rated)
+    return HomeFeed(
+        cuisines=cuisines,
+        categories=categories,
+        promoted=promoted,
+        nearby=nearby,
+        top_rated=top_rated,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Browse categories — the chip row and what a tap opens
+# ---------------------------------------------------------------------------
+
+
+def _to_chip(category: Category, restaurant_count: int) -> CategoryChip:
+    return CategoryChip(
+        id=str(category.id),
+        name=category.name,
+        slug=category.slug,
+        image_url=category.image_url,
+        restaurant_count=int(restaurant_count),
+    )
+
+
+async def list_categories(
+    db: AsyncSession, *, limit: int | None = None, query: str | None = None
+) -> list[CategoryChip]:
+    """[EXTENDED] Categories a customer can actually open.
+
+    Only active categories with at least one visible restaurant selling under
+    them — the inner join against `restaurant_counts` is the filter. Pinned
+    first (an operator's "Burger, Pizza, Biryani" order), then by how many
+    restaurants each one holds, so an unpinned tail sorts itself by demand.
+    """
+    counts = category_service.restaurant_counts()
+    stmt = (
+        select(Category, counts.c.restaurant_count)
+        .join(counts, counts.c.category_id == Category.id)
+        .where(Category.is_active.is_(True))
+        .order_by(
+            Category.sort_order.asc().nulls_last(),
+            counts.c.restaurant_count.desc(),
+            Category.name,
+        )
+    )
+    if query:
+        pattern = f"%{query}%"
+        stmt = stmt.where(
+            or_(
+                Category.name.ilike(pattern),
+                func.array_to_string(Category.aliases, " ").ilike(pattern),
+            )
+        )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await db.execute(stmt)
+    return [_to_chip(c, n) for c, n in rows.all()]
+
+
+async def _active_category(db: AsyncSession, slug: str) -> Category:
+    """By slug, or by a slug it absorbed in a merge — an exact slug wins."""
+    category = await db.scalar(
+        select(Category)
+        .where(category_service.by_slug(slug), Category.is_active.is_(True))
+        .order_by((Category.slug == slug).desc())
+        .limit(1)
+    )
+    if category is None:
+        raise NotFoundError("Category not found")
+    return category
+
+
+async def category_detail(db: AsyncSession, slug: str) -> CategoryChip:
+    """[EXTENDED] One chip by slug — what a deep link resolves.
+
+    Unlike the list, an empty category is returned here (with a count of 0)
+    rather than hidden: a shared link should open onto "nothing here yet",
+    not a 404 that reads as a broken app.
+    """
+    category = await _active_category(db, slug)
+    counts = category_service.restaurant_counts()
+    count = await db.scalar(
+        select(counts.c.restaurant_count).where(counts.c.category_id == category.id)
+    )
+    return _to_chip(category, count or 0)
+
+
+def _to_dish(item: MenuItem, restaurant: Restaurant, distance_m: float | None) -> CategoryDish:
+    return CategoryDish(
+        id=str(item.id),
+        name=item.name,
+        description=item.description,
+        image_url=item.image_url,
+        base_price=to_major(item.base_price),
+        is_veg=item.is_veg,
+        is_available=item.is_available,
+        restaurant_id=str(restaurant.id),
+        restaurant_name=restaurant.name,
+        restaurant_is_open=str(restaurant.status) == RestaurantStatus.OPEN,
+        restaurant_rating_avg=float(restaurant.rating_avg or 0),
+        distance_km=round(distance_m / 1000, 2) if distance_m is not None else None,
+    )
+
+
+async def category_items(
+    db: AsyncSession,
+    slug: str,
+    *,
+    lat: float | None = None,
+    lng: float | None = None,
+    radius_m: int | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[CategoryDish], int]:
+    """[EXTENDED] "All burgers near me" — dishes across every restaurant.
+
+    A dish is in a category through its menu section's link, so a vendor who
+    files "Beef Burger" under a "Burgers" section has put it here without
+    tagging the item. Orderable first, then open kitchens, then nearest, then
+    best rated: a sold-out dish from a closed restaurant is still an honest
+    answer, but it goes at the bottom.
+    """
+    category = await _active_category(db, slug)
+    distance = _distance_expr(lat, lng)
+    conditions = [
+        _VISIBLE,
+        MenuCategory.category_id == category.id,
+        MenuCategory.is_active.is_(True),
+        MenuItem.deleted_at.is_(None),
+    ]
+    if lat is not None and lng is not None:
+        radius = min(
+            radius_m or settings.DEFAULT_SEARCH_RADIUS_METRES, settings.MAX_SEARCH_RADIUS_METRES
+        )
+        origin = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+        conditions.append(
+            func.ST_DWithin(
+                Restaurant.location, func.cast(origin, Restaurant.location.type), radius
+            )
+        )
+
+    def _from(stmt):
+        return (
+            stmt.select_from(MenuItem)
+            .join(MenuCategory, MenuCategory.id == MenuItem.category_id)
+            .join(Restaurant, Restaurant.id == MenuItem.restaurant_id)
+            .where(*conditions)
+        )
+
+    total = await db.scalar(_from(select(func.count()))) or 0
+    rows = await db.execute(
+        _from(select(MenuItem, Restaurant, distance))
+        .order_by(
+            MenuItem.is_available.desc(),
+            (Restaurant.status == RestaurantStatus.OPEN.value).desc(),
+            distance.asc().nulls_last(),
+            Restaurant.rating_avg.desc(),
+            MenuItem.name,
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    return [_to_dish(item, restaurant, d) for item, restaurant, d in rows.all()], total
 
 
 async def _load_visible(db: AsyncSession, restaurant_id: str) -> Restaurant:
@@ -432,11 +606,15 @@ async def search(
         )
         for item, restaurant_name in rows.all()
     ]
-    return SearchResults(restaurants=restaurants, items=items)
+    categories = await list_categories(db, limit=5, query=query)
+    return SearchResults(restaurants=restaurants, items=items, categories=categories)
 
 
 __all__ = [
+    "category_detail",
+    "category_items",
     "home_feed",
+    "list_categories",
     "list_restaurants",
     "restaurant_detail",
     "restaurant_menu",

@@ -16,7 +16,10 @@
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
-  const state = { tab: "applications", status: "PENDING", rows: [], selected: null, tempToken: null };
+  const state = {
+    tab: "applications", status: "PENDING", catFilter: "",
+    rows: [], selected: null, tempToken: null,
+  };
 
   // ---------------------------------------------------------------- transport
   async function request(method, path, body, token) {
@@ -161,13 +164,26 @@
     state.tab = b.dataset.tab;
     state.selected = null;
     $("status-filter").hidden = state.tab !== "applications";
+    $("category-filter").hidden = state.tab !== "categories";
+    $("new-category").hidden = state.tab !== "categories";
     $("list-title").textContent = b.textContent;
     renderDetail();
     load();
   }));
 
   $("status-filter").addEventListener("change", (e) => { state.status = e.target.value; load(); });
+  $("category-filter").addEventListener("change", (e) => {
+    state.catFilter = e.target.value;
+    state.selected = null;
+    renderDetail();
+    load();
+  });
   $("refresh").addEventListener("click", load);
+  $("new-category").addEventListener("click", () => {
+    state.selected = { is_active: true, aliases: [] };   // no id: the form creates
+    renderList();
+    renderDetail();
+  });
 
   // -------------------------------------------------------------------- data
   async function load() {
@@ -177,7 +193,9 @@
     try {
       const path = state.tab === "applications"
         ? `/admin/vendor-applications?status=${encodeURIComponent(state.status)}&limit=100`
-        : "/admin/restaurants/pending?limit=100";
+        : state.tab === "categories"
+          ? `/admin/categories?limit=100${state.catFilter === "pending" ? "&pending=true" : ""}`
+          : "/admin/restaurants/pending?limit=100";
       const res = await api("GET", path);
       state.rows = res.data;
       renderList();
@@ -191,9 +209,12 @@
 
   function renderList() {
     const isApps = state.tab === "applications";
+    const isCats = state.tab === "categories";
     $("list-thead").innerHTML = isApps
       ? "<tr><th>Ref</th><th>Business</th><th>Owner</th><th>Submitted</th><th>Status</th></tr>"
-      : "<tr><th>Restaurant</th><th>Address</th><th>Cuisines</th><th>Status</th></tr>";
+      : isCats
+        ? "<tr><th>Category</th><th>Restaurants</th><th>Sections</th><th>Pinned</th><th>Status</th></tr>"
+        : "<tr><th>Restaurant</th><th>Address</th><th>Cuisines</th><th>Status</th></tr>";
     const body = $("list-body");
     body.innerHTML = "";
     $("list-empty").hidden = state.rows.length > 0;
@@ -204,7 +225,11 @@
         ? `<td>${esc(r.application_no)}</td><td>${esc(r.business_name)}<br><span class="muted">${esc(r.business_type)} · ${esc(r.area || r.address_line)}</span></td>
            <td>${esc(r.owner_full_name)}<br><span class="muted">${esc(r.owner_email)}</span></td>
            <td>${fmtDate(r.created_at)}</td><td><span class="pill ${esc(r.status)}">${esc(r.status)}</span></td>`
-        : `<td>${esc(r.name)}</td><td>${esc(r.address_line || "")}</td><td>${esc((r.cuisine_types || []).join(", "))}</td>
+        : isCats
+          ? `<td>${esc(r.name)}<br><span class="muted">${esc(r.slug)}${r.aliases && r.aliases.length ? " · also " + esc(r.aliases.join(", ")) : ""}</span></td>
+             <td>${r.restaurant_count}</td><td>${r.section_count}</td><td>${r.sort_order == null ? '<span class="muted">—</span>' : r.sort_order}</td>
+             <td>${statePill(r)}</td>`
+          : `<td>${esc(r.name)}</td><td>${esc(r.address_line || "")}</td><td>${esc((r.cuisine_types || []).join(", "))}</td>
            <td><span class="pill">${r.is_verified ? "VERIFIED" : "UNVERIFIED"}</span></td>`;
       tr.addEventListener("click", () => { state.selected = r; renderList(); renderDetail(); });
       body.appendChild(tr);
@@ -232,6 +257,8 @@
     const el = $("detail");
     const r = state.selected;
     if (!r) { el.innerHTML = '<p class="muted">Select a row to review it.</p>'; return; }
+
+    if (state.tab === "categories") { renderCategory(r); return; }
 
     if (state.tab === "restaurants") {
       el.innerHTML = `
@@ -325,6 +352,106 @@
       state.selected = null;
       renderDetail();
       await load();
+    } catch (err) {
+      flash(err.message, true);
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  // ------------------------------------------------------------- categories
+  // The chip row on the customer home screen. Vendors create rows here by
+  // naming menu sections; this screen is where they get an image, an order,
+  // and where "Burger" / "Burgers" become one chip.
+
+  // Three states, not two: a category nobody has decided about is not the
+  // same as one an operator deliberately hid, and only the first needs action.
+  function statePill(c) {
+    if (c.is_pending) return '<span class="pill PENDING">NEEDS REVIEW</span>';
+    return `<span class="pill ${c.is_active ? "SHOWN" : "HIDDEN"}">${c.is_active ? "SHOWN" : "HIDDEN"}</span>`;
+  }
+
+  function categoryForm(c) {
+    const isNew = !c.id;
+    const others = state.rows.filter((o) => o.id && o.id !== c.id);
+    const head = isNew
+      ? "<h2>New category</h2><p class=\"muted\">Vendors whose sections match the name or an alias will list under it automatically.</p>"
+      : `<h2>${esc(c.name)} ${statePill(c)}</h2>
+         <p class="muted">${esc(c.slug)} · ${c.restaurant_count} restaurant(s) · ${c.section_count} menu section(s)</p>
+         ${c.image_url ? `<p class="muted">Image: ${link(c.image_url)}</p>` : ""}
+         ${c.is_pending ? `<p class="muted">A vendor's menu section created this. Customers cannot see it until you approve it${c.restaurant_count ? `, so ${c.restaurant_count} restaurant(s) are not browsable under it` : ""}.</p>
+           <div class="actions"><button id="cat-approve" class="ok">Approve — show to customers</button><button id="cat-dismiss" class="ghost">Keep hidden</button></div>` : ""}`;
+    const merge = isNew || !others.length ? "" : `
+      <h3>Merge</h3>
+      <p class="muted">Move every menu section under <strong>${esc(c.name)}</strong> into another category, teach that category this spelling, and delete this one.</p>
+      <label>Into <select id="cat-merge-target">${others.map((o) => `<option value="${esc(o.id)}">${esc(o.name)} (${o.restaurant_count})</option>`).join("")}</select></label>
+      <div class="actions"><button id="cat-merge" class="bad">Merge</button></div>`;
+    return `${head}
+      <label>Name <input id="cat-name" maxlength="80" value="${esc(c.name || "")}"></label>
+      <label>Image URL <span class="muted">(public URL; the slug never changes on rename)</span>
+        <input id="cat-image" maxlength="2048" value="${esc(c.image_url || "")}"></label>
+      <label>Pinned position <span class="muted">(blank = not pinned; 0 comes first)</span>
+        <input id="cat-sort" type="number" min="0" max="9999" value="${c.sort_order == null ? "" : c.sort_order}"></label>
+      <label>Also answers to <span class="muted">(comma-separated spellings vendors type)</span>
+        <input id="cat-aliases" value="${esc((c.aliases || []).join(", "))}"></label>
+      <label class="check"><input id="cat-active" type="checkbox" ${c.is_active === false ? "" : "checked"}> Shown to customers</label>
+      <div class="actions">
+        <button id="cat-save" class="ok">${isNew ? "Create" : "Save"}</button>
+        ${isNew ? "" : '<button id="cat-delete" class="bad">Delete</button>'}
+      </div>${merge}`;
+  }
+
+  function categoryBody() {
+    const sort = $("cat-sort").value.trim();
+    return {
+      name: $("cat-name").value.trim(),
+      image_url: $("cat-image").value.trim() || null,
+      sort_order: sort === "" ? null : Number(sort),
+      aliases: $("cat-aliases").value.split(",").map((a) => a.trim()).filter(Boolean),
+      is_active: $("cat-active").checked,
+    };
+  }
+
+  function renderCategory(c) {
+    $("detail").innerHTML = categoryForm(c);
+    if (c.is_pending) {
+      $("cat-approve").addEventListener("click", () => run(
+        "PATCH", `/admin/categories/${c.id}`, { is_active: true }, "Category approved", true));
+      // Marks it reviewed without showing it: the operator has decided, and
+      // it stops coming back in the queue.
+      $("cat-dismiss").addEventListener("click", () => run(
+        "PATCH", `/admin/categories/${c.id}`, { is_active: false }, "Left hidden", true));
+    }
+    $("cat-save").addEventListener("click", () => {
+      const body = categoryBody();
+      if (!body.name) { flash("Name is required.", true); $("cat-name").focus(); return; }
+      if (c.id) run("PATCH", `/admin/categories/${c.id}`, body, "Saved", true);
+      else run("POST", "/admin/categories", body, "Category created", true);
+    });
+    if (!c.id) return;
+    $("cat-delete").addEventListener("click", () => {
+      if (!confirm(`Delete ${c.name}? Only possible while no menu section links to it.`)) return;
+      run("DELETE", `/admin/categories/${c.id}`, null, "Category deleted", false);
+    });
+    const merge = $("cat-merge");
+    if (merge) merge.addEventListener("click", () => {
+      const target = $("cat-merge-target");
+      const name = target.options[target.selectedIndex].textContent;
+      if (!confirm(`Merge ${c.name} into ${name}? Every section moves over and ${c.name} is deleted. This cannot be undone.`)) return;
+      run("POST", `/admin/categories/${c.id}/merge`, { into_id: target.value }, `Merged into ${name}`, true);
+    });
+  }
+
+  // Generic action: call, flash, reload. `keep` re-selects the returned row
+  // so a Save leaves the operator looking at what they just saved.
+  async function run(method, path, body, okMsg, keep) {
+    const buttons = document.querySelectorAll(".actions button");
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      const res = await api(method, path, body);
+      flash((res.data && res.data.message) || okMsg);
+      state.selected = keep && res.data && res.data.id ? res.data : null;
+      await load();
+      renderDetail();
     } catch (err) {
       flash(err.message, true);
       buttons.forEach((b) => { b.disabled = false; });

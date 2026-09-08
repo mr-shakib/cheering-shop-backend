@@ -23,7 +23,7 @@ those contracts too.
 
 1. [Conventions](#1-conventions) — envelope, tokens, errors
 2. [Registration](#2-registration) — the signup journey
-3. [Login](#3-login) — password, biometric, 2FA
+3. [Login](#3-login) — password, biometric, Google, 2FA
 4. [Forgot password](#4-forgot-password)
 5. [Session management](#5-session-management) — refresh, logout
 6. [Profile & security](#6-profile--security)
@@ -328,6 +328,100 @@ Returns tokens, or a `requires_2fa` challenge if 2FA is enabled.
 > **Challenges are single-use.** Fetch a fresh one for every attempt; never
 > cache. A captured signature cannot be replayed.
 
+### 3c. Sign in with Google
+
+> *As a new customer, I want to start ordering without waiting for a code in my
+> inbox.*
+
+This is the **server-side** flow: your app never handles a Google SDK, a client
+secret, or an authorization code. It opens one URL and waits for a deep link.
+
+**Step 1 — open the browser.**
+
+```
+GET https://api.cheeringshop.online/api/v1/auth/google/authorize
+```
+
+Open it in an **in-app browser tab** — `SFSafariViewController` on iOS,
+Chrome Custom Tabs on Android, `flutter_web_auth_2` or `expo-web-browser` if
+you would rather not wire those up yourself.
+
+> **Not a WebView.** Google blocks sign-in from embedded WebViews
+> (`disallowed_useragent`) precisely because the host app can read what is
+> typed into one. A custom tab is a real browser and works.
+
+The server answers `307` to Google's consent screen. Do not follow it yourself,
+do not parse it, and do not rebuild this URL in the app — it carries a PKCE
+challenge that is generated per attempt and held server-side.
+
+**Step 2 — catch the deep link.**
+
+When the user finishes, the browser lands on `/auth/google/callback`, which
+does all the work and redirects to your app's custom scheme:
+
+```
+crshop://auth/callback#access_token=eyJ...&refresh_token=abc...&expires_in=1800&token_type=Bearer
+```
+
+Read the values from the URL **fragment** (everything after `#`) and store them
+exactly as you store tokens from `/auth/login`. There is no difference from
+that point on: the same access token, the same 30-day refresh token, the same
+`/auth/refresh` and `/auth/logout`.
+
+If the user taps **Cancel** on the consent screen you get the same deep link
+with an error instead, so your spinner always gets dismissed:
+
+```
+crshop://auth/callback#error=access_denied
+```
+
+**Registering the scheme.** `crshop` is the default; the exact value is server
+configuration (`GOOGLE_POST_AUTH_REDIRECTS`), so confirm it before shipping.
+
+```xml
+<!-- android/app/src/main/AndroidManifest.xml, inside <activity> -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="crshop" android:host="auth" />
+</intent-filter>
+```
+
+```xml
+<!-- ios/Runner/Info.plist -->
+<key>CFBundleURLTypes</key>
+<array><dict>
+    <key>CFBundleURLSchemes</key>
+    <array><string>crshop</string></array>
+</dict></array>
+```
+
+**What the account looks like afterwards.** A first-time Google sign-in creates
+a `CUSTOMER` with `is_email_verified: true` and **no password**, so
+`/users/me/security` returns `has_password: false` — hide "change password" and
+offer "set a password" instead. `linked_providers` will contain `"google"`.
+
+If the Google address already belongs to an account, the two are **linked**,
+not duplicated: same user id, same order history, and password login keeps
+working. This happens only when Google reports the address verified.
+
+| Situation | Response | `error.code` |
+|---|---|---|
+| Server has no Google credentials configured | `501` | `NOT_IMPLEMENTED` |
+| `?redirect=` is not on the server's allowlist | `400` | `VALIDATION_FAILED` |
+| Callback replayed, or `state` older than 10 minutes | `401` | `UNAUTHORIZED` |
+| Google's email is unverified | `400` | `VALIDATION_FAILED` |
+| Account deactivated | `401` | `UNAUTHORIZED` |
+| More than 30 `/authorize` calls in an hour from one IP | `429` | `RATE_LIMITED` |
+
+> **2FA is not re-prompted.** Google has already applied whatever second factor
+> the user set up with them, and the browser is on its way back to the app with
+> nowhere left to prompt. A user with TOTP enabled still gets challenged on
+> `/auth/login`.
+
+---
+
 ---
 
 ## 4. Forgot password
@@ -484,11 +578,18 @@ GET /api/v1/users/me/security
 ```json
 { "success": true,
   "data": { "is_2fa_enabled": false, "is_biometrics_enabled": true,
-            "biometric_device_count": 1, "has_password": true } }
+            "biometric_device_count": 1, "has_password": true,
+            "linked_providers": ["google"] } }
 ```
 
 Drives the toggles on your Security screen. `has_password` is useful for
-OTP-only accounts that never set one.
+OTP-only accounts that never set one, and for Google accounts, which start
+without a password at all.
+
+`linked_providers` lists federated logins on the account. An account with
+`has_password: false` and a single entry here has exactly one way in — do not
+offer to unlink it without first walking the user through setting a password,
+or you will lock them out of their own account.
 
 ---
 
@@ -605,6 +706,8 @@ key and clears any lockout. That is the recovery path for a device locked after
 | POST | `/auth/login/2fa` | temp | Complete 2FA login |
 | POST | `/auth/biometrics/challenge` | — | Get a nonce to sign |
 | POST | `/auth/biometrics/login` | — | Sign in with a biometric |
+| GET | `/auth/google/authorize` | — | Start Sign in with Google (open in a browser tab) |
+| GET | `/auth/google/callback` | — | Google returns here; deep-links tokens to the app |
 | POST | `/auth/refresh` | — | Rotate tokens |
 | POST | `/auth/logout` | ✓ | End session(s) |
 | POST | `/auth/password/forgot` | — | Request a reset code |
@@ -909,16 +1012,22 @@ Be aware of these when planning screens:
 4. **No account deletion.** Apple and Google both **require** an in-app
    deletion path for any app that offers account creation — submission gets
    rejected without it. Flag this early if you have a store date.
-5. **No rider accounts.** There is no way to create a `RIDER`, so the rider app
+5. **No Sign in with Apple.** Now that [Google sign-in](#3c-sign-in-with-google)
+   exists, this stops being optional: App Store review requires Sign in with
+   Apple from any iOS app offering a third-party login. The backend is shaped
+   for it — `auth_identities` already accepts `apple` as a provider — but the
+   endpoint is not built. Neither this nor the point above blocks development;
+   both block an iOS submission.
+6. **No rider accounts.** There is no way to create a `RIDER`, so the rider app
    has no signup. Delivery assignment and live tracking depend on it — and so
    does the vendor handoff, which cannot complete without an assigned rider.
-6. **No push notification registration.** Spec §9 lists `POST /users/me/devices`
+7. **No push notification registration.** Spec §9 lists `POST /users/me/devices`
    for FCM tokens; it is not built. No order-status pushes, and no vendor alert
    when the tablet app is backgrounded.
-7. **No 2FA recovery codes.** A user who loses their authenticator is
+8. **No 2FA recovery codes.** A user who loses their authenticator is
    permanently locked out — recovery currently needs manual database access.
    Consider hiding the 2FA toggle until this exists.
-8. **Customer commerce still returns 501.** Discovery, cart, checkout and order
+9. **Customer commerce still returns 501.** Discovery, cart, checkout and order
    placement are routed and documented but not implemented, so nothing can yet
    place an order for a vendor to receive. Auth and vendor operations
    (see [VENDOR-API.md](VENDOR-API.md)) are implemented.

@@ -58,13 +58,13 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 
 | Screen file | What it is | API | Status |
 | --- | --- | --- | --- |
-| Food.png | Home dashboard | `GET /home/feed?lat=&lng=` (one call: cuisines, offers, nearby, top rated) | 🟢 live |
+| Food.png | Home dashboard | `GET /home/feed?lat=&lng=` (one call: category chips, cuisines, offers, nearby, top rated) | 🟢 live |
 | Food-1.png, Food-2.png | Feed scrolled | same response, rendered further | 🟢 live |
 | Scroll.png | Restaurant carousel | `GET /restaurants?lat=&lng=` | 🟢 live |
-| Category listing (Pizza).png | One cuisine | `GET /restaurants?cuisine=Pizza` | 🟢 live |
+| Category listing (Pizza).png | One category chip | `GET /restaurants?category=pizza` for the restaurants; `GET /categories/pizza/items?lat=&lng=` for the dishes; `GET /categories` for the full chip list | 🟢 live |
 | Filter and Short.png | Filter + sort sheet | `GET /restaurants` with `sort`, `min_rating`, `max_delivery_fee`, `is_open` | 🟢 live |
 | Search.png | Empty search | client-side (recent searches are local) | ⚪ client |
-| Search results.png | Results | `GET /search?q=` — returns restaurants **and** dishes | 🟢 live |
+| Search results.png | Results | `GET /search?q=` — returns restaurants, dishes **and** matching category chips | 🟢 live |
 | Restuarent Details.png | Storefront header | `GET /restaurants/{id}` (`promotions` drives the offer ribbon) | 🟢 live |
 | Restuarent Details-1.png | Menu list | `GET /restaurants/{id}/menu` | 🟢 live |
 | Restuarent Details-2.png | Menu, scrolled to a category | same response; category jump is client-side | 🟢 live |
@@ -131,7 +131,7 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 | Menu-15.png | Add Ones (add-ons) | `add_ons` array on item create/update | 🟢 live |
 | Menu-18.png | "Item added" success | rendered from the create response | 🟢 live |
 | Menu-16.png | Category list (drag to reorder) | `GET /vendor/menu/categories`; drag → `PATCH /vendor/menu/reorder`; edit → `PATCH /vendor/menu/categories/{id}` | 🟢 live |
-| Menu-17.png | Add category sheet | `POST /vendor/menu/categories` | 🟢 live |
+| Menu-17.png | Add category sheet | `POST /vendor/menu/categories` — filed under a customer-facing chip by name; optional picker from `GET /categories` via `platform_category_id` | 🟢 live |
 | Edit menu.png | Store Profile edit | `PATCH /vendor/profile`; photo → `POST /uploads/presigned-url` | 🟢 live |
 
 ### Profile tab

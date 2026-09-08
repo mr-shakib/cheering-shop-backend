@@ -39,6 +39,16 @@ for _r2 in (
 ):
     os.environ[_r2] = ""
 
+# FORCED, like the Resend and R2 keys above, but in the opposite direction:
+# pinned to fake values so /auth/google/* are ENABLED during the suite. Nothing
+# here reaches Google — /authorize only writes a Redis key, and the callback's
+# two outbound calls are monkeypatched by the tests that exercise them. Pinning
+# also stops a developer's real credentials in .env from being used.
+os.environ["GOOGLE_CLIENT_ID"] = "test-client-id.apps.googleusercontent.com"
+os.environ["GOOGLE_CLIENT_SECRET"] = "test-client-secret"
+os.environ["GOOGLE_REDIRECT_URI"] = "http://test/api/v1/auth/google/callback"
+os.environ["GOOGLE_POST_AUTH_REDIRECTS"] = "crshop://auth/callback"
+
 import uuid  # noqa: E402
 
 import pytest  # noqa: E402

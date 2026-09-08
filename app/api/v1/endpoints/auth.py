@@ -1,8 +1,10 @@
 """Authentication & Security — spec endpoints #1–8, #10–12, plus [EXTENDED] refresh."""
 
 from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, Query, Request, status
+from fastapi.responses import RedirectResponse
 
 from app.api.deps import CurrentUser, DbSession
 from app.core import rate_limit
@@ -29,6 +31,7 @@ from app.schemas.requests import (
 from app.services import (
     auth_service,
     biometric_service,
+    oauth_service,
     otp_service,
     token_service,
     vendor_service,
@@ -214,6 +217,110 @@ async def register_vendor(body: VendorRegisterRequest, request: Request, db: DbS
                 "customers will see you once an administrator approves it."
             ),
         }
+    )
+
+
+@router.get(
+    "/google/authorize",
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    summary="Start Sign in with Google [EXTENDED]",
+)
+async def google_authorize(
+    request: Request,
+    redirect: Annotated[
+        str | None,
+        Query(description="Post-auth target. Must be on the server's allowlist."),
+    ] = None,
+):
+    """**[EXTENDED] — not in the specification.**
+
+    Open this in a browser (an in-app tab, not a WebView — Google blocks
+    embedded WebViews for sign-in) and it redirects to Google's consent screen.
+
+    A 307 rather than a JSON body carrying the URL: the client's next action is
+    always "navigate here", and returning it as data invites a client to
+    reassemble the URL itself and drop the PKCE challenge on the way.
+    """
+    await rate_limit.hit(
+        rate_limit.google_authorize_key(client_ip(request)),
+        limit=settings.GOOGLE_AUTHORIZE_MAX_PER_HOUR,
+        window_seconds=3600,
+    )
+    pending = await oauth_service.begin_authorization(redirect_target=redirect)
+    return RedirectResponse(
+        pending.authorization_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT
+    )
+
+
+@router.get(
+    "/google/callback",
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    summary="Complete Sign in with Google [EXTENDED]",
+)
+async def google_callback(
+    request: Request,
+    db: DbSession,
+    code: Annotated[str | None, Query()] = None,
+    state: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+):
+    """**[EXTENDED] — not in the specification.**
+
+    Google sends the browser here. This is not an API the mobile app calls; it
+    always answers with a redirect to the app's custom scheme, because the
+    caller at this point is a browser and the only way back into the app is a
+    deep link.
+
+    Tokens ride in the URL **fragment**, not the query string. A fragment is
+    never sent to a server and is kept out of proxy logs, browser history sync
+    and `Referer` headers — all of which a query string lands in.
+    """
+    # `state` is resolved before anything else, because it carries the redirect
+    # target: without it there is nowhere to send a failure except a bare JSON
+    # body the browser would render as text.
+    if not state:
+        raise ValidationError("state is required")
+    pending = await oauth_service.consume_state(state)
+    target = oauth_service.resolve_redirect(pending["redirect"])
+
+    if error:
+        # The user tapped "Cancel" on the consent screen. Not an error worth a
+        # 4xx — the app needs to be woken up so it can dismiss its spinner.
+        return RedirectResponse(
+            f"{target}#error={error}", status_code=status.HTTP_307_TEMPORARY_REDIRECT
+        )
+    if not code:
+        raise ValidationError("code is required")
+
+    id_token = await oauth_service.exchange_code(code, pending["verifier"])
+    profile = await oauth_service.verify_id_token(id_token)
+
+    user = await auth_service.link_or_create_google_user(
+        db,
+        subject=profile.subject,
+        email=profile.email,
+        email_verified=profile.email_verified,
+        full_name=profile.full_name,
+        avatar_url=profile.avatar_url,
+    )
+
+    # 2FA is deliberately NOT enforced here. Google has already applied whatever
+    # second factor the user configured with them, and demanding a TOTP code in
+    # a browser that is about to hand control back to the app would strand the
+    # flow with nowhere to prompt.
+    tokens = await token_service.issue_token_pair(db, user, **_client_meta(request))
+    await db.commit()
+
+    fragment = urlencode(
+        {
+            "access_token": tokens.access_token,
+            "refresh_token": tokens.refresh_token,
+            "expires_in": tokens.expires_in,
+            "token_type": tokens.token_type,
+        }
+    )
+    return RedirectResponse(
+        f"{target}#{fragment}", status_code=status.HTTP_307_TEMPORARY_REDIRECT
     )
 
 

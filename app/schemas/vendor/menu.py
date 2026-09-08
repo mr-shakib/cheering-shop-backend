@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.categories import PlatformCategoryRef
+
 
 class VariantOut(BaseModel):
     """Decision D4: `price` REPLACES the item's base price — it is absolute."""
@@ -52,6 +54,11 @@ class MenuCategoryOut(BaseModel):
     sort_order: int
     is_active: bool
     item_count: int = Field(description="Live items in this category, excluding deleted ones")
+    platform_category: PlatformCategoryRef | None = Field(
+        default=None,
+        description="The browse category customers find this section under; "
+        "null when the section is unlinked",
+    )
 
 
 class MenuCategoryWithItems(MenuCategoryOut):

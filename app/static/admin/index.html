@@ -27,6 +27,7 @@
       <nav>
         <button class="tab active" data-tab="applications">Vendor applications</button>
         <button class="tab" data-tab="restaurants">Restaurants awaiting approval</button>
+        <button class="tab" data-tab="categories">Categories</button>
       </nav>
       <span class="spacer"></span>
       <span id="who" class="muted"></span>
@@ -44,6 +45,11 @@
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
           </select>
+          <select id="category-filter" title="Which categories" hidden>
+            <option value="">All categories</option>
+            <option value="pending">Needs review</option>
+          </select>
+          <button id="new-category" class="ghost" hidden>New category</button>
           <button id="refresh" class="ghost">Refresh</button>
         </div>
         <table>

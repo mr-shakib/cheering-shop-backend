@@ -118,6 +118,30 @@ CREATE TABLE biometric_credentials (
     CONSTRAINT uq_biometric_user_device UNIQUE (user_id, device_id)
 );
 
+-- [EXTENDED] Federated logins (Sign in with Google).
+-- A join table rather than google_id/apple_id columns on users: Apple sign-in
+-- is required by the App Store of any iOS app offering a third-party login, so
+-- a second provider is a certainty and each one should be a row, not another
+-- migration against the identity table.
+--
+-- The link key is `subject` -- the provider's stable `sub` claim -- and never
+-- the email. Workspace addresses get renamed and consumer primaries change; a
+-- link keyed on email would break silently, and a recycled address would
+-- resolve to the wrong account.
+CREATE TABLE auth_identities (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       uuid         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider      varchar(32)  NOT NULL,
+    subject       varchar(255) NOT NULL,   -- the provider's stable user id ('sub')
+    email         citext,                  -- support lookups only, never the join key
+    last_login_at timestamptz,
+    created_at    timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_auth_identity_provider_subject UNIQUE (provider, subject),
+    CONSTRAINT uq_auth_identity_user_provider UNIQUE (user_id, provider),
+    CONSTRAINT ck_auth_identity_provider CHECK (provider IN ('google', 'apple'))
+);
+CREATE INDEX ix_auth_identities_user ON auth_identities (user_id);
+
 -- [EXTENDED] FCM tokens — required by spec §9 (POST /users/me/devices).
 CREATE TABLE user_devices (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -353,6 +377,29 @@ CREATE TABLE favorites (
 );
 CREATE INDEX ix_favorites_restaurant ON favorites (restaurant_id);
 
+-- [EXTENDED] Platform browse categories — the "Burger", "Pizza" chips on the
+-- customer home screen. A menu section (below) links to one of these by name,
+-- so a vendor creating a "Burger" section is what puts their restaurant behind
+-- the Burger chip. Curated by administrators: image, pin order, hide, merge.
+-- A category a vendor's section name created starts hidden with reviewed_at
+-- NULL, and reaches customers only once an administrator approves it.
+CREATE TABLE categories (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        varchar(80)  NOT NULL,
+    slug        varchar(100) NOT NULL,        -- public id; stable across renames
+    image_url   text,
+    sort_order  smallint,                     -- NULL = not pinned
+    aliases     text[]       NOT NULL DEFAULT '{}',  -- match keys, lower-cased
+    is_active   boolean      NOT NULL DEFAULT true,
+    reviewed_at timestamptz,                  -- NULL = awaiting an admin's decision
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_categories_slug UNIQUE (slug),
+    CONSTRAINT ck_categories_slug CHECK (slug <> '')
+);
+CREATE TRIGGER trg_categories_updated_at BEFORE UPDATE ON categories
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- [SPEC] MenuCategory
 CREATE TABLE menu_categories (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -360,6 +407,9 @@ CREATE TABLE menu_categories (
     name          varchar(120) NOT NULL,
     sort_order    smallint     NOT NULL DEFAULT 0,
     is_active     boolean      NOT NULL DEFAULT true,
+    -- The platform category this section lists under. SET NULL, never CASCADE:
+    -- deleting a chip must not delete a vendor's menu section.
+    category_id   uuid         REFERENCES categories(id) ON DELETE SET NULL,
     created_at    timestamptz  NOT NULL DEFAULT now(),
     updated_at    timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT uq_menu_categories_name UNIQUE (restaurant_id, name),
@@ -367,6 +417,7 @@ CREATE TABLE menu_categories (
     CONSTRAINT uq_menu_categories_id_restaurant UNIQUE (id, restaurant_id)
 );
 CREATE INDEX ix_menu_categories_restaurant ON menu_categories (restaurant_id, sort_order);
+CREATE INDEX ix_menu_categories_category ON menu_categories (category_id);
 CREATE TRIGGER trg_menu_categories_updated_at BEFORE UPDATE ON menu_categories
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 

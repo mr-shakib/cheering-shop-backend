@@ -97,6 +97,49 @@ class BiometricCredential(Base, UUIDPrimaryKey, CreatedAtMixin):
     __table_args__ = (UniqueConstraint("user_id", "device_id", name="uq_biometric_user_device"),)
 
 
+class AuthIdentity(Base, UUIDPrimaryKey, CreatedAtMixin):
+    """[EXTENDED] A federated login linked to a local account.
+
+    A separate table rather than `google_id`/`apple_id` columns on `users`,
+    because the relationship is one-to-many in both directions that matter: a
+    user may link several providers, and adding Apple sign-in (which the App
+    Store requires of any iOS app offering Google) must be a row, not another
+    migration against the identity table.
+
+    `subject` is the provider's stable user id -- Google's `sub` claim. It is
+    the join key, NOT the email: Google Workspace addresses get renamed and
+    consumer accounts can change their primary address, and matching on email
+    would either lose the link or, worse, follow a recycled address onto
+    somebody else's account. Email is stored alongside only for support
+    lookups.
+    """
+
+    __tablename__ = "auth_identities"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(CIText())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        # The uniqueness that matters. Without it a race between two concurrent
+        # first-time sign-ins would link the same Google account twice.
+        UniqueConstraint("provider", "subject", name="uq_auth_identity_provider_subject"),
+        # One link per provider per user: signing in with Google twice updates
+        # the existing row instead of accumulating duplicates.
+        UniqueConstraint("user_id", "provider", name="uq_auth_identity_user_provider"),
+        # A CHECK rather than a native enum so adding 'apple' is a constraint
+        # edit and not an ALTER TYPE, which cannot run inside a transaction on
+        # older Postgres and so complicates every deploy that touches it.
+        CheckConstraint("provider IN ('google', 'apple')", name="ck_auth_identity_provider"),
+        # "Which providers has this user linked?" — read by GET /users/me/security.
+        Index("ix_auth_identities_user", "user_id"),
+    )
+
+
 class UserDevice(Base, UUIDPrimaryKey, CreatedAtMixin):
     """[EXTENDED] FCM tokens — spec §9."""
 

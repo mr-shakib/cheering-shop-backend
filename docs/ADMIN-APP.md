@@ -9,13 +9,30 @@ Docker image.
 
 ## What it does today
 
-One job: **approving vendors after they register.** Both registration paths are
-covered, one tab each.
+Two jobs: **approving vendors after they register**, and **curating the
+category chips** on the customer home screen.
 
 | Tab | Backed by | Actions |
 |---|---|---|
 | Vendor applications | `GET /admin/vendor-applications?status=` | Review the full form (business, owner, documents, payout), then `approve` or `reject` with a note. Rejection requires a note because it is emailed to the applicant. Filter by Pending / Approved / Rejected. |
 | Restaurants awaiting approval | `GET /admin/restaurants/pending` | Restaurants created through the fast path (`role: "VENDOR"` at sign-up). Approve with `POST /admin/restaurants/{id}/verify`. |
+| Categories | `GET /admin/categories` | The Burger / Pizza / Biryani chips customers browse by. **Filter to *Needs review*: that is a work queue.** A vendor whose menu section name matched no existing chip created one, and it stays hidden from customers until you *Approve* it or *Keep hidden*. Anything sitting there is a vendor whose food is not browsable, so the queue is ordered by how many restaurants are waiting. The rest of the tab is curation: image, pinned order, aliases, and **merge** ("Burgers" into "Burger" — the sections move and the old spelling becomes an alias so it cannot come back). *New category* seeds a chip before anyone sells under it, and is approved by definition because you typed it. Delete only works on a category nothing links to; merge or hide are the operations for one in use. |
+
+The Categories tab is documented in full — including hide vs delete vs merge,
+and what to do on day one — in [CATEGORIES.md](CATEGORIES.md).
+
+### Category images
+
+The form takes an image URL. Upload the file first through
+`POST /uploads/presigned-url` (any signed-in user, including an admin) and
+paste the returned `public_url`; the console cannot upload directly because its
+Content-Security-Policy only lets it talk to the API's own origin.
+
+### The category queue, in one line
+
+Approving a chip is one click and publishes every restaurant already
+accumulated under it. Check it whenever you approve a vendor. It is empty most
+of the time, because the seeded taxonomy absorbs the common spellings.
 
 ## Signing in
 
@@ -70,7 +87,7 @@ On the bare-metal Caddy deployment the same variable feeds Caddy's site block
 
 - Add screens by editing `index.html` / `admin.js`; every admin endpoint is
   listed under **[EXTENDED]** in `app/api/v1/endpoints/admin.py` (riders,
-  payouts, commission).
+  payouts, commission, categories).
 - Keep scripts and styles in files, not inline. The console runs under a
   Content-Security-Policy of `default-src 'self'` (see
   `SecurityHeadersMiddleware`), so inline `<script>` blocks and `onclick=`

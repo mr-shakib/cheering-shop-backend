@@ -43,6 +43,7 @@ make verify-db   # the 21 schema invariant assertions
 **Frontend integrating auth?** Send them [docs/AUTH-API.md](docs/AUTH-API.md).
 **Building the restaurant app?** Send them [docs/VENDOR-API.md](docs/VENDOR-API.md).
 **Approving vendors?** Open `/admin/` on the API host — see [docs/ADMIN-APP.md](docs/ADMIN-APP.md).
+**Curating the home screen chips?** Read [docs/CATEGORIES.md](docs/CATEGORIES.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
 > so often already taken. Override with `POSTGRES_HOST_PORT` in `.env`.

@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 
 from app.api.deps import DbSession, OptionalUser, Paginated
 from app.core.config import settings
@@ -11,6 +11,8 @@ from app.core.responses import ok, paginated
 from app.services import account_service, discovery_service
 
 router = APIRouter(tags=["Discovery"])
+
+CategorySlug = Annotated[str, Path(min_length=1, max_length=100, description="The chip's `slug`")]
 
 
 def _viewer_id(user) -> uuid.UUID | None:
@@ -29,10 +31,14 @@ async def home_feed(
     lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
     lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
 ):
-    """Spec #19. Public. Aggregates cuisines, offers and nearby restaurants.
+    """Spec #19. Public. Aggregates categories, cuisines, offers and nearby
+    restaurants.
 
-    `nearby` comes back empty rather than absent when no coordinates are sent,
-    so the client renders an empty carousel instead of branching on null.
+    `categories` is the chip row — the platform categories vendors' menu
+    sections list under, pinned ones first, at most twelve. `cuisines` is the
+    older restaurant-level tag list and is kept for clients already rendering
+    it. `nearby` comes back empty rather than absent when no coordinates are
+    sent, so the client renders an empty carousel instead of branching on null.
     """
     feed = await discovery_service.home_feed(
         db, lat=lat, lng=lng, user_id=_viewer_id(viewer)
@@ -51,6 +57,9 @@ async def list_restaurants(
         int, Query(ge=100, le=settings.MAX_SEARCH_RADIUS_METRES)
     ] = settings.DEFAULT_SEARCH_RADIUS_METRES,
     cuisine: str | None = None,
+    category: Annotated[
+        str | None, Query(max_length=100, description="A category `slug` from the chip row")
+    ] = None,
     is_open: bool | None = None,
     sort: Annotated[str, Query(pattern="^(distance|rating|delivery_fee|prep_time)$")] = "distance",
     max_delivery_fee: Annotated[int | None, Query(ge=0)] = None,
@@ -71,6 +80,7 @@ async def list_restaurants(
         lat=lat,
         lng=lng,
         cuisine=cuisine,
+        category=category,
         search=q,
         sort=sort,
         max_delivery_fee=max_delivery_fee,
@@ -128,6 +138,58 @@ async def get_schedule(restaurant_id: uuid.UUID, db: DbSession):
     return ok(options.model_dump())
 
 
+@router.get("/categories", summary="Browse categories")
+async def list_categories(db: DbSession):
+    """**[EXTENDED]** — every category a customer can open, in chip order.
+
+    Public. The full version of the home feed's `categories` (which stops at
+    twelve). Only categories at least one visible restaurant sells under are
+    returned, so nothing here opens onto an empty screen. This is also the
+    picker a vendor app offers when a section should be filed somewhere
+    other than where its name would land it.
+    """
+    chips = await discovery_service.list_categories(db)
+    return ok([c.model_dump() for c in chips])
+
+
+@router.get("/categories/{slug}", summary="One category")
+async def get_category(slug: CategorySlug, db: DbSession):
+    """**[EXTENDED]** — resolve a chip by slug, for deep links.
+
+    An empty category comes back with `restaurant_count: 0` rather than 404:
+    a shared link should open onto "nothing here yet", not a broken screen.
+    Hidden categories are 404.
+    """
+    chip = await discovery_service.category_detail(db, slug)
+    return ok(chip.model_dump())
+
+
+@router.get("/categories/{slug}/items", summary="Dishes in a category")
+async def list_category_items(
+    slug: CategorySlug,
+    db: DbSession,
+    page: Paginated,
+    lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
+    lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
+    radius: Annotated[
+        int, Query(ge=100, le=settings.MAX_SEARCH_RADIUS_METRES)
+    ] = settings.DEFAULT_SEARCH_RADIUS_METRES,
+):
+    """**[EXTENDED]** — "all burgers near me": dishes across every restaurant
+    in the category, each carrying enough of its restaurant to render a card.
+
+    Send `lat`/`lng` to restrict to `radius` metres and sort nearest first;
+    without coordinates every visible restaurant's dishes qualify. The
+    restaurants themselves are `GET /restaurants?category={slug}`.
+    """
+    items, total = await discovery_service.category_items(
+        db, slug, lat=lat, lng=lng, radius_m=radius, limit=page.limit, offset=page.offset
+    )
+    return paginated(
+        [i.model_dump() for i in items], total=total, limit=page.limit, offset=page.offset
+    )
+
+
 @router.get("/search", summary="Global search")
 async def search(
     db: DbSession,
@@ -137,10 +199,11 @@ async def search(
     lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
     lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
 ):
-    """Spec #23. Public. Restaurants and dishes in one response.
+    """Spec #23. Public. Restaurants, dishes and categories in one response.
 
     A dish hit carries its restaurant's name, because "Chicken Biryani ৳320" is
-    not actionable without knowing who sells it.
+    not actionable without knowing who sells it. `categories` offers the chip
+    when the query looks like one — typing "bur" should surface Burger.
     """
     results = await discovery_service.search(
         db, q, lat=lat, lng=lng, limit=page.limit, user_id=_viewer_id(viewer)

@@ -182,10 +182,23 @@ class MenuCategoryCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int = Field(default=0, ge=0, le=9999)
     is_active: bool = True
+    platform_category_id: str | None = Field(
+        default=None,
+        description="The platform browse category (from `GET /categories`) this "
+        "section lists under. Omit and it is matched by name — a section called "
+        "\"Burgers\" lands under Burger — or created if nothing matches.",
+    )
 
 
 class MenuCategoryUpdateRequest(BaseModel):
-    """PATCH /vendor/menu/categories/{id} — [EXTENDED]."""
+    """PATCH /vendor/menu/categories/{id} — [EXTENDED].
+
+    `platform_category_id` follows the PATCH rule with one twist: an explicit
+    id pins the section to that platform category, an explicit `null` unlinks
+    it, and when it is omitted a *rename* re-matches by the new name — but
+    keeps the current link if the new name matches nothing, rather than
+    inventing a category out of a typo.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -195,6 +208,11 @@ class MenuCategoryUpdateRequest(BaseModel):
         default=None,
         description="Deactivating hides the whole category from customers "
         "without touching the items inside it",
+    )
+    platform_category_id: str | None = Field(
+        default=None,
+        description="Pin to a platform category; `null` unlinks; omit to leave "
+        "alone (a rename re-matches by name)",
     )
 
 
