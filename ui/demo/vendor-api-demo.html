@@ -1,0 +1,180 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CR Shop — Vendor API console</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#272c36;--fg:#e6e8ee;--dim:#8b93a3;--acc:#ff6b35;--ok:#3ddc84;--bad:#ff5c5c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;grid-template-columns:290px 1fr 1fr;height:100vh}
+h1{font-size:14px;margin:0 0 10px;color:var(--acc);letter-spacing:.5px}
+h2{font-size:11px;text-transform:uppercase;color:var(--dim);margin:16px 0 6px;letter-spacing:1px}
+aside,section{overflow:auto;padding:14px;border-right:1px solid var(--line)}
+button{font:inherit;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px 9px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+.ep{display:block;width:100%;text-align:left;margin:2px 0;border:0;background:none;padding:3px 6px;border-radius:4px;color:var(--fg)}
+.ep:hover{background:var(--panel)}
+.ep.on{background:var(--panel);box-shadow:inset 2px 0 0 var(--acc)}
+.m{display:inline-block;width:52px;font-size:10px;font-weight:700}
+.GET{color:#5aa9ff}.POST{color:var(--ok)}.PATCH{color:#ffc857}.PUT{color:#c58cff}.DELETE{color:var(--bad)}
+input,textarea{width:100%;font:inherit;background:#0b0d11;color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+textarea{min-height:230px;resize:vertical}
+label{display:block;color:var(--dim);font-size:11px;margin:8px 0 3px}
+pre{white-space:pre-wrap;word-break:break-word;margin:0}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.chip{font-size:11px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:2px 8px;cursor:pointer}
+.chip:hover{border-color:var(--acc)}
+.s2{color:var(--ok)}.s4,.s5{color:var(--bad)}
+small{color:var(--dim)}
+</style>
+<aside>
+  <h1>VENDOR API CONSOLE</h1>
+  <label>Base URL</label><input id="base">
+  <label>Access token</label><input id="tok" placeholder="auto-filled on login">
+  <div id="list"></div>
+</aside>
+<section>
+  <div class="row"><b id="mth"></b><input id="pth" style="flex:1"></div>
+  <small>path is editable — query params and {{vars}} both work</small>
+  <label>Body (JSON) — <small>use {{var}} placeholders</small></label>
+  <textarea id="body"></textarea>
+  <div class="row" style="margin-top:10px"><button id="send" style="border-color:var(--acc)">SEND ▸</button><small id="note"></small></div>
+  <h2>Vars <button class="chip" onclick="V={};saveV()">clear</button></h2>
+  <div class="row" id="vars"></div>
+</section>
+<section>
+  <div class="row"><h2 style="margin:0">Response</h2><span id="stat"></span><small id="ms"></small></div>
+  <pre id="out">—</pre>
+</section>
+<script>
+const E=[
+ ["Onboarding — application flow",[
+  ["POST","/auth/otp/send",{email:"owner@demo.test",role:"VENDOR"}],
+  ["POST","/vendor/applications/uploads",{file_type:"image/jpeg",file_name:"shop.jpg"}],
+  ["POST","/vendor/applications",{otp_code:"123456",
+    business:{name:"Demo Biryani House",business_type:"RESTAURANT",business_category:"Street Food",branch_count:1,cuisine_types:["Bengali"]},
+    location:{address_line:"12 Nikunja 2, Dhaka",area:"Nikunja 2",latitude:23.8305,longitude:90.4199},
+    owner:{full_name:"Demo Owner",email:"owner@demo.test",phone:"01700000000",national_id:"1990123456789"},
+    documents:{shop_image:"https://x.test/shop.jpg",owner_nid:"https://x.test/nid.jpg",menu_list:"https://x.test/menu.pdf",trade_license:null},
+    payout:{method:"BKASH",account_name:"Demo Owner",account_number:"01700000000",bank_name:null,branch_name:null},
+    agreed_to_terms:true}],
+  ["GET","/vendor/applications/{{application_no}}?email={{owner_email}}"],
+ ]],
+ ["Auth",[
+  ["POST","/auth/register/vendor",{email:"owner@demo.test",code:"123456",password:"Passw0rd!23",full_name:"Demo Owner",
+    restaurant:{name:"Demo Biryani House",description:"Kacchi + more",phone:"01700000000",address_line:"12 Nikunja 2, Dhaka",latitude:23.8305,longitude:90.4199,cuisine_types:["Bengali"]}}],
+  ["POST","/auth/login",{email:"owner@demo.test",password:"Passw0rd!23"}],
+  ["POST","/auth/password/forgot",{email:"owner@demo.test"}],
+  ["POST","/auth/password/reset",{email:"owner@demo.test",code:"123456",new_password:"Passw0rd!23"}],
+  ["POST","/auth/refresh",{refresh_token:"{{refresh_token}}"}],
+  ["POST","/auth/logout",{refresh_token:"{{refresh_token}}"}],
+ ]],
+ ["Storefront",[
+  ["GET","/vendor/profile"],
+  ["PATCH","/vendor/profile",{description:"Best kacchi in Nikunja",delivery_fee_base:40,min_order_amount:200,avg_prep_time_mins:25}],
+  ["PATCH","/vendor/store/status",{status:"OPEN"}],
+  ["GET","/vendor/hours"],
+  ["PUT","/vendor/hours",(()=>{const d={is_open:true,opens_at:"10:00",closes_at:"23:00"};return{mon:d,tue:d,wed:d,thu:d,fri:d,sat:d,sun:{is_open:false,opens_at:null,closes_at:null}}})()],
+ ]],
+ ["Menu",[
+  ["GET","/vendor/menu"],
+  ["GET","/vendor/menu/categories"],
+  ["POST","/vendor/menu/categories",{name:"Biryani",sort_order:0}],
+  ["PATCH","/vendor/menu/categories/{{category_id}}",{name:"Biryani & Rice"}],
+  ["DELETE","/vendor/menu/categories/{{category_id}}"],
+  ["POST","/vendor/menu/items",{name:"Mutton Kacchi",category_id:"{{category_id}}",description:"Basmati, mutton, alu",base_price:320,is_veg:false,prep_time_mins:20,
+    variants:[{name:"Half",price:320,is_default:true},{name:"Full",price:560}],
+    add_ons:[{name:"Borhani",price:40},{name:"Extra Alu",price:30}]}],
+  ["GET","/vendor/menu/items/{{item_id}}"],
+  ["PATCH","/vendor/menu/items/{{item_id}}",{base_price:340}],
+  ["PATCH","/vendor/menu/items/{{item_id}}/status",{is_available:false}],
+  ["DELETE","/vendor/menu/items/{{item_id}}"],
+  ["PATCH","/vendor/menu/reorder",{categories:[{id:"{{category_id}}",sort_order:0}]}],
+ ]],
+ ["Orders",[
+  ["GET","/vendor/orders?status=ACTIVE&limit=20&offset=0"],
+  ["GET","/vendor/orders/{{order_id}}"],
+  ["POST","/vendor/orders/{{order_id}}/accept",{}],
+  ["POST","/vendor/orders/{{order_id}}/reject",{reason:"Out of stock"}],
+  ["POST","/vendor/orders/{{order_id}}/ready",{}],
+  ["POST","/vendor/orders/{{order_id}}/handoff",{rider_pin:"1234"}],
+ ]],
+ ["Insights",[
+  ["GET","/vendor/dashboard"],
+  ["GET","/vendor/analytics"],
+  ["GET","/vendor/performance"],
+  ["GET","/vendor/reviews?limit=20&offset=0"],
+  ["GET","/vendor/reviews/summary"],
+  ["GET","/vendor/reports/csv"],
+ ]],
+ ["Money",[
+  ["GET","/vendor/earnings"],
+  ["GET","/vendor/payouts?limit=20&offset=0"],
+  ["POST","/vendor/payouts",{amount:1000,method:"BKASH",account_number:"01700000000",account_name:"Demo Owner"}],
+ ]],
+ ["Promotions",[
+  ["GET","/vendor/promotions"],
+  ["POST","/vendor/promotions",{discount_type:"PERCENTAGE",discount_value:15,max_discount:100,min_order_amount:300,ends_at:"2030-01-01T00:00:00Z",budget_cap:5000}],
+  ["GET","/vendor/promotions/{{promotion_id}}"],
+  ["PATCH","/vendor/promotions/{{promotion_id}}",{is_active:false}],
+ ]],
+];
+
+const $=i=>document.getElementById(i);
+let V=JSON.parse(localStorage.v||"{}"), cur=null;
+$('base').value=localStorage.base||"http://localhost:8000";
+$('tok').value=localStorage.tok||"";
+$('base').oninput=e=>localStorage.base=e.target.value;
+$('tok').oninput=e=>localStorage.tok=e.target.value;
+const saveV=()=>{localStorage.v=JSON.stringify(V);drawV()};
+function drawV(){$('vars').innerHTML=Object.entries(V).map(([k,v])=>
+ `<span class="chip" title="${String(v).replace(/"/g,'')}" onclick="navigator.clipboard.writeText('${v}')">${k}=${String(v).slice(0,12)}…</span>`).join("")||"<small>none yet — captured from responses</small>"}
+
+$('list').innerHTML=E.map(([g,items],gi)=>`<h2>${g}</h2>`+items.map((e,i)=>
+ `<button class="ep" data-g="${gi}" data-i="${i}"><span class="m ${e[0]}">${e[0]}</span>${e[1].split("?")[0].replace("/vendor","")||"/"}</button>`).join("")).join("");
+
+$('list').onclick=ev=>{const b=ev.target.closest('.ep');if(!b)return;
+ document.querySelectorAll('.ep').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+ cur=E[b.dataset.g][1][b.dataset.i];
+ $('mth').textContent=cur[0];$('mth').className=cur[0];$('pth').value=cur[1];
+ $('body').value=cur[2]===undefined?"":JSON.stringify(cur[2],null,2);
+ $('body').disabled=cur[0]==="GET"||cur[0]==="DELETE";
+ $('note').textContent=/{{/.test(cur[1])?"path needs a var — run the creating call first":"";
+};
+
+const fill=s=>s.replace(/{{(\w+)}}/g,(m,k)=>V[k]??m);
+
+function capture(d,depth=0){ if(!d||typeof d!=="object"||depth>2)return;
+ const map={access_token:"access_token",refresh_token:"refresh_token",temp_token:"temp_token",application_no:"application_no"};
+ for(const[k,v]of Object.entries(d)){
+  if(map[k]&&typeof v==="string")V[map[k]]=v;
+  if(k==="id"&&typeof v==="string")V.last_id=v;
+  if(typeof v==="object")capture(v,depth+1);
+ }}
+
+$('send').onclick=async()=>{
+ if(!cur)return;
+ const url=$('base').value.replace(/\/$/,"")+"/api/v1"+fill($('pth').value);
+ const o={method:cur[0],headers:{}};
+ if($('tok').value)o.headers.Authorization="Bearer "+$('tok').value;
+ if(!$('body').disabled&&$('body').value.trim()){o.headers["Content-Type"]="application/json";o.body=fill($('body').value)}
+ const em=(o.body||"").match(/"email"\s*:\s*"([^"]+)"/);
+ if(em){V.owner_email=em[1];saveV()}
+ $('out').textContent="…";const t=performance.now();
+ try{
+  const r=await fetch(url,o);const txt=await r.text();
+  let j;try{j=JSON.parse(txt)}catch{j=txt}
+  $('ms').textContent=Math.round(performance.now()-t)+"ms · "+url;
+  $('stat').textContent=r.status;$('stat').className="s"+String(r.status)[0];
+  $('out').textContent=typeof j==="string"?j:JSON.stringify(j,null,2);
+  if(r.ok&&j&&j.data){capture(j.data);
+   if(V.access_token){$('tok').value=V.access_token;localStorage.tok=V.access_token}
+   const p=cur[1];
+   if(V.last_id){ if(p==="/vendor/menu/categories")V.category_id=V.last_id;
+    if(p==="/vendor/menu/items")V.item_id=V.last_id;
+    if(p==="/vendor/promotions")V.promotion_id=V.last_id;
+    if(p.startsWith("/vendor/orders?"))V.order_id=(j.data[0]||{}).id||V.order_id;
+    if(p==="/vendor/profile")V.restaurant_id=j.data.id||V.restaurant_id; }
+   saveV();}
+ }catch(e){$('out').textContent="NETWORK / CORS ERROR\n\n"+e+"\n\nSet CORS_ORIGINS to this page's origin in .env"}
+};
+drawV();document.querySelector('.ep').click();
+</script>
