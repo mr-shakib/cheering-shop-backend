@@ -8,7 +8,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
@@ -104,6 +104,17 @@ app.mount(
     StaticFiles(directory=Path(__file__).parent / "static" / "admin", html=True),
     name="admin_ui",
 )
+
+_PRIVACY_POLICY = Path(__file__).parent / "static" / "legal" / "privacy.html"
+
+
+# A plain route rather than a StaticFiles mount: a mount answers "/privacy"
+# with a slash redirect, and behind a TLS-terminating proxy that Location can
+# come back as http://. Google's consent screen fetches the registered URL
+# as-is, so it must be a 200 at exactly that address.
+@app.get("/privacy", include_in_schema=False)
+async def privacy_policy() -> FileResponse:
+    return FileResponse(_PRIVACY_POLICY, media_type="text/html; charset=utf-8")
 
 
 @app.get("/health", tags=["System"], summary="Liveness probe")

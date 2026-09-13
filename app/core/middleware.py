@@ -130,6 +130,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "default-src 'self'; img-src 'self' https: data:; connect-src 'self'; "
         "frame-ancestors 'none'"
     )
+    # The privacy policy is one self-contained document: its only styling is an
+    # inline <style>, and it has no scripts, images or requests. Allowing inline
+    # style adds nothing an attacker can use when no script can ever run.
+    LEGAL_PAGE_PATHS = frozenset({"/privacy"})
+    LEGAL_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
@@ -150,6 +155,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # heuristically caches admin.js/admin.css and keeps running a stale
             # copy for days after a deploy; the 304 round-trip is cheap.
             response.headers.setdefault("Cache-Control", "no-cache")
+        elif path in self.LEGAL_PAGE_PATHS:
+            response.headers.setdefault("Content-Security-Policy", self.LEGAL_PAGE_CSP)
         elif path not in self.CSP_EXEMPT_PATHS:
             response.headers.setdefault(
                 "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"

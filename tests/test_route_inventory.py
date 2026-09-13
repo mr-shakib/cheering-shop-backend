@@ -604,6 +604,7 @@ PREFIX = "/api/v1"
 # Routes the app owns that are not part of the spec's 47.
 INFRA_PATHS = {
     "/admin",  # the static admin console mount — not an API endpoint
+    "/privacy",  # public privacy policy, required by Google's OAuth consent screen
     "/health",
     "/health/ready",
     "/docs",
