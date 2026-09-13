@@ -18,3 +18,6 @@ backups/
 
 # Pasted Dokploy environment (contains production secrets) — never commit.
 dokploy.env
+
+# Google OAuth client downloads (contain the client secret) — never commit.
+client_secret_*.json
