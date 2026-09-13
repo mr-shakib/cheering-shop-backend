@@ -119,6 +119,13 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Cheering Shop}
       EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-}
+      # Sign in with Google. Empty GOOGLE_CLIENT_ID leaves /auth/google/* on
+      # 501. The redirect URI must match the Google client byte-for-byte; the
+      # post-auth list is the allowlist of app deep links. See docs/AUTH-API.md.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      GOOGLE_POST_AUTH_REDIRECTS: ${GOOGLE_POST_AUTH_REDIRECTS:-crshop://auth/callback}
       # Commonly tuned policy knobs, exposed so they can be changed from the
       # Dokploy UI without a code change.
       OTP_TTL_SECONDS: ${OTP_TTL_SECONDS:-300}
