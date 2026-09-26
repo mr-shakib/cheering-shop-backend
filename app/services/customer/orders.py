@@ -45,6 +45,7 @@ from app.schemas.customer import (
     RiderBrief,
 )
 from app.schemas.requests import OrderCreateRequest
+from app.services import platform_settings
 from app.services.customer import cart as cart_service
 from app.services.customer import promos as promo_service
 from app.services.pricing import haversine_km, quote
@@ -126,6 +127,7 @@ async def _prepare(
         commission_rate=float(restaurant.commission_rate),
         discount=promo.discount,
         tip=to_minor(tip),
+        delivery=await platform_settings.delivery_fees(db),
     )
     return cart, restaurant, address, bill, promo
 

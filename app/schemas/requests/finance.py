@@ -24,6 +24,13 @@ class PayoutCreateRequest(BaseModel):
     branch_name: str | None = Field(default=None, max_length=150)
 
 
+class PayoutReopenRequest(BaseModel):
+    """POST /admin/payouts/{id}/reopen — why a COMPLETED payout is being taken
+    back. Kept on the payout for whoever asks what happened."""
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class PayoutFailRequest(BaseModel):
     """POST /admin/payouts/{id}/fail — the reason is shown to the vendor."""
 

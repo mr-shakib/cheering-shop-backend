@@ -8,6 +8,28 @@ Everything is re-exported at the package level, so
 X — the split is an authoring convenience, not an API surface.
 """
 
+from app.schemas.requests.admin import (
+    AdCampaignUpdateRequest,
+    AdminInvitationAcceptRequest,
+    AdminInvitationRequest,
+    AdminOrderCancelRequest,
+    AdminOrderRefundRequest,
+    AdminProductCreateRequest,
+    AdminProductUpdateRequest,
+    AttachmentIn,
+    CommunityPostRequest,
+    CommunityRemoveRequest,
+    CommunityReportRequest,
+    DeviceRegisterRequest,
+    NotificationCampaignRequest,
+    PlatformSettingsUpdateRequest,
+    PromotionEventsRequest,
+    SupportMessageRequest,
+    SupportTicketCreateRequest,
+    SupportTicketUpdateRequest,
+    SurchargeUpdate,
+    UserStatusRequest,
+)
 from app.schemas.requests.applications import (
     ApplicationBusinessInfo,
     ApplicationDecisionRequest,
@@ -45,14 +67,24 @@ from app.schemas.requests.commerce import (
     OrderCreateRequest,
     ReviewCreateRequest,
 )
-from app.schemas.requests.finance import PayoutCreateRequest, PayoutFailRequest
+from app.schemas.requests.finance import (
+    PayoutCreateRequest,
+    PayoutFailRequest,
+    PayoutReopenRequest,
+)
 from app.schemas.requests.promotions import (
     PromotionCreateRequest,
     PromotionUpdateRequest,
 )
 from app.schemas.requests.riders import (
     AssignRiderRequest,
+    RiderApplicationApproveRequest,
+    RiderApplicationDocuments,
+    RiderApplicationPayout,
+    RiderApplicationRejectRequest,
+    RiderApplicationRequest,
     RiderCreateRequest,
+    RiderIncentiveRequest,
     RiderLocationRequest,
     RiderShiftRequest,
     RiderUpdateRequest,
@@ -154,6 +186,7 @@ __all__ = [
     # finance
     "PayoutCreateRequest",
     "PayoutFailRequest",
+    "PayoutReopenRequest",
     # promotions
     "PromotionCreateRequest",
     "PromotionUpdateRequest",
@@ -167,4 +200,31 @@ __all__ = [
     "RiderShiftRequest",
     "RiderLocationRequest",
     "AssignRiderRequest",
+    "RiderApplicationApproveRequest",
+    "RiderApplicationDocuments",
+    "RiderApplicationPayout",
+    "RiderApplicationRejectRequest",
+    "RiderApplicationRequest",
+    "RiderIncentiveRequest",
+    # admin console
+    "AdminOrderCancelRequest",
+    "AdminOrderRefundRequest",
+    "AdminProductCreateRequest",
+    "AdminProductUpdateRequest",
+    "PlatformSettingsUpdateRequest",
+    "SurchargeUpdate",
+    "AttachmentIn",
+    "CommunityPostRequest",
+    "CommunityRemoveRequest",
+    "CommunityReportRequest",
+    "AdCampaignUpdateRequest",
+    "PromotionEventsRequest",
+    "AdminInvitationAcceptRequest",
+    "AdminInvitationRequest",
+    "DeviceRegisterRequest",
+    "NotificationCampaignRequest",
+    "SupportMessageRequest",
+    "SupportTicketCreateRequest",
+    "SupportTicketUpdateRequest",
+    "UserStatusRequest",
 ]

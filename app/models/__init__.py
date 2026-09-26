@@ -10,13 +10,18 @@ from app.models.base import Base
 from app.models.cart import Cart, CartItem, CartItemAddOn
 from app.models.category import Category
 from app.models.chat import OrderMessage
+from app.models.community import CommunityPost, CommunityReport
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
+from app.models.notification import NotificationCampaign, UserNotification
 from app.models.order import Order, OrderItem, OrderItemAddOn, OrderStatusHistory
-from app.models.payout import VendorPayout
+from app.models.payout import RiderPayout, VendorPayout
+from app.models.platform import AdminInvitation, PlatformSettings
 from app.models.promo import PromoCode, PromoRedemption
 from app.models.restaurant import Favorite, Restaurant
 from app.models.review import Review
-from app.models.rider import RiderLocationPing, RiderProfile
+from app.models.rider import RiderIncentive, RiderLocationPing, RiderProfile
+from app.models.rider_application import RiderApplication
+from app.models.support import SupportMessage, SupportTicket
 from app.models.user import (
     AuthIdentity,
     BiometricCredential,
@@ -30,6 +35,18 @@ from app.models.vendor_application import VendorApplication
 
 __all__ = [
     "Base",
+    # Admin operations (migration 0010)
+    "AdminInvitation",
+    "CommunityPost",
+    "CommunityReport",
+    "NotificationCampaign",
+    "PlatformSettings",
+    "RiderApplication",
+    "RiderIncentive",
+    "RiderPayout",
+    "SupportMessage",
+    "SupportTicket",
+    "UserNotification",
     # Identity & security
     "User",
     "AuthIdentity",

@@ -40,12 +40,14 @@ import re
 import unicodedata
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy import and_, any_, case, distinct, exists, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.models.category import Category
@@ -123,7 +125,9 @@ def to_ref(category: Category) -> PlatformCategoryRef:
     )
 
 
-def to_admin_out(category: Category, restaurant_count: int, section_count: int) -> CategoryAdminOut:
+def to_admin_out(
+    category: Category, restaurant_count: int, section_count: int, product_count: int = 0
+) -> CategoryAdminOut:
     return CategoryAdminOut(
         **to_ref(category).model_dump(),
         sort_order=category.sort_order,
@@ -133,6 +137,11 @@ def to_admin_out(category: Category, restaurant_count: int, section_count: int) 
         is_pending=category.reviewed_at is None,
         restaurant_count=restaurant_count,
         section_count=section_count,
+        product_count=product_count,
+        commission_rate=(
+            float(category.commission_rate) if category.commission_rate is not None else None
+        ),
+        kind=category.kind,
         created_at=category.created_at,
         updated_at=category.updated_at,
     )
@@ -150,7 +159,11 @@ def _section_has_live_item():
     times a service; a chip that appeared and vanished with it would look
     broken, and a sold-out dish is still a true answer to "who sells burgers".
     """
-    return exists().where(MenuItem.category_id == MenuCategory.id, MenuItem.deleted_at.is_(None))
+    return exists().where(
+        MenuItem.category_id == MenuCategory.id,
+        MenuItem.deleted_at.is_(None),
+        MenuItem.is_hidden.is_(False),
+    )
 
 
 def restaurant_counts():
@@ -324,7 +337,19 @@ async def _claimed(
     return await db.scalar(stmt.limit(1))
 
 
-async def _counts_for(db: AsyncSession, category_id: uuid.UUID) -> tuple[int, int]:
+def product_counts():
+    """Live (undeleted) products per browse category, hidden ones included —
+    an admin count, not a customer one."""
+    return (
+        select(MenuCategory.category_id.label("category_id"), func.count().label("n"))
+        .join(MenuItem, MenuItem.category_id == MenuCategory.id)
+        .where(MenuCategory.category_id.is_not(None), MenuItem.deleted_at.is_(None))
+        .group_by(MenuCategory.category_id)
+        .subquery()
+    )
+
+
+async def _counts_for(db: AsyncSession, category_id: uuid.UUID) -> tuple[int, int, int]:
     counts = restaurant_counts()
     restaurants = await db.scalar(
         select(counts.c.restaurant_count).where(counts.c.category_id == category_id)
@@ -334,17 +359,27 @@ async def _counts_for(db: AsyncSession, category_id: uuid.UUID) -> tuple[int, in
         .select_from(MenuCategory)
         .where(MenuCategory.category_id == category_id)
     )
-    return int(restaurants or 0), int(sections or 0)
+    products = product_counts()
+    product_count = await db.scalar(
+        select(products.c.n).where(products.c.category_id == category_id)
+    )
+    return int(restaurants or 0), int(sections or 0), int(product_count or 0)
 
 
 async def admin_get(db: AsyncSession, category_id: uuid.UUID) -> CategoryAdminOut:
     category = await _get(db, category_id)
-    restaurants, sections = await _counts_for(db, category.id)
-    return to_admin_out(category, restaurants, sections)
+    return to_admin_out(category, *await _counts_for(db, category.id))
 
 
 async def admin_list(
-    db: AsyncSession, limit: int, offset: int, *, pending_only: bool = False
+    db: AsyncSession,
+    limit: int,
+    offset: int,
+    *,
+    pending_only: bool = False,
+    q: str | None = None,
+    kind: str | None = None,
+    sort: str = "default",
 ) -> tuple[list[CategoryAdminOut], int]:
     """Everything, hidden and empty included — this is the curation screen.
 
@@ -353,7 +388,12 @@ async def admin_list(
     it is the review queue instead: categories vendors' section names created
     that nobody has decided about, most restaurants first, so the one holding
     up the most vendors is the one at the top.
+
+    `q` searches name and aliases, `kind` is the Restaurant / Store tab, and
+    `sort=name` is the A to Z dropdown.
     """
+    if sort not in {"default", "name", "-name"}:
+        raise ValidationError("sort must be default, name or -name")
     counts = restaurant_counts()
     sections = (
         select(MenuCategory.category_id.label("category_id"), func.count().label("n"))
@@ -361,26 +401,49 @@ async def admin_list(
         .group_by(MenuCategory.category_id)
         .subquery()
     )
+    products = product_counts()
     restaurant_count = func.coalesce(counts.c.restaurant_count, 0)
     stmt = (
-        select(Category, restaurant_count, func.coalesce(sections.c.n, 0))
+        select(
+            Category,
+            restaurant_count,
+            func.coalesce(sections.c.n, 0),
+            func.coalesce(products.c.n, 0),
+        )
         .outerjoin(counts, counts.c.category_id == Category.id)
         .outerjoin(sections, sections.c.category_id == Category.id)
+        .outerjoin(products, products.c.category_id == Category.id)
     )
-    total_stmt = select(func.count()).select_from(Category)
+    conditions: list[ColumnElement[bool]] = []
     if pending_only:
-        stmt = stmt.where(Category.reviewed_at.is_(None))
-        total_stmt = total_stmt.where(Category.reviewed_at.is_(None))
+        conditions.append(Category.reviewed_at.is_(None))
+    if kind:
+        wanted = kind.strip().upper()
+        if wanted not in {"RESTAURANT", "STORE"}:
+            raise ValidationError("kind must be RESTAURANT or STORE")
+        conditions.append(Category.kind == wanted)
+    if q and q.strip():
+        from app.services.admin.common import like_pattern
 
-    rows = await db.execute(
-        stmt.order_by(
-            Category.sort_order.asc().nulls_last(), restaurant_count.desc(), Category.name
+        needle = q.strip()
+        conditions.append(
+            or_(
+                Category.name.ilike(like_pattern(needle)),
+                literal(match_key(needle)) == any_(Category.aliases),
+            )
         )
-        .limit(limit)
-        .offset(offset)
-    )
-    total = await db.scalar(total_stmt) or 0
-    return [to_admin_out(c, int(r), int(s)) for c, r, s in rows.all()], total
+
+    order: list[Any]
+    if sort == "name":
+        order = [Category.name.asc()]
+    elif sort == "-name":
+        order = [Category.name.desc()]
+    else:
+        order = [Category.sort_order.asc().nulls_last(), restaurant_count.desc(), Category.name]
+
+    rows = await db.execute(stmt.where(*conditions).order_by(*order).limit(limit).offset(offset))
+    total = await db.scalar(select(func.count()).select_from(Category).where(*conditions)) or 0
+    return [to_admin_out(c, int(r), int(s), int(p)) for c, r, s, p in rows.all()], total
 
 
 async def admin_create(db: AsyncSession, body: CategoryCreateRequest) -> CategoryAdminOut:
@@ -403,6 +466,8 @@ async def admin_create(db: AsyncSession, body: CategoryCreateRequest) -> Categor
         sort_order=body.sort_order,
         aliases=aliases,
         is_active=body.is_active,
+        commission_rate=body.commission_rate,
+        kind=body.kind,
         # An administrator typing it IS the review, so it never enters the
         # queue and `is_active` is honoured as sent.
         reviewed_at=datetime.now(UTC),
@@ -454,6 +519,10 @@ async def admin_update(
         category.sort_order = fields["sort_order"]
     if fields.get("is_active") is not None:
         category.is_active = fields["is_active"]
+    if "commission_rate" in fields:
+        category.commission_rate = fields["commission_rate"]
+    if fields.get("kind") is not None:
+        category.kind = fields["kind"]
 
     if fields.get("aliases") is not None:
         aliases = sorted({match_key(a) for a in fields["aliases"]} - {match_key(category.name), ""})
@@ -471,8 +540,7 @@ async def admin_update(
         fields=sorted(fields),
         approved=was_pending and category.is_active,
     )
-    restaurants, sections = await _counts_for(db, category.id)
-    return to_admin_out(category, restaurants, sections)
+    return to_admin_out(category, *await _counts_for(db, category.id))
 
 
 async def admin_delete(db: AsyncSession, category_id: uuid.UUID) -> None:
@@ -535,8 +603,7 @@ async def admin_merge(
         target_id=str(target.id),
         sections_moved=getattr(moved, "rowcount", None),
     )
-    restaurants, sections = await _counts_for(db, target.id)
-    return to_admin_out(target, restaurants, sections)
+    return to_admin_out(target, *await _counts_for(db, target.id))
 
 
 __all__ = [

@@ -11,13 +11,31 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     addresses,
     admin,
+    admin_accounts,
+    admin_ads,
+    admin_community,
+    admin_insights,
+    admin_invitations,
+    admin_invite_accept,
+    admin_notifications,
+    admin_orders,
+    admin_products,
+    admin_riders,
+    admin_settings,
+    admin_support,
+    admin_vendors,
     auth,
     cart,
     comms,
+    community,
     discovery,
     favorites,
+    notifications,
     orders,
+    promotion_events,
     rider,
+    rider_applications,
+    support,
     tracking,
     uploads,
     users,
@@ -30,6 +48,7 @@ api_router = APIRouter()
 
 # Authentication & security
 api_router.include_router(auth.router)
+api_router.include_router(admin_invite_accept.router)
 
 # Users, addresses, favorites — /users/me/* literals before any {id} routes
 api_router.include_router(users.router)
@@ -38,6 +57,7 @@ api_router.include_router(favorites.router)
 
 # Public discovery
 api_router.include_router(discovery.router)
+api_router.include_router(promotion_events.router)
 
 # Customer commerce
 api_router.include_router(cart.router)
@@ -50,11 +70,30 @@ api_router.include_router(comms.router)
 api_router.include_router(vendor_applications.router)
 api_router.include_router(vendor.router)
 
-# Rider app
+# Rider app, and its public application form
 api_router.include_router(rider.router)
+api_router.include_router(rider_applications.router)
 
-# Administration
+# Administration — admin_riders before admin: /admin/riders/live is a literal
+# that admin.py's PATCH /admin/riders/{rider_id} must never shadow.
+api_router.include_router(admin_riders.router)
 api_router.include_router(admin.router)
+api_router.include_router(admin_orders.router)
+api_router.include_router(admin_accounts.router)
+api_router.include_router(admin_vendors.router)
+api_router.include_router(admin_products.router)
+api_router.include_router(admin_insights.router)
+api_router.include_router(admin_settings.router)
+api_router.include_router(admin_support.router)
+api_router.include_router(admin_notifications.router)
+api_router.include_router(admin_invitations.router)
+api_router.include_router(admin_ads.router)
+api_router.include_router(admin_community.router)
+
+# Help & support, inbox and devices — any signed-in role
+api_router.include_router(support.router)
+api_router.include_router(notifications.router)
+api_router.include_router(community.router)
 
 # System
 api_router.include_router(uploads.router)

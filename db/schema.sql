@@ -392,10 +392,16 @@ CREATE TABLE categories (
     aliases     text[]       NOT NULL DEFAULT '{}',  -- match keys, lower-cased
     is_active   boolean      NOT NULL DEFAULT true,
     reviewed_at timestamptz,                  -- NULL = awaiting an admin's decision
+    commission_rate numeric(5,4),             -- NULL = not set at this level
+    kind        varchar(20)  NOT NULL DEFAULT 'RESTAURANT',  -- admin tabs: RESTAURANT / STORE
     created_at  timestamptz  NOT NULL DEFAULT now(),
     updated_at  timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT uq_categories_slug UNIQUE (slug),
-    CONSTRAINT ck_categories_slug CHECK (slug <> '')
+    CONSTRAINT ck_categories_slug CHECK (slug <> ''),
+    CONSTRAINT ck_categories_commission CHECK (
+        commission_rate IS NULL OR commission_rate BETWEEN 0 AND 1
+    ),
+    CONSTRAINT ck_categories_kind CHECK (kind IN ('RESTAURANT', 'STORE'))
 );
 CREATE TRIGGER trg_categories_updated_at BEFORE UPDATE ON categories
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -438,10 +444,16 @@ CREATE TABLE menu_items (
     prep_time_mins smallint,
     sort_order     smallint     NOT NULL DEFAULT 0,
     deleted_at     timestamptz,                    -- soft delete: order history must survive
+    is_hidden      boolean      NOT NULL DEFAULT false,  -- admin moderation, not the vendor's switch
+    is_featured    boolean      NOT NULL DEFAULT false,
+    commission_rate numeric(5,4),                  -- NULL = category rate, then restaurant rate
     created_at     timestamptz  NOT NULL DEFAULT now(),
     updated_at     timestamptz  NOT NULL DEFAULT now(),
 
     CONSTRAINT ck_menu_items_price CHECK (base_price >= 0),
+    CONSTRAINT ck_menu_items_commission CHECK (
+        commission_rate IS NULL OR commission_rate BETWEEN 0 AND 1
+    ),
     CONSTRAINT fk_menu_items_category FOREIGN KEY (category_id, restaurant_id)
         REFERENCES menu_categories(id, restaurant_id) ON DELETE CASCADE,
     -- FK targets for cart_items / item children.
@@ -582,6 +594,9 @@ CREATE TABLE promo_codes (
     per_user_limit    smallint      NOT NULL DEFAULT 1,
     times_used        integer       NOT NULL DEFAULT 0,
     is_active         boolean       NOT NULL DEFAULT true,
+    -- Advertisement screen counters, bumped by POST /promotions/events.
+    impressions       bigint        NOT NULL DEFAULT 0,
+    clicks            bigint        NOT NULL DEFAULT 0,
     -- Vendor promotions: stop redeeming once total discount spend reaches the
     -- cap; NULL item list means the whole menu.
     budget_cap        bigint,                   -- paisa
@@ -613,9 +628,15 @@ CREATE TABLE vendor_payouts (
     failure_reason text,
     processed_by   uuid         REFERENCES users(id) ON DELETE SET NULL,
     processed_at   timestamptz,
+    -- A COMPLETED payout taken back to PROCESSING ("Mark Unpaid").
+    reopened_at    timestamptz,
+    reopened_by    uuid,
+    reopen_reason  text,
     created_at     timestamptz  NOT NULL DEFAULT now(),
 
-    CONSTRAINT ck_vendor_payouts_amount CHECK (amount > 0)
+    CONSTRAINT ck_vendor_payouts_amount CHECK (amount > 0),
+    CONSTRAINT fk_vendor_payouts_reopened_by FOREIGN KEY (reopened_by)
+        REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX ix_vendor_payouts_restaurant ON vendor_payouts (restaurant_id, created_at DESC);
 -- The finance work queue.
@@ -642,6 +663,11 @@ CREATE TABLE rider_profiles (
     user_role         user_role   NOT NULL DEFAULT 'RIDER',
     vehicle_type      varchar(40),
     license_number    varchar(60),
+    -- Rider Details screen (migration 0010).
+    date_of_birth     date,
+    national_id       varchar(50),
+    documents         jsonb       NOT NULL DEFAULT '{}',   -- kind -> URL
+    payout            jsonb       NOT NULL DEFAULT '{}',   -- default payout account
     is_online         boolean     NOT NULL DEFAULT false,
     is_verified       boolean     NOT NULL DEFAULT false,
     current_latitude  double precision,
@@ -756,6 +782,11 @@ CREATE TABLE orders (
     cancelled_at         timestamptz,
     cancelled_by         actor_type,
     cancellation_reason  varchar(255),
+    -- Refund audit: who gave the money back, when, and why. A refund record
+    -- implies REFUNDED; orders refunded before this existed have none.
+    refunded_at          timestamptz,
+    refunded_by          uuid,
+    refund_reason        varchar(255),
     estimated_delivery_at timestamptz,
     updated_at           timestamptz NOT NULL DEFAULT now(),
 
@@ -783,6 +814,11 @@ CREATE TABLE orders (
     ),
     CONSTRAINT ck_orders_delivered CHECK (
         status <> 'DELIVERED' OR delivered_at IS NOT NULL
+    ),
+    CONSTRAINT fk_orders_refunded_by FOREIGN KEY (refunded_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_orders_refund_status CHECK (
+        refunded_at IS NULL OR payment_status = 'REFUNDED'
     ),
     -- A picked-up order must have a rider attached.
     CONSTRAINT ck_orders_rider_required CHECK (
@@ -953,5 +989,284 @@ CREATE TABLE rider_location_pings_default PARTITION OF rider_location_pings DEFA
 CREATE INDEX ix_rider_pings_order ON rider_location_pings (order_id, recorded_at DESC);
 -- BRIN on append-only time-ordered data: kilobytes where a B-tree costs gigabytes.
 CREATE INDEX ix_rider_pings_time ON rider_location_pings USING BRIN (recorded_at);
+
+
+-- ===========================================================================
+-- [EXTENDED] Admin operations (migration 0010)
+-- ===========================================================================
+
+-- Settings ------------------------------------------------------------------
+CREATE TABLE platform_settings (
+    id                          smallint PRIMARY KEY DEFAULT 1,
+    app_name                    varchar(80),
+    support_email               varchar(254),
+    support_phone               varchar(20),
+    delivery_base_fee           bigint,
+    delivery_per_km_fee         bigint,
+    delivery_min_fee            bigint,
+    restaurant_commission_rate  numeric(5,4),
+    grocery_commission_rate     numeric(5,4),
+    pharmacy_commission_rate    numeric(5,4),
+    rain_surcharge              bigint  NOT NULL DEFAULT 0,
+    rain_surcharge_active       boolean NOT NULL DEFAULT false,
+    heatwave_fee                bigint  NOT NULL DEFAULT 0,
+    heatwave_fee_active         boolean NOT NULL DEFAULT false,
+    high_demand_fee             bigint  NOT NULL DEFAULT 0,
+    high_demand_fee_active      boolean NOT NULL DEFAULT false,
+    updated_at                  timestamptz NOT NULL DEFAULT now(),
+    updated_by                  uuid,
+    CONSTRAINT ck_platform_settings_singleton CHECK (id = 1),
+    CONSTRAINT fk_platform_settings_updated_by FOREIGN KEY (updated_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_platform_settings_money CHECK (
+        coalesce(delivery_base_fee, 0) >= 0 AND coalesce(delivery_per_km_fee, 0) >= 0
+        AND coalesce(delivery_min_fee, 0) >= 0 AND rain_surcharge >= 0
+        AND heatwave_fee >= 0 AND high_demand_fee >= 0
+    ),
+    CONSTRAINT ck_platform_settings_rates CHECK (
+        coalesce(restaurant_commission_rate, 0) BETWEEN 0 AND 1
+        AND coalesce(grocery_commission_rate, 0) BETWEEN 0 AND 1
+        AND coalesce(pharmacy_commission_rate, 0) BETWEEN 0 AND 1
+    )
+);
+INSERT INTO platform_settings (id) VALUES (1);
+
+-- Riders --------------------------------------------------------------------
+
+CREATE TABLE rider_incentives (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    rider_id    uuid         NOT NULL,
+    amount      bigint       NOT NULL,
+    reason      varchar(255) NOT NULL,
+    created_by  uuid,
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_rider_incentives_rider FOREIGN KEY (rider_id)
+        REFERENCES rider_profiles(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_rider_incentives_created_by FOREIGN KEY (created_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_rider_incentives_amount CHECK (amount > 0)
+);
+CREATE INDEX ix_rider_incentives_rider ON rider_incentives (rider_id, created_at DESC);
+
+CREATE TABLE rider_payouts (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    rider_id       uuid          NOT NULL,
+    reference      varchar(20)   NOT NULL,
+    amount         bigint        NOT NULL,
+    method         payout_method NOT NULL,
+    account_number varchar(50)   NOT NULL,
+    account_name   varchar(150)  NOT NULL,
+    bank_name      varchar(150),
+    branch_name    varchar(150),
+    status         payout_status NOT NULL DEFAULT 'PROCESSING',
+    failure_reason text,
+    processed_by   uuid,
+    processed_at   timestamptz,
+    reopened_at    timestamptz,
+    reopened_by    uuid,
+    reopen_reason  text,
+    created_at     timestamptz   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_rider_payouts_reference UNIQUE (reference),
+    CONSTRAINT fk_rider_payouts_rider FOREIGN KEY (rider_id)
+        REFERENCES rider_profiles(user_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_rider_payouts_processed_by FOREIGN KEY (processed_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_rider_payouts_reopened_by FOREIGN KEY (reopened_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_rider_payouts_amount CHECK (amount > 0)
+);
+CREATE INDEX ix_rider_payouts_rider ON rider_payouts (rider_id, created_at DESC);
+CREATE INDEX ix_rider_payouts_processing ON rider_payouts (created_at ASC)
+    WHERE status = 'PROCESSING';
+
+CREATE TABLE rider_applications (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_no varchar(20)  NOT NULL,
+    full_name      varchar(150) NOT NULL,
+    email          citext       NOT NULL,
+    phone          varchar(20)  NOT NULL,
+    vehicle_type   varchar(40)  NOT NULL,
+    license_number varchar(60),
+    date_of_birth  date         NOT NULL,
+    national_id    varchar(50)  NOT NULL,
+    documents      jsonb        NOT NULL DEFAULT '{}',
+    payout         jsonb        NOT NULL DEFAULT '{}',
+    status         vendor_application_status NOT NULL DEFAULT 'PENDING',
+    review_note    text,
+    reviewed_by    uuid,
+    reviewed_at    timestamptz,
+    user_id        uuid,
+    created_at     timestamptz  NOT NULL DEFAULT now(),
+    updated_at     timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_rider_applications_no UNIQUE (application_no),
+    CONSTRAINT fk_rider_applications_reviewed_by FOREIGN KEY (reviewed_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_rider_applications_user FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_rider_applications_queue ON rider_applications (status, created_at ASC);
+CREATE INDEX ix_rider_applications_email ON rider_applications (email);
+CREATE TRIGGER trg_rider_applications_updated_at BEFORE UPDATE ON rider_applications
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Support -------------------------------------------------------------------
+CREATE TABLE support_tickets (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_number   bigint GENERATED BY DEFAULT AS IDENTITY,
+    user_id         uuid         NOT NULL,
+    subject         varchar(200) NOT NULL,
+    type            varchar(30)  NOT NULL,
+    priority        varchar(10)  NOT NULL DEFAULT 'MEDIUM',
+    status          varchar(10)  NOT NULL DEFAULT 'OPEN',
+    order_id        uuid,
+    assigned_to     uuid,
+    unread_by_staff boolean      NOT NULL DEFAULT true,
+    unread_by_user  boolean      NOT NULL DEFAULT false,
+    last_message_at timestamptz  NOT NULL DEFAULT now(),
+    resolved_at     timestamptz,
+    closed_at       timestamptz,
+    created_at      timestamptz  NOT NULL DEFAULT now(),
+    updated_at      timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_support_tickets_number UNIQUE (ticket_number),
+    CONSTRAINT fk_support_tickets_user FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_support_tickets_order FOREIGN KEY (order_id)
+        REFERENCES orders(id) ON DELETE SET NULL,
+    CONSTRAINT fk_support_tickets_assigned_to FOREIGN KEY (assigned_to)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_support_tickets_type CHECK (type IN (
+        'ORDER_ISSUE', 'RIDER_COMPLAINT', 'VENDOR_COMPLAINT', 'PAYMENT', 'REFUND',
+        'ACCOUNT', 'OTHER'
+    )),
+    CONSTRAINT ck_support_tickets_priority CHECK (
+        priority IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')
+    ),
+    CONSTRAINT ck_support_tickets_status CHECK (
+        status IN ('OPEN', 'PENDING', 'RESOLVED', 'CLOSED')
+    )
+);
+CREATE INDEX ix_support_tickets_queue ON support_tickets (status, last_message_at DESC);
+CREATE INDEX ix_support_tickets_user ON support_tickets (user_id, created_at DESC);
+CREATE TRIGGER trg_support_tickets_updated_at BEFORE UPDATE ON support_tickets
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE support_messages (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_id   uuid        NOT NULL,
+    kind        varchar(10) NOT NULL DEFAULT 'MESSAGE',
+    sender_id   uuid,
+    sender_role user_role,
+    body        text        NOT NULL,
+    attachments jsonb       NOT NULL DEFAULT '[]',
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT fk_support_messages_ticket FOREIGN KEY (ticket_id)
+        REFERENCES support_tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_support_messages_sender FOREIGN KEY (sender_id)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_support_messages_kind CHECK (kind IN ('MESSAGE', 'EVENT'))
+);
+CREATE INDEX ix_support_messages_ticket ON support_messages (ticket_id, created_at);
+
+-- Notifications -------------------------------------------------------------
+CREATE TABLE notification_campaigns (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    title           varchar(120) NOT NULL,
+    message         varchar(500) NOT NULL,
+    type            varchar(20)  NOT NULL,
+    audience        varchar(20)  NOT NULL,
+    status          varchar(20)  NOT NULL DEFAULT 'SCHEDULED',
+    scheduled_for   timestamptz  NOT NULL,
+    sent_at         timestamptz,
+    recipient_count integer      NOT NULL DEFAULT 0,
+    push_sent_count integer      NOT NULL DEFAULT 0,
+    failure_reason  text,
+    created_by      uuid,
+    created_at      timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_notification_campaigns_created_by FOREIGN KEY (created_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_notification_campaigns_type CHECK (
+        type IN ('PROMOTION', 'ALERT', 'UPDATE')
+    ),
+    CONSTRAINT ck_notification_campaigns_audience CHECK (
+        audience IN ('CUSTOMER', 'VENDOR', 'RIDER', 'ALL')
+    ),
+    CONSTRAINT ck_notification_campaigns_status CHECK (
+        status IN ('SCHEDULED', 'SENT', 'FAILED', 'CANCELLED')
+    )
+);
+CREATE INDEX ix_notification_campaigns_due ON notification_campaigns (scheduled_for)
+    WHERE status = 'SCHEDULED';
+
+CREATE TABLE user_notifications (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     uuid         NOT NULL,
+    campaign_id uuid,
+    title       varchar(120) NOT NULL,
+    message     varchar(500) NOT NULL,
+    type        varchar(20)  NOT NULL,
+    read_at     timestamptz,
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_user_notifications_user FOREIGN KEY (user_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_notifications_campaign FOREIGN KEY (campaign_id)
+        REFERENCES notification_campaigns(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_user_notifications_user ON user_notifications (user_id, created_at DESC);
+
+-- Admin invitations -----------------------------------------------------------
+CREATE TABLE admin_invitations (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    email            citext       NOT NULL,
+    full_name        varchar(150),
+    token_hash       varchar(64)  NOT NULL,
+    invited_by       uuid,
+    expires_at       timestamptz  NOT NULL,
+    accepted_at      timestamptz,
+    accepted_user_id uuid,
+    revoked_at       timestamptz,
+    created_at       timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_admin_invitations_token UNIQUE (token_hash),
+    CONSTRAINT fk_admin_invitations_invited_by FOREIGN KEY (invited_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_admin_invitations_accepted_user FOREIGN KEY (accepted_user_id)
+        REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_admin_invitations_email ON admin_invitations (email);
+
+-- Community -------------------------------------------------------------------
+CREATE TABLE community_posts (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    author_id      uuid          NOT NULL,
+    body           varchar(2000) NOT NULL,
+    image_urls     text[]        NOT NULL DEFAULT '{}',
+    restaurant_id  uuid,
+    report_count   integer       NOT NULL DEFAULT 0,
+    removed_at     timestamptz,
+    removed_by     uuid,
+    removal_reason varchar(255),
+    created_at     timestamptz   NOT NULL DEFAULT now(),
+    CONSTRAINT fk_community_posts_author FOREIGN KEY (author_id)
+        REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_community_posts_restaurant FOREIGN KEY (restaurant_id)
+        REFERENCES restaurants(id) ON DELETE SET NULL,
+    CONSTRAINT fk_community_posts_removed_by FOREIGN KEY (removed_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_community_posts_reports CHECK (report_count >= 0)
+);
+CREATE INDEX ix_community_posts_feed ON community_posts (created_at DESC)
+    WHERE removed_at IS NULL;
+CREATE INDEX ix_community_posts_author ON community_posts (author_id, created_at DESC);
+
+CREATE TABLE community_reports (
+    post_id     uuid         NOT NULL,
+    reporter_id uuid         NOT NULL,
+    reason      varchar(255),
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT pk_community_reports PRIMARY KEY (post_id, reporter_id),
+    CONSTRAINT fk_community_reports_post FOREIGN KEY (post_id)
+        REFERENCES community_posts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_community_reports_reporter FOREIGN KEY (reporter_id)
+        REFERENCES users(id) ON DELETE CASCADE
+);
 
 COMMIT;

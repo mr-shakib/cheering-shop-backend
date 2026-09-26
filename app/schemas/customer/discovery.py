@@ -56,6 +56,7 @@ class MenuItemOut(BaseModel):
     base_price: Decimal
     image_url: str | None = None
     is_available: bool
+    is_featured: bool = Field(default=False, description="Promoted by the platform")
     is_veg: bool
     prep_time_mins: int | None = None
     variants: list[VariantOut] = Field(default_factory=list)

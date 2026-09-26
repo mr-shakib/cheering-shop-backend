@@ -597,6 +597,441 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "survivor and records the old spelling as an alias so it cannot come "
         "back. Without it the only cure for 'Burgers' is hand-written SQL.",
     ),
+    # --- Admin console (docs/ADMIN-API.md) --------------------------------
+    (
+        "GET",
+        "/admin/orders",
+        "Every order endpoint is scoped to one party — the customer's own, one "
+        "restaurant's queue, one rider's jobs. Support and operations need the "
+        "whole platform in one filterable table, or a complaint cannot be traced.",
+    ),
+    (
+        "GET",
+        "/admin/orders/{id}",
+        "The order drawer: timeline, all three parties, the platform's "
+        "commission and the rider's live position. No existing detail view "
+        "shows another party's side of an order, which is the whole job of support.",
+    ),
+    (
+        "POST",
+        "/admin/orders/{id}/cancel",
+        "Customers may cancel only while PENDING and vendors only their own "
+        "orders; a stuck order with an unresponsive restaurant had no way out "
+        "short of editing the database.",
+    ),
+    (
+        "POST",
+        "/admin/orders/{id}/refund",
+        "The only refund path was a vendor rejecting a paid order. A delivered "
+        "order with a missing item needs money returned without cancelling, "
+        "with a record of who authorised it.",
+    ),
+    (
+        "GET",
+        "/admin/customers",
+        "No endpoint lists users at all. Support cannot find the customer a "
+        "complaint is about, or see who is spending on the platform.",
+    ),
+    (
+        "GET",
+        "/admin/customers/{id}",
+        "The customer profile with order statistics — what support reads "
+        "before deciding whether a refund request or a block is warranted.",
+    ),
+    (
+        "PATCH",
+        "/admin/users/{id}/status",
+        "users.is_active existed and was enforced on every request, but "
+        "nothing could set it. Blocking an abusive customer or a rogue rider "
+        "required hand-written SQL and left their refresh tokens alive.",
+    ),
+    (
+        "GET",
+        "/admin/vendors",
+        "Only unverified restaurants could be listed. Once approved, a vendor "
+        "vanished from the console — no way to find one to reprice, suspend "
+        "or investigate.",
+    ),
+    (
+        "GET",
+        "/admin/vendors/{id}",
+        "Joins the storefront, the owner account and the partner application "
+        "(NID, documents) into one profile. The application detail stops "
+        "being reachable by restaurant once the review queue moves on.",
+    ),
+    (
+        "GET",
+        "/admin/vendors/{id}/reviews",
+        "Review endpoints exist only for the vendor about themselves. An "
+        "administrator deciding whether to suspend a restaurant needs to read "
+        "what its customers said.",
+    ),
+    (
+        "GET",
+        "/admin/vendors/{id}/finance",
+        "The vendor's earnings, commission, payouts and withdrawable balance. "
+        "The vendor sees these in their app; finance needs the same numbers to "
+        "answer 'where is my money' without logging in as them.",
+    ),
+    (
+        "GET",
+        "/admin/dashboard",
+        "The Overview screen: live order counts, today's revenue and pending "
+        "approvals. Without it an operator has no view of whether the "
+        "platform is working right now.",
+    ),
+    (
+        "GET",
+        "/admin/analytics/revenue",
+        "Platform GMV over time. Vendor analytics exist per restaurant only; "
+        "nothing aggregated across the platform, which is the number the "
+        "business is run on.",
+    ),
+    (
+        "GET",
+        "/admin/finance/summary",
+        "GMV, commission, delivery and net revenue against the previous "
+        "period, and the split by business type — the platform's own income "
+        "statement, which no vendor-scoped endpoint can produce.",
+    ),
+    (
+        "GET",
+        "/admin/finance/transactions",
+        "Delivered orders as payments with gateway references, across every "
+        "vendor — what finance reconciles against the bank statement.",
+    ),
+    (
+        "POST",
+        "/admin/payouts/{id}/reopen",
+        "Marking a payout COMPLETED was irreversible, so a transfer clicked by "
+        "mistake or bounced afterwards stayed recorded as paid forever. This "
+        "takes the claim back, with who did it and why, without moving the balance.",
+    ),
+    (
+        "GET",
+        "/admin/products",
+        "Products were only reachable through their own vendor's menu. Finding "
+        "a problem dish, or every product under a category, needs a list "
+        "across all vendors.",
+    ),
+    (
+        "GET",
+        "/admin/products/{id}",
+        "The product drawer: price, variants, add-ons and the commission it is "
+        "actually charged at, with every level that rate could come from.",
+    ),
+    (
+        "PATCH",
+        "/admin/products/{id}",
+        "Hiding a dish that must not be sold, featuring one, setting its own "
+        "commission or moving it to another category are platform decisions a "
+        "vendor must not be able to make or undo from the vendor app.",
+    ),
+    (
+        "DELETE",
+        "/admin/products/{id}",
+        "Removing a product that should never have been listed, without "
+        "needing the vendor to do it. Soft delete, so order history survives.",
+    ),
+    (
+        "POST",
+        "/admin/vendors/{id}/products",
+        "Onboarding support: operations add products for a vendor who cannot "
+        "or will not build their own menu, placed by browse category rather "
+        "than by a menu section the admin cannot see.",
+    ),
+    (
+        "GET",
+        "/admin/settings",
+        "The Settings screen. Delivery fees, surcharges and new-vendor commission lived "
+        "only in server configuration, so changing a price needed a redeploy.",
+    ),
+    (
+        "PATCH",
+        "/admin/settings",
+        "Changes platform pricing and contact details without a deploy; an explicit null "
+        "hands a value back to the server configuration.",
+    ),
+    (
+        "GET",
+        "/admin/riders/live",
+        "Live Tracking: every rider on shift with their Redis position and the orders "
+        "they hold. Customers could only see the rider on their own order.",
+    ),
+    (
+        "GET",
+        "/admin/riders/{id}",
+        "Rider Details: identity, documents, delivery counts and earnings. The roster "
+        "list carried none of the profile an operator vets a courier on.",
+    ),
+    (
+        "GET",
+        "/admin/riders/{id}/earnings",
+        "A rider's earnings by day — delivery fees, tips and incentives — so support can "
+        "answer 'why was I paid this' without database access.",
+    ),
+    (
+        "POST",
+        "/admin/riders/{id}/incentives",
+        "Bonuses (rain, peak-hour, referral) had nowhere to be recorded, so they could "
+        "not be paid through the balance or shown to the rider.",
+    ),
+    (
+        "GET",
+        "/admin/rider-payouts",
+        "Riders now withdraw their earnings; finance needs the transfer queue, as it has "
+        "for vendors.",
+    ),
+    (
+        "POST",
+        "/admin/rider-payouts/{id}/complete",
+        "Records that a rider's transfer was sent — the rider-side twin of the vendor "
+        "payout confirmation.",
+    ),
+    (
+        "POST",
+        "/admin/rider-payouts/{id}/fail",
+        "A bounced rider transfer; marking it FAILED returns the amount to the rider's "
+        "balance by arithmetic.",
+    ),
+    (
+        "POST",
+        "/admin/rider-payouts/{id}/reopen",
+        "Mark Unpaid for riders: takes back a COMPLETED claim made by mistake or bounced "
+        "later, without moving the balance.",
+    ),
+    (
+        "GET",
+        "/admin/rider-applications",
+        "The rider review queue. Riders could only be enrolled by an admin typing their "
+        "details; there was no way for one to apply.",
+    ),
+    (
+        "GET",
+        "/admin/rider-applications/{id}",
+        "The application an approval decision is made on: identity, vehicle, licence and "
+        "documents.",
+    ),
+    (
+        "POST",
+        "/admin/rider-applications/{id}/approve",
+        "Creates the courier account from a vetted application, through the same roster "
+        "code manual enrolment uses.",
+    ),
+    (
+        "POST",
+        "/admin/rider-applications/{id}/reject",
+        "Declines an applicant with a reason they are emailed, so they know what to fix.",
+    ),
+    (
+        "POST",
+        "/rider-applications",
+        "Public Become-a-Rider form. /auth/otp/send refuses RIDER, correctly, so an "
+        "applicant needs a way to ask that creates no account.",
+    ),
+    (
+        "POST",
+        "/rider-applications/uploads",
+        "Presigned uploads for NID, licence and photo: an applicant has no session, so "
+        "/uploads/presigned-url is unreachable for them.",
+    ),
+    (
+        "GET",
+        "/rider-applications/{id}",
+        "Lets an applicant check their decision with the number and email; without it "
+        "they can only wait for an email.",
+    ),
+    (
+        "GET",
+        "/rider/earnings",
+        "The rider wallet: what they earned and can withdraw. Riders had no view of their"
+        " own money at all.",
+    ),
+    (
+        "GET",
+        "/rider/earnings/days",
+        "Earnings per day, the table riders reconcile their own records against.",
+    ),
+    (
+        "GET",
+        "/rider/payouts",
+        "A rider's withdrawal history — whether a transfer is on its way, sent or bounced.",
+    ),
+    (
+        "POST",
+        "/rider/payouts",
+        "Riders earn delivery fees and tips; without a withdrawal there is no way for "
+        "that money to reach them.",
+    ),
+    (
+        "GET",
+        "/admin/support/tickets",
+        "Support Ticket and Live Chat: the queue of every user's tickets, with counts per"
+        " status for the filter chips.",
+    ),
+    (
+        "GET",
+        "/admin/support/tickets/{id}",
+        "One ticket's details, conversation and history — what support reads before replying.",
+    ),
+    (
+        "POST",
+        "/admin/support/tickets/{id}/messages",
+        "Support's reply. The only other channel was email outside the platform, "
+        "invisible to the rest of the team.",
+    ),
+    (
+        "PATCH",
+        "/admin/support/tickets/{id}",
+        "Close, prioritise and assign tickets, each change written to the ticket history.",
+    ),
+    (
+        "POST",
+        "/support/tickets",
+        "Customers, vendors and riders had no in-app way to ask for help; complaints "
+        "arrived by phone with no record.",
+    ),
+    (
+        "GET",
+        "/support/tickets",
+        "A user's own tickets with unread markers, so they see support replied.",
+    ),
+    (
+        "GET",
+        "/support/tickets/{id}",
+        "The thread of one ticket, as the user sees it.",
+    ),
+    (
+        "POST",
+        "/support/tickets/{id}/messages",
+        "The user's reply on their ticket; reopens it if support had marked it resolved.",
+    ),
+    (
+        "GET",
+        "/admin/notifications",
+        "Notification campaigns sent or scheduled, with how many inboxes and devices each reached.",
+    ),
+    (
+        "POST",
+        "/admin/notifications",
+        "Send or schedule a campaign to customers, vendors or riders. There was no way to"
+        " reach users at all.",
+    ),
+    (
+        "POST",
+        "/admin/notifications/{id}/cancel",
+        "Withdraws a scheduled campaign before the worker sends it.",
+    ),
+    (
+        "GET",
+        "/notifications",
+        "The in-app inbox campaigns land in, with the unread badge count. Works whether "
+        "or not push is configured.",
+    ),
+    (
+        "POST",
+        "/notifications/{id}/read",
+        "Clears one notification's unread state when the user opens it from the inbox.",
+    ),
+    (
+        "POST",
+        "/notifications/read-all",
+        "Clears the badge in one call instead of one request per notification.",
+    ),
+    (
+        "POST",
+        "/users/me/devices",
+        "Registers a device's FCM token. user_devices existed with nothing writing to it,"
+        " so push could never reach anyone.",
+    ),
+    (
+        "DELETE",
+        "/users/me/devices/{id}",
+        "Stops push to a device on sign-out, so the next person using the phone does not "
+        "receive your notifications.",
+    ),
+    (
+        "GET",
+        "/admin/invitations",
+        "Invitations sent to new administrators, and whether each is pending, accepted, "
+        "expired or revoked.",
+    ),
+    (
+        "POST",
+        "/admin/invitations",
+        "The only way to add an administrator without shell access to the server "
+        "(scripts/create_admin.py).",
+    ),
+    (
+        "POST",
+        "/admin/invitations/{id}/revoke",
+        "Cancels an invitation sent to the wrong address before it is used.",
+    ),
+    (
+        "GET",
+        "/auth/admin-invitations/{id}",
+        "Lets the Sign up for admin screen show which email the invitation is for, and "
+        "whether it is still valid.",
+    ),
+    (
+        "POST",
+        "/auth/admin-invitations/accept",
+        "Completes an invitation: creates the ADMIN account and signs it in.",
+    ),
+    (
+        "GET",
+        "/admin/advertisements",
+        "The Advertisement screen: every vendor campaign with budget, impressions, clicks"
+        " and revenue.",
+    ),
+    (
+        "PATCH",
+        "/admin/advertisements/{id}",
+        "Pause or end a vendor campaign that breaks policy; only the vendor could before.",
+    ),
+    (
+        "POST",
+        "/promotions/events",
+        "Impression and click counts for promoted cards. Nothing measured whether a "
+        "promotion was ever seen.",
+    ),
+    (
+        "GET",
+        "/community/posts",
+        "The community feed the moderation screen oversees; the feature did not exist.",
+    ),
+    (
+        "POST",
+        "/community/posts",
+        "Lets customers share posts about food and places.",
+    ),
+    (
+        "DELETE",
+        "/community/posts/{id}",
+        "An author taking down their own post; it leaves the feed like a moderated one.",
+    ),
+    (
+        "POST",
+        "/community/posts/{id}/report",
+        "Flags a post for moderation. Reports drive the moderation queue's order.",
+    ),
+    (
+        "GET",
+        "/admin/community/posts",
+        "The moderation queue, most reported first, with whether each author is banned.",
+    ),
+    (
+        "POST",
+        "/admin/community/posts/{id}/remove",
+        "Takes a post down with a recorded reason; the Delete button.",
+    ),
+    (
+        "GET",
+        "/admin/search",
+        "The console's search bar: one query across orders, customers, "
+        "vendors and riders, so support can start from whatever the caller "
+        "gave them.",
+    ),
 ]
 
 PREFIX = "/api/v1"

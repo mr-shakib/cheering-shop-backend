@@ -20,7 +20,7 @@ import secrets
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ from app.schemas.vendor import (
 from app.schemas.vendor import (
     VendorApplicationStatus as VendorApplicationStatusOut,
 )
-from app.services import email_service
+from app.services import email_service, platform_settings
 from app.services.vendor import storefront
 
 log = structlog.get_logger()
@@ -138,7 +138,9 @@ async def submit(
         # Invisible to customers until approval; CLOSED until the vendor opens it.
         is_verified=False,
         status="CLOSED",
-        commission_rate=storefront.default_commission_rate(),
+        commission_rate=await platform_settings.default_commission_rate(
+            db, body.business.business_type
+        ),
     )
     db.add(restaurant)
     try:
@@ -252,10 +254,33 @@ def to_submitted(application: VendorApplication) -> VendorApplicationSubmitted:
 
 
 async def list_applications(
-    db: AsyncSession, status_filter: str | None, limit: int, offset: int
+    db: AsyncSession,
+    status_filter: str | None,
+    limit: int,
+    offset: int,
+    *,
+    q: str | None = None,
+    business_type: str | None = None,
 ) -> tuple[list[VendorApplication], int]:
-    """The review queue, oldest first. Defaults to PENDING — that is the work."""
+    """The review queue, oldest first. Defaults to PENDING — that is the work.
+
+    `q` matches the store name, owner name or phone, or the application
+    number; `business_type` is the All Type dropdown."""
+    from app.services.admin.common import like_pattern, validate_business_type
+
     where = []
+    if q and q.strip():
+        pattern = like_pattern(q.strip())
+        where.append(
+            or_(
+                VendorApplication.business_name.ilike(pattern),
+                VendorApplication.owner_full_name.ilike(pattern),
+                VendorApplication.owner_phone.ilike(pattern),
+                VendorApplication.application_no.ilike(pattern),
+            )
+        )
+    if (kind := validate_business_type(business_type)) is not None:
+        where.append(VendorApplication.business_type == kind)
     if status_filter is not None:
         try:
             where.append(

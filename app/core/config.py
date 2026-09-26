@@ -170,6 +170,19 @@ class Settings(BaseSettings):
     EMAIL_TIMEOUT_SECONDS: float = 10.0
     EMAIL_REPLY_TO: str = ""
 
+    # --- Push notifications (Firebase Cloud Messaging, HTTP v1) -------------
+    # The service-account key JSON, inline (the whole file's contents). Empty
+    # disables push: notification campaigns still land in every recipient's
+    # in-app inbox, they just do not buzz a phone.
+    FCM_SERVICE_ACCOUNT_JSON: str = ""
+    FCM_TIMEOUT_SECONDS: float = 10.0
+
+    # --- Administrator invitations -----------------------------------------
+    # The link emailed to an invited administrator. `{token}` is replaced with
+    # the one-time token; point it at the admin console's accept screen.
+    ADMIN_INVITE_URL: str = "https://admin.cheeringshop.online/accept-invite?token={token}"
+    ADMIN_INVITE_TTL_HOURS: int = 72
+
     # --- Google sign-in (OIDC authorization-code flow) ---------------------
     # Empty GOOGLE_CLIENT_ID disables the endpoints, the same "no key, no
     # feature" pattern RESEND_API_KEY uses. That keeps local development and

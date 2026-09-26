@@ -32,10 +32,12 @@ below needs a `RIDER` access token.
 
 ## 1. Getting a token
 
-**There is no rider signup.** `/auth/otp/send` accepts `CUSTOMER` and `VENDOR`
-only, deliberately — a public endpoint that mints couriers would let anyone join
-the delivery fleet. An administrator enrols you with `POST /admin/riders` and
-sets a password; you sign in like everybody else:
+**There is no instant rider signup.** `/auth/otp/send` accepts `CUSTOMER` and
+`VENDOR` only, deliberately — a public endpoint that mints couriers would let
+anyone join the delivery fleet. You apply instead (§6a), and an administrator
+creates your account on approval — or enrols you directly with
+`POST /admin/riders`. Either way they set a password; you sign in like
+everybody else:
 
 ```http
 POST /auth/login
@@ -184,6 +186,13 @@ same event as one you confirmed at the door.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| GET | `/rider/earnings` | rider | My earnings and withdrawable balance |
+| GET | `/rider/earnings/days` | rider | Earnings per day |
+| GET | `/rider/payouts` | rider | My withdrawals |
+| POST | `/rider/payouts` | rider | Withdraw |
+| POST | `/rider-applications` | public | Apply to become a rider |
+| POST | `/rider-applications/uploads` | public | Upload URL for application documents |
+| GET | `/rider-applications/{application_no}` | public | Check an application's status |
 | GET | `/rider/orders` | rider | My jobs — ACTIVE or COMPLETE |
 | GET | `/rider/orders/{id}` | rider | One job, plus the handoff code while READY |
 | POST | `/rider/orders/{id}/deliver` | rider | `PICKED_UP → DELIVERED` |
@@ -196,6 +205,70 @@ Enrolment and dispatch are administrator endpoints, documented in
 `PATCH /admin/riders/{id}`, `POST /admin/orders/{id}/assign-rider`.
 
 ---
+
+## 6a. Becoming a rider
+
+Anyone can apply from the rider app; nothing is created until an
+administrator approves.
+
+1. Upload each document with `POST /rider-applications/uploads`
+   `{"file_type", "file_name"}`: PUT the bytes to the returned `upload_url`
+   with its `Content-Type`, and keep the `public_url`. PDF is accepted.
+2. Submit:
+
+```http
+POST /rider-applications
+{
+  "full_name": "Omar Farouk",
+  "email": "omar@example.com",
+  "phone": "+8801748145544",
+  "vehicle_type": "MOTORCYCLE",
+  "license_number": "DH-123456",
+  "date_of_birth": "2000-06-12",
+  "national_id": "465454556",
+  "documents": {
+    "nid": "https://…/nid.pdf",
+    "profile_photo": "https://…/me.jpg",
+    "driving_license": "https://…/licence.jpg",
+    "payout_proof": "https://…/wallet.png"
+  },
+  "payout": {"method": "BKASH", "account_name": "Omar Farouk", "account_number": "01748145544"},
+  "agreed_to_terms": true
+}
+```
+
+`vehicle_type` is `CYCLE`, `BIKE`, `MOTORCYCLE`, `SCOOTER` or `CAR`. The
+motorised ones need `license_number` and `documents.driving_license`. The
+response carries `application_no` (`RDR-482910`); show it and tell the user to
+keep it. One application per email can be pending at a time (`409`).
+
+3. Check the status with
+   `GET /rider-applications/{application_no}?email=…`. `review_note` explains
+   a rejection. The applicant is also emailed the decision; on approval they
+   sign in with `/auth/login` using the password the platform gives them.
+
+## 6b. Wallet
+
+You earn each delivered order's **delivery fee and tip in full**, plus any
+incentive the platform grants.
+
+`GET /rider/earnings` returns `today`, `this_week` (since Monday, UTC),
+`this_month`, `totals` (`delivery_earning`, `tips`, `incentives`, `total`),
+and `available_balance`: everything earned, minus withdrawals paid or on their
+way. `GET /rider/earnings/days` lists each day with earnings, newest first.
+
+**Withdraw:**
+
+```http
+POST /rider/payouts
+{"amount": 500, "method": "BKASH", "account_number": "01712345678", "account_name": "Omar Farouk"}
+```
+
+`method` is `BANK`, `BKASH`, `NAGAD` or `ROCKET`; `bank_name` is required for
+`BANK`. The minimum is the same as for vendors. The amount leaves your balance
+immediately and shows as `PROCESSING` until the finance team sends it
+(`COMPLETED`); if the transfer fails (`FAILED`) it returns to your balance.
+`GET /rider/payouts` is the history.
 
 ## 7. Known limitations
 

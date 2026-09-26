@@ -40,6 +40,17 @@ class MenuItemOut(BaseModel):
     )
     image_url: str | None = None
     is_available: bool
+    is_hidden: bool = Field(
+        default=False,
+        description="Hidden from customers by an administrator. Not yours to change — "
+        "contact support",
+    )
+    is_featured: bool = Field(default=False, description="Promoted by the platform")
+    commission_rate: float | None = Field(
+        default=None,
+        description="This dish's own commission, set by the platform; null means "
+        "the category's or your restaurant's rate applies",
+    )
     is_veg: bool
     prep_time_mins: int | None = None
     sort_order: int

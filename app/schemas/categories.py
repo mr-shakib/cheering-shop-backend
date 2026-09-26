@@ -52,5 +52,14 @@ class CategoryAdminOut(PlatformCategoryRef):
     section_count: int = Field(
         description="Menu sections linked to it, across every restaurant, live or not"
     )
+    product_count: int = Field(
+        default=0, description="Undeleted products in those sections — the Total Product column"
+    )
+    commission_rate: float | None = Field(
+        default=None,
+        description="Commission for products under this category (0.15 == 15%); "
+        "null = the restaurant's rate. A product's own rate beats it.",
+    )
+    kind: str = Field(default="RESTAURANT", description="RESTAURANT or STORE — the console tab")
     created_at: datetime
     updated_at: datetime

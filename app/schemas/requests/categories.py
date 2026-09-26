@@ -1,10 +1,16 @@
 """Administrator curation of the platform browse categories."""
 
-from typing import Annotated
+from decimal import Decimal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 Alias = Annotated[str, Field(min_length=1, max_length=80)]
+Rate = Annotated[
+    Decimal,
+    Field(ge=0, le=1, description="Commission as a fraction: 0.15 is 15%. null = not set here"),
+]
+Kind = Literal["RESTAURANT", "STORE"]
 
 
 class CategoryCreateRequest(BaseModel):
@@ -28,6 +34,8 @@ class CategoryCreateRequest(BaseModel):
         description="Other spellings vendors type for this category",
     )
     is_active: bool = True
+    commission_rate: Rate | None = None
+    kind: Kind = "RESTAURANT"
 
 
 class CategoryUpdateRequest(BaseModel):
@@ -51,6 +59,10 @@ class CategoryUpdateRequest(BaseModel):
         default=None, max_length=50, description="Replaces the whole list when present"
     )
     is_active: bool | None = None
+    commission_rate: Rate | None = Field(
+        default=None, description="An explicit null clears it; the restaurant's rate applies"
+    )
+    kind: Kind | None = None
 
 
 class CategoryMergeRequest(BaseModel):

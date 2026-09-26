@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -87,6 +88,14 @@ class MenuItem(Base, UUIDPrimaryKey, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
     # Soft delete: order history and analytics must survive a menu cleanup.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # [EXTENDED] Admin moderation (migration 0009). `is_hidden` takes the dish
+    # off every customer surface and is not the vendor's to undo — unlike
+    # `is_available`, their sold-out switch.
+    is_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # A fraction like restaurants.commission_rate. NULL = not set at this level:
+    # the section's category rate applies, then the restaurant's.
+    commission_rate: Mapped[float | None] = mapped_column(Numeric(5, 4))
 
     category: Mapped["MenuCategory"] = relationship(back_populates="items", lazy="raise")
     variants: Mapped[list["ItemVariant"]] = relationship(back_populates="item", lazy="raise")
@@ -94,6 +103,10 @@ class MenuItem(Base, UUIDPrimaryKey, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint("base_price >= 0", name="ck_menu_items_price"),
+        CheckConstraint(
+            "commission_rate IS NULL OR commission_rate BETWEEN 0 AND 1",
+            name="ck_menu_items_commission",
+        ),
         ForeignKeyConstraint(
             ["category_id", "restaurant_id"],
             ["menu_categories.id", "menu_categories.restaurant_id"],

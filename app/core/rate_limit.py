@@ -80,3 +80,11 @@ def application_submit_key(ip: str) -> str:
 
 def application_upload_key(ip: str) -> str:
     return f"rl:vendorapp:upload:{ip}"
+
+
+def rider_application_submit_key(ip: str) -> str:
+    return f"rl:riderapp:submit:{ip}"
+
+
+def rider_application_upload_key(ip: str) -> str:
+    return f"rl:riderapp:upload:{ip}"

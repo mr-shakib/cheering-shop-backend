@@ -378,6 +378,7 @@ async def category_items(
         MenuCategory.category_id == category.id,
         MenuCategory.is_active.is_(True),
         MenuItem.deleted_at.is_(None),
+        MenuItem.is_hidden.is_(False),
     ]
     if lat is not None and lng is not None:
         radius = min(
@@ -501,6 +502,7 @@ async def restaurant_menu(db: AsyncSession, restaurant_id: str) -> list[MenuCate
         .where(
             MenuItem.category_id.in_([c.id for c in categories]),
             MenuItem.deleted_at.is_(None),
+            MenuItem.is_hidden.is_(False),
         )
         .order_by(MenuItem.sort_order, MenuItem.name)
         .options(selectinload(MenuItem.variants), selectinload(MenuItem.add_ons))
@@ -529,6 +531,7 @@ def _to_item(item: MenuItem) -> MenuItemOut:
         base_price=to_major(item.base_price),
         image_url=item.image_url,
         is_available=item.is_available,
+        is_featured=item.is_featured,
         is_veg=item.is_veg,
         prep_time_mins=item.prep_time_mins,
         variants=sorted(
@@ -587,6 +590,7 @@ async def search(
         .where(
             _VISIBLE,
             MenuItem.deleted_at.is_(None),
+            MenuItem.is_hidden.is_(False),
             or_(MenuItem.name.ilike(pattern), MenuItem.description.ilike(pattern)),
         )
         # Available first: an unavailable dish is still a useful search hit

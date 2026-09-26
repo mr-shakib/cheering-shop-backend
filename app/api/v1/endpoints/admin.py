@@ -11,8 +11,9 @@ public "make me an admin" endpoint would be an obvious hole. Use
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, status
 
@@ -25,6 +26,7 @@ from app.schemas.requests import (
     CategoryMergeRequest,
     CategoryUpdateRequest,
     PayoutFailRequest,
+    PayoutReopenRequest,
     RiderCreateRequest,
     RiderUpdateRequest,
     SetCommissionRequest,
@@ -32,6 +34,8 @@ from app.schemas.requests import (
 )
 from app.schemas.rider import RiderAssignment
 from app.services import (
+    admin_rider_service,
+    admin_vendor_service,
     category_service,
     dispatch_service,
     realtime,
@@ -120,11 +124,17 @@ async def list_vendor_applications(
     status_filter: Annotated[
         str | None, Query(alias="status", description="PENDING (default), APPROVED or REJECTED")
     ] = "PENDING",
+    q: Annotated[
+        str | None, Query(description="Store or owner name, phone, or application number")
+    ] = None,
+    business_type: Annotated[
+        str | None, Query(description="RESTAURANT, GROCERY or PHARMACY")
+    ] = None,
 ):
     """**[EXTENDED]** — oldest first; the queue defaults to what needs doing.
     Pass `status=` (empty) or another value to see decided applications."""
     applications, total = await vendor_application_service.list_applications(
-        db, status_filter or None, page.limit, page.offset
+        db, status_filter or None, page.limit, page.offset, q=q, business_type=business_type
     )
     return paginated(
         [vendor_application_service.to_detail(a).model_dump() for a in applications],
@@ -198,6 +208,12 @@ async def list_categories(
         bool,
         Query(description="Only categories awaiting a decision — the review queue"),
     ] = False,
+    q: Annotated[str | None, Query(description="Name or alias")] = None,
+    kind: Annotated[str | None, Query(description="RESTAURANT or STORE — the tabs")] = None,
+    sort: Annotated[
+        Literal["default", "name", "-name"],
+        Query(description="default = customer order; name = A to Z"),
+    ] = "default",
 ):
     """**[EXTENDED]** — the curation screen. Customer order (pinned, then by
     restaurant count), but nothing filtered: a hidden category and one no
@@ -210,7 +226,7 @@ async def list_categories(
     matters — anything sitting in it is a vendor whose food is not browsable.
     """
     rows, total = await category_service.admin_list(
-        db, page.limit, page.offset, pending_only=pending
+        db, page.limit, page.offset, pending_only=pending, q=q, kind=kind, sort=sort
     )
     return paginated(
         [r.model_dump() for r in rows], total=total, limit=page.limit, offset=page.offset
@@ -296,17 +312,28 @@ async def list_all_payouts(
     status_filter: Annotated[
         str | None, Query(alias="status", description="PROCESSING (default), COMPLETED or FAILED")
     ] = "PROCESSING",
+    restaurant_id: Annotated[
+        str | None, Query(description="One vendor's payouts — the Withdrawal tab")
+    ] = None,
+    q: Annotated[str | None, Query(description="Payout reference or vendor name")] = None,
+    date_from: Annotated[date | None, Query(description="Requested on or after")] = None,
+    date_to: Annotated[date | None, Query(description="Requested on or before")] = None,
 ):
     """**[EXTENDED]** — withdrawals awaiting execution, oldest first. Each row
-    carries the destination account exactly as the vendor entered it."""
-    payouts, total = await vendor_finance_service.admin_list(
-        db, status_filter or None, page.limit, page.offset
-    )
-    return paginated(
-        [vendor_finance_service.to_out(p).model_dump() for p in payouts],
-        total=total,
+    carries the destination account exactly as the vendor entered it, and the
+    vendor's name. Pass `status=` (empty) for every status."""
+    payouts, total = await admin_vendor_service.list_payouts(
+        db,
         limit=page.limit,
         offset=page.offset,
+        status=status_filter or None,
+        restaurant_id=restaurant_id,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return paginated(
+        [p.model_dump() for p in payouts], total=total, limit=page.limit, offset=page.offset
     )
 
 
@@ -340,6 +367,21 @@ async def fail_payout(
     )
 
 
+@router.post("/payouts/{payout_id}/reopen", summary="Mark a paid payout unpaid [EXTENDED]")
+async def reopen_payout(
+    payout_id: uuid.UUID, body: PayoutReopenRequest, admin: AdminUser, db: DbSession
+):
+    """**[EXTENDED]** — the console's Mark Unpaid: a COMPLETED payout goes back
+    to PROCESSING, with who reopened it and why. The vendor's balance does not
+    change — money waiting to be sent is deducted exactly as money sent is — so
+    reopening cannot let the same amount be withdrawn twice."""
+    row = await admin_vendor_service.reopen_payout(db, payout_id, admin, body.reason)
+    await db.commit()
+    return ok(
+        {"message": f"Payout {row.reference} is back in the queue", "payout": row.model_dump()}
+    )
+
+
 # ---------------------------------------------------------------------------
 # Riders & dispatch
 # ---------------------------------------------------------------------------
@@ -351,11 +393,25 @@ async def list_riders(
     db: DbSession,
     page: Paginated,
     online_only: Annotated[bool, Query(description="Only riders currently on shift")] = False,
+    q: Annotated[str | None, Query(description="Name, phone or email")] = None,
+    vehicle_type: Annotated[str | None, Query(description="e.g. CYCLE, MOTORCYCLE")] = None,
+    min_rating: Annotated[float | None, Query(ge=0, le=5)] = None,
+    status: Annotated[
+        str | None, Query(description="ACTIVE, SUSPENDED (not cleared) or BLOCKED")
+    ] = None,
 ):
-    """Most idle first — the same order dispatch itself picks in, so an operator
-    overriding a choice is looking at the list dispatch was choosing from."""
-    riders, total = await rider_roster_service.list_riders(
-        db, page.limit, page.offset, online_only=online_only
+    """On-shift riders first, then most idle — the order dispatch itself picks
+    in, so an operator overriding a choice is looking at the list dispatch was
+    choosing from. Rows carry phone, vehicle, deliveries and rating."""
+    riders, total = await admin_rider_service.list_riders(
+        db,
+        limit=page.limit,
+        offset=page.offset,
+        online_only=online_only,
+        q=q,
+        vehicle_type=vehicle_type,
+        min_rating=min_rating,
+        status=status,
     )
     return paginated(
         [r.model_dump() for r in riders], total=total, limit=page.limit, offset=page.offset
@@ -377,12 +433,14 @@ async def create_rider(body: RiderCreateRequest, admin: AdminUser, db: DbSession
     return ok(rider.model_dump())
 
 
-@router.patch("/riders/{rider_id}", summary="Shift state and clearance [EXTENDED]")
+@router.patch("/riders/{rider_id}", summary="Shift, clearance and profile [EXTENDED]")
 async def update_rider(
     rider_id: uuid.UUID, body: RiderUpdateRequest, admin: AdminUser, db: DbSession
 ):
     """The two flags dispatch filters on — `is_online` (on shift) and
-    `is_verified` (cleared to carry food) — plus the rider's sign-in password.
+    `is_verified` (cleared to carry food) — the rider's sign-in password, and
+    the Personal Info fields (name, vehicle, licence, date of birth, NID,
+    documents). Returns the full Rider Details view.
 
     `password` is how a rider gets credentials after enrolment, or gets them
     reset. There is no self-service path: `/auth/password/forgot` mails an OTP,
@@ -393,13 +451,7 @@ async def update_rider(
     those orders are in a bag on a motorcycle, and unassigning them would
     strand the customer rather than recall the food.
     """
-    rider = await rider_roster_service.set_flags(
-        db,
-        rider_id,
-        is_online=body.is_online,
-        is_verified=body.is_verified,
-        password=body.password,
-    )
+    rider = await admin_rider_service.update_rider(db, rider_id, body)
     await db.commit()
     return ok(rider.model_dump())
 

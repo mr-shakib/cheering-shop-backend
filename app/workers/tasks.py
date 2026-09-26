@@ -115,6 +115,19 @@ async def recompute_restaurant_rating(ctx: dict, restaurant_id: str) -> None:
     raise NotImplementedError("Implemented with the Reviews module")
 
 
+async def send_due_notifications(ctx: dict) -> int:
+    """Send scheduled notification campaigns whose time has come. Every
+    minute, so a campaign goes out within a minute of its scheduled time."""
+    from app.services import notifications
+
+    async with SessionLocal() as session:
+        sent = await notifications.send_due(session)
+        await session.commit()
+    if sent:
+        log.info("scheduled_notifications_sent", count=sent)
+    return sent
+
+
 async def startup(ctx: dict) -> None:
     log.info("worker_starting", environment=settings.ENVIRONMENT, at=datetime.now(UTC).isoformat())
 
@@ -134,12 +147,14 @@ class WorkerSettings:
         auto_decline_stale_orders,
         flush_rider_trail,
         recompute_restaurant_rating,
+        send_due_notifications,
     ]
     # Staggered minutes so three DELETEs never land on the database at once.
     cron_jobs = [
         cron(prune_expired_otps, hour=3, minute=10),
         cron(prune_expired_refresh_tokens, hour=3, minute=20),
         cron(expire_idempotency_keys, hour=3, minute=30),
+        cron(send_due_notifications, second=5),  # every minute
     ]
     on_startup = startup
     on_shutdown = shutdown

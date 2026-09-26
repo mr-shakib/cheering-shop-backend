@@ -196,29 +196,6 @@ async def list_payouts(
 # ---------------------------------------------------------------------------
 
 
-async def admin_list(
-    db: AsyncSession, status_filter: str | None, limit: int, offset: int
-) -> tuple[list[VendorPayout], int]:
-    """The transfer work queue — PROCESSING oldest-first by default."""
-    where = []
-    if status_filter is not None:
-        try:
-            where.append(VendorPayout.status == PayoutStatus(status_filter.upper()).value)
-        except ValueError:
-            valid = ", ".join(s.value for s in PayoutStatus)
-            raise ValidationError(f"Unknown status. Valid values: {valid}") from None
-
-    total = await db.scalar(select(func.count()).select_from(VendorPayout).where(*where))
-    result = await db.execute(
-        select(VendorPayout)
-        .where(*where)
-        .order_by(VendorPayout.created_at.asc())
-        .limit(limit)
-        .offset(offset)
-    )
-    return list(result.scalars().all()), total or 0
-
-
 async def _get_processing(db: AsyncSession, payout_id) -> VendorPayout:
     payout = await db.get(VendorPayout, payout_id, with_for_update=True)
     if payout is None:
@@ -250,6 +227,29 @@ async def admin_fail(db: AsyncSession, payout_id, admin: User, reason: str | Non
     payout.processed_at = datetime.now(UTC)
     await db.flush()
     log.info("payout_failed", reference=payout.reference, admin_id=str(admin.id))
+    return payout
+
+
+async def admin_reopen(db: AsyncSession, payout_id, admin: User, reason: str) -> VendorPayout:
+    """Take back a COMPLETED claim ("Mark Unpaid"): the transfer was marked
+    by mistake, or bounced after the fact. Back to PROCESSING, so it re-enters
+    the queue. The balance does not move — PROCESSING is already deducted,
+    exactly as COMPLETED was — so reopening can never double-pay a vendor."""
+    payout = await db.get(VendorPayout, payout_id, with_for_update=True)
+    if payout is None:
+        raise NotFoundError("Payout not found")
+    if str(payout.status) != PayoutStatus.COMPLETED:
+        raise ValidationError(
+            f"Only a completed payout can be reopened; this one is {str(payout.status).lower()}"
+        )
+    payout.status = PayoutStatus.PROCESSING.value
+    payout.processed_by = None
+    payout.processed_at = None
+    payout.reopened_at = datetime.now(UTC)
+    payout.reopened_by = admin.id
+    payout.reopen_reason = reason
+    await db.flush()
+    log.info("payout_reopened", reference=payout.reference, admin_id=str(admin.id), reason=reason)
     return payout
 
 

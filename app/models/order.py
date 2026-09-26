@@ -131,6 +131,14 @@ class Order(Base, UUIDPrimaryKey):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_by: Mapped[str | None] = mapped_column(ActorTypeType)
     cancellation_reason: Mapped[str | None] = mapped_column(String(255))
+    # [EXTENDED] Refund audit (migration 0008). Set whenever payment_status
+    # becomes REFUNDED from here on; orders refunded before 0008 have none.
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refunded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_orders_refunded_by"),
+    )
+    refund_reason: Mapped[str | None] = mapped_column(String(255))
     estimated_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
@@ -176,6 +184,11 @@ class Order(Base, UUIDPrimaryKey):
         ),
         CheckConstraint(
             "status <> 'DELIVERED' OR delivered_at IS NOT NULL", name="ck_orders_delivered"
+        ),
+        # One way only: a refund record implies REFUNDED, but orders refunded
+        # before migration 0008 are REFUNDED with no record.
+        CheckConstraint(
+            "refunded_at IS NULL OR payment_status = 'REFUNDED'", name="ck_orders_refund_status"
         ),
         CheckConstraint(
             "status NOT IN ('PICKED_UP', 'DELIVERED') OR rider_id IS NOT NULL",

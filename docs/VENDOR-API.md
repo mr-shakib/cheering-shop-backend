@@ -258,6 +258,17 @@ Item, variants and add-ons are created in one transaction — all of it lands or
 none of it does. At most one variant may be `is_default`; if you mark none, the
 first becomes the default so your client always has something to preselect.
 
+Three item fields are set by the platform, not by you. They appear on every
+item you read and are rejected (`400`) if you send them:
+
+- `is_hidden`: an administrator has taken the item off the customer app. It
+  stays on your menu so you can see it. Contact support to have it restored;
+  turning `is_available` on does not bring it back.
+- `is_featured`: the platform is promoting it.
+- `commission_rate`: this item's own commission. When it is `null`, the
+  item's browse category rate applies, then your restaurant's
+  `commission_rate`.
+
 ### Where customers find it
 
 Every category you create is filed under a **platform category** — the

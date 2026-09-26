@@ -20,11 +20,13 @@ DOC = DOCS / "AUTH-API.md"
 VENDOR_DOC = DOCS / "VENDOR-API.md"
 CUSTOMER_DOC = DOCS / "CUSTOMER-API.md"
 RIDER_DOC = DOCS / "RIDER-API.md"
+ADMIN_DOC = DOCS / "ADMIN-API.md"
+SHARED_DOC = DOCS / "APP-SHARED-API.md"
 ENDPOINTS = ROOT / "app" / "api" / "v1" / "endpoints"
 
 # Every document that carries an endpoint summary table. A new module's doc
 # belongs here, or its endpoints will read as undocumented.
-API_DOCS = (DOC, VENDOR_DOC, CUSTOMER_DOC, RIDER_DOC)
+API_DOCS = (DOC, VENDOR_DOC, CUSTOMER_DOC, RIDER_DOC, ADMIN_DOC, SHARED_DOC)
 
 
 def _normalise(path: str) -> str:

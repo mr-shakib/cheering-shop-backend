@@ -15,13 +15,14 @@ Riders are enrolled by an administrator (`POST /admin/riders`) and sign in at
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import DbSession, Paginated, RiderUser
 from app.core.responses import ok, paginated
-from app.schemas.requests import RiderLocationRequest, RiderShiftRequest
+from app.schemas.requests import PayoutCreateRequest, RiderLocationRequest, RiderShiftRequest
 from app.services import (
     realtime,
+    rider_earnings_service,
     rider_jobs_service,
     rider_roster_service,
     rider_tracking_service,
@@ -127,3 +128,49 @@ async def report_location(body: RiderLocationRequest, rider: RiderUser, db: DbSe
     )
     await db.commit()
     return ok(result.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Wallet — earnings and withdrawals
+# ---------------------------------------------------------------------------
+
+
+@router.get("/earnings", summary="My earnings and balance [EXTENDED]")
+async def my_earnings(rider: RiderUser, db: DbSession):
+    """**[EXTENDED]** — today, this week, this month, lifetime totals by source
+    (delivery fees, tips, incentives), and the balance available to withdraw.
+    You earn each delivered order's delivery fee and tip in full."""
+    return ok((await rider_earnings_service.summary(db, rider.id)).model_dump())
+
+
+@router.get("/earnings/days", summary="Earnings per day [EXTENDED]")
+async def my_earning_days(rider: RiderUser, db: DbSession, page: Paginated):
+    """**[EXTENDED]** — one row per day you earned anything, newest first."""
+    days, total = await rider_earnings_service.daily(db, rider.id, page.limit, page.offset)
+    return paginated(
+        [d.model_dump() for d in days], total=total, limit=page.limit, offset=page.offset
+    )
+
+
+@router.get("/payouts", summary="My withdrawals [EXTENDED]")
+async def my_payouts(rider: RiderUser, db: DbSession, page: Paginated):
+    """**[EXTENDED]** — newest first."""
+    payouts, total = await rider_earnings_service.list_payouts(
+        db, rider.id, page.limit, page.offset
+    )
+    return paginated(
+        [rider_earnings_service.to_out(p).model_dump() for p in payouts],
+        total=total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+@router.post("/payouts", status_code=status.HTTP_201_CREATED, summary="Withdraw [EXTENDED]")
+async def request_payout(body: PayoutCreateRequest, rider: RiderUser, db: DbSession):
+    """**[EXTENDED]** — recorded as PROCESSING and deducted from your balance at
+    once; the finance team sends the money and marks it paid. A transfer that
+    fails is returned to your balance."""
+    payout = await rider_earnings_service.request_payout(db, rider, body)
+    await db.commit()
+    return ok(rider_earnings_service.to_out(payout).model_dump())

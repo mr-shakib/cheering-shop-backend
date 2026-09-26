@@ -271,3 +271,10 @@ def to_out(
         is_active=promo.is_active,
         created_at=promo.created_at,
     )
+
+
+# Read by the admin Advertisement screen, which lists every vendor's campaigns
+# with the same labels, states and figures the vendor app shows.
+title = _title
+state = _state
+stats = _stats

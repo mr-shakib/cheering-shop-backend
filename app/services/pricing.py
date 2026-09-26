@@ -57,6 +57,9 @@ class QuoteLine:
     variant_name: str | None = None
     add_on_names: list[str] = field(default_factory=list)
     notes: str | None = None
+    # The product's or its category's rate, resolved by services.commission.
+    # None falls back to the restaurant rate passed to `quote`.
+    commission_rate: float | None = None
 
     @property
     def line_total(self) -> int:
@@ -96,7 +99,34 @@ class Quote:
         }
 
 
-def delivery_fee_minor(distance_km: float, item_total: int) -> int:
+def _basis_points(line_rate: float | None, restaurant_rate: float) -> int:
+    """Rates are FRACTIONS (Numeric(5,4), CHECK BETWEEN 0 AND 1), so 0.1500 is
+    15%. Basis points are rate * 10_000, not * 100."""
+    rate = restaurant_rate if line_rate is None else line_rate
+    return int(round(rate * 10_000))
+
+
+@dataclass(frozen=True)
+class DeliveryFees:
+    """The delivery tariff, in paisa. Built by `services.platform_settings`
+    from the Settings screen, falling back to the server configuration."""
+
+    base: int
+    per_km: int
+    minimum: int = 0
+    surcharge: int = 0
+
+    @classmethod
+    def from_config(cls) -> DeliveryFees:
+        return cls(
+            base=to_minor(settings.DELIVERY_FEE_BASE),
+            per_km=to_minor(settings.DELIVERY_FEE_PER_KM),
+        )
+
+
+def delivery_fee_minor(
+    distance_km: float, item_total: int, fees: DeliveryFees | None = None
+) -> int:
     """Flat base covering the first kilometre, then per started km after it.
 
     Platform-wide. `restaurants.delivery_fee_base` used to feed this and no
@@ -109,7 +139,13 @@ def delivery_fee_minor(distance_km: float, item_total: int) -> int:
     The threshold promotion waives the whole fee rather than discounting it:
     "free delivery over ৳500" that silently still charges ৳15 is the kind of
     thing customers screenshot.
+
+    `fees` comes from the Settings screen (`services.platform_settings`); None
+    means the server configuration. The minimum applies to the distance fee;
+    active surcharges (rain, heatwave, high demand) are added on top. The
+    free-delivery threshold waives all of it.
     """
+    fees = fees or DeliveryFees.from_config()
     threshold = settings.FREE_DELIVERY_THRESHOLD
     if threshold and item_total >= to_minor(threshold):
         return 0
@@ -117,9 +153,8 @@ def delivery_fee_minor(distance_km: float, item_total: int) -> int:
     # Ceiling, not round: a 1.2 km overage is two started kilometres of rider
     # time, and rounding it down means the platform absorbs the difference on
     # every single order.
-    return to_minor(settings.DELIVERY_FEE_BASE) + to_minor(
-        settings.DELIVERY_FEE_PER_KM
-    ) * math.ceil(chargeable_km)
+    distance_fee = fees.base + fees.per_km * math.ceil(chargeable_km)
+    return max(distance_fee, fees.minimum) + fees.surcharge
 
 
 def quote(
@@ -129,6 +164,7 @@ def quote(
     commission_rate: float,
     discount: int = 0,
     tip: int = 0,
+    delivery: DeliveryFees | None = None,
 ) -> Quote:
     """Build the bill. Pure arithmetic — no database, no clock, no config reads
     beyond the platform rates.
@@ -144,9 +180,12 @@ def quote(
       must not quietly cut the restaurant's earnings — the vendor sold the food
       at its listed price and is owed for it. If a vendor-funded promo type ever
       lands, that is the point at which this line needs a branch, not before.
+    * **Commission is per line.** A line carrying its own rate (set on the
+      product or its category) is charged at it; the rest at the restaurant's
+      `commission_rate`. See `services.commission`.
     """
     item_total = sum(line.line_total for line in lines)
-    delivery = delivery_fee_minor(distance_km, item_total)
+    delivery_fee = delivery_fee_minor(distance_km, item_total, delivery)
     packaging = to_minor(settings.PACKAGING_FEE_PER_ORDER) if lines else 0
     tax = percentage_of(item_total, settings.TAX_BASIS_POINTS)
     platform = percentage_of(item_total, settings.PLATFORM_FEE_BASIS_POINTS)
@@ -154,21 +193,22 @@ def quote(
     # A discount larger than the bill would make grand_total negative, which
     # ck_orders_money_nonneg refuses. Clamping here means an over-generous promo
     # is a free order, never a payout to the customer.
-    subtotal = item_total + delivery + packaging + tax + platform + tip
+    subtotal = item_total + delivery_fee + packaging + tax + platform + tip
     discount = max(0, min(discount, subtotal))
 
     return Quote(
         item_total=item_total,
-        delivery_fee=delivery,
+        delivery_fee=delivery_fee,
         packaging_fee=packaging,
         tax_amount=tax,
         platform_fee=platform,
         discount=discount,
         tip=tip,
         grand_total=subtotal - discount,
-        # commission_rate is a FRACTION (Numeric(5,4), CHECK BETWEEN 0 AND 1),
-        # so 0.1500 is 15%. Basis points are rate * 10_000, not * 100.
-        commission_amount=percentage_of(item_total, int(round(commission_rate * 10_000))),
+        commission_amount=sum(
+            percentage_of(line.line_total, _basis_points(line.commission_rate, commission_rate))
+            for line in lines
+        ),
         distance_km=distance_km,
         lines=lines,
     )

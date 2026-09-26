@@ -24,6 +24,8 @@ os.environ.setdefault("TOTP_ENCRYPTION_KEY", "k" * 64)
 # a network round trip per test, and failing anyway because Resend rejects
 # @example.com recipients. Tests must not touch a third party.
 os.environ["RESEND_API_KEY"] = ""
+# Same reason: tests must never push to a real device.
+os.environ["FCM_SERVICE_ACCOUNT_JSON"] = ""
 
 # FORCED for the same reason: a developer with real Cloudflare R2 credentials in
 # .env would otherwise flip the upload tests from "503, correctly unprovisioned"
@@ -277,9 +279,13 @@ async def riders(db_available):
 
     # fk_orders_rider is ON DELETE RESTRICT, so the orders go first. The
     # profile cascades with the user.
+    from app.models.payout import RiderPayout
+
     async with SessionLocal() as session:
         for user in made:
             await session.execute(delete(Order).where(Order.rider_id == user.id))
+            # rider_payouts is ON DELETE RESTRICT, like vendor payouts.
+            await session.execute(delete(RiderPayout).where(RiderPayout.rider_id == user.id))
             await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
 

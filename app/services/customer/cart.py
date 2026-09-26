@@ -31,6 +31,7 @@ from app.models.menu import ItemAddOn, ItemVariant, MenuItem
 from app.models.restaurant import Restaurant
 from app.schemas.customer import CartLineOut, CartOut
 from app.schemas.requests import CartItemRequest
+from app.services import commission
 from app.services.pricing import QuoteLine
 
 
@@ -90,7 +91,11 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
         m.id: m
         for m in (
             await db.scalars(
-                select(MenuItem).where(MenuItem.id.in_(item_ids), MenuItem.deleted_at.is_(None))
+                select(MenuItem).where(
+                    MenuItem.id.in_(item_ids),
+                    MenuItem.deleted_at.is_(None),
+                    MenuItem.is_hidden.is_(False),
+                )
             )
         ).all()
     }
@@ -104,6 +109,8 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
         a.id: a
         for a in (await db.scalars(select(ItemAddOn).where(ItemAddOn.id.in_(add_on_ids)))).all()
     } if add_on_ids else {}
+
+    category_rates = await commission.section_rates(db, {m.category_id for m in items.values()})
 
     out: list[CartLineOut] = []
     quote_lines: list[QuoteLine] = []
@@ -153,6 +160,9 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
                 variant_name=variant.name if variant else None,
                 add_on_names=[a.name for a in chosen],
                 notes=line.notes,
+                commission_rate=commission.line_rate(
+                    item.commission_rate, category_rates.get(item.category_id)
+                ),
             )
         )
     return out, quote_lines
@@ -208,7 +218,11 @@ async def modify_item(db: AsyncSession, user_id: uuid.UUID, body: CartItemReques
     menu_item_id = _as_uuid(body.menu_item_id, "menu_item_id")
     item = await db.scalar(
         select(MenuItem)
-        .where(MenuItem.id == menu_item_id, MenuItem.deleted_at.is_(None))
+        .where(
+            MenuItem.id == menu_item_id,
+            MenuItem.deleted_at.is_(None),
+            MenuItem.is_hidden.is_(False),
+        )
         .options(selectinload(MenuItem.variants), selectinload(MenuItem.add_ons))
     )
     if item is None:

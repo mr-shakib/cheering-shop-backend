@@ -7,7 +7,7 @@ actually need: who they are, whether they are on shift, and how much they are
 already carrying.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -125,3 +125,57 @@ class LocationAccepted(BaseModel):
         description="Whether this ping also landed in the audit trail — most do not"
     )
     next_ping_seconds: int = Field(description="How long to wait before reporting again")
+
+
+class RiderEarningsTotals(BaseModel):
+    """Lifetime earnings by source, whole taka."""
+
+    delivery_earning: Decimal = Field(description="Delivery fees of orders you delivered")
+    tips: Decimal
+    incentives: Decimal = Field(description="Bonuses granted by the platform")
+    total: Decimal
+
+
+class RiderEarnings(BaseModel):
+    """GET /rider/earnings — the wallet.
+
+    `available_balance` is derived, never stored: total earned, minus payouts
+    COMPLETED or still PROCESSING. A FAILED payout returns to the balance.
+    """
+
+    rider_id: str
+    today: Decimal
+    this_week: Decimal = Field(description="Since Monday 00:00 UTC")
+    this_month: Decimal
+    totals: RiderEarningsTotals
+    available_balance: Decimal
+    total_withdrawn: Decimal = Field(description="COMPLETED payouts")
+    processing_payouts: Decimal = Field(description="Requested, not yet confirmed")
+    min_payout_amount: Decimal
+
+
+class RiderEarningsDay(BaseModel):
+    """One row of the earnings table — a UTC day with any activity."""
+
+    date: date
+    orders: int = Field(description="Orders delivered that day")
+    delivery_earning: Decimal
+    tips: Decimal
+    incentives: Decimal
+    total: Decimal
+
+
+class RiderPayoutOut(BaseModel):
+    id: str
+    rider_id: str
+    reference: str = Field(description='Receipt id, e.g. "RDP64445654"')
+    amount: Decimal
+    method: str
+    account_number: str
+    account_name: str
+    bank_name: str | None = None
+    branch_name: str | None = None
+    status: str = Field(description="PROCESSING, COMPLETED or FAILED")
+    failure_reason: str | None = None
+    requested_at: datetime
+    processed_at: datetime | None = None

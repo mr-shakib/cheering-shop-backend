@@ -40,6 +40,7 @@ from app.schemas.vendor import (
     RestaurantProfile,
     StoreStatusResult,
 )
+from app.services import platform_settings
 
 log = structlog.get_logger()
 
@@ -126,7 +127,7 @@ async def register_vendor(
         # until the vendor opens it themselves.
         is_verified=False,
         status="CLOSED",
-        commission_rate=default_commission_rate(),
+        commission_rate=await platform_settings.default_commission_rate(db),
     )
     db.add(restaurant)
 
@@ -156,18 +157,6 @@ async def list_pending(db: AsyncSession, limit: int, offset: int) -> tuple[list[
         base.order_by(Restaurant.created_at.asc()).limit(limit).offset(offset)
     )
     return list(result.scalars().all()), total or 0
-
-
-def default_commission_rate() -> float:
-    """The commission a restaurant is created on, as a fraction.
-
-    Both creation paths (the registration fast path and application approval)
-    call this rather than letting the column default to 0. A restaurant that
-    exists at 0% is not a pricing decision anyone made, and because each order
-    snapshots `commission_amount`, every order it takes before someone notices
-    is permanently un-billable.
-    """
-    return settings.DEFAULT_COMMISSION_BASIS_POINTS / 10_000
 
 
 async def set_commission_rate(db: AsyncSession, restaurant_id, rate: Decimal) -> Restaurant:

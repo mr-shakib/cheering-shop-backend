@@ -1,7 +1,7 @@
 """Rider profile and the decimated GPS trail (decision D2)."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     REAL,
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -21,10 +22,10 @@ from sqlalchemy import (
     String,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, GeoPoint, TimestampMixin
+from app.models.base import Base, CreatedAtMixin, GeoPoint, Money, TimestampMixin, UUIDPrimaryKey
 from app.models.enums import UserRoleType
 
 
@@ -47,6 +48,12 @@ class RiderProfile(Base, TimestampMixin):
     )
     vehicle_type: Mapped[str | None] = mapped_column(String(40))
     license_number: Mapped[str | None] = mapped_column(String(60))
+    # [EXTENDED] The Rider Details screen (migration 0010), copied from the
+    # rider application on approval or set by an administrator.
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
+    national_id: Mapped[str | None] = mapped_column(String(50))
+    documents: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+    payout: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
     is_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
@@ -123,4 +130,28 @@ class RiderLocationPing(Base):
         # gigabytes.
         Index("ix_rider_pings_time", "recorded_at", postgresql_using="brin"),
         {"postgresql_partition_by": "RANGE (recorded_at)"},
+    )
+
+
+class RiderIncentive(Base, UUIDPrimaryKey, CreatedAtMixin):
+    """[EXTENDED] A bonus an administrator grants a rider — the Incentives
+    column. Part of the rider's balance like delivery pay and tips."""
+
+    __tablename__ = "rider_incentives"
+
+    rider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rider_profiles.user_id", ondelete="CASCADE", name="fk_rider_incentives_rider"),
+        nullable=False,
+    )
+    amount: Mapped[int] = mapped_column(Money, nullable=False)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_rider_incentives_created_by"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_rider_incentives_amount"),
+        Index("ix_rider_incentives_rider", "rider_id", text("created_at DESC")),
     )

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -81,7 +82,20 @@ class Category(Base, UUIDPrimaryKey, TimestampMixin):
         back_populates="platform_category", lazy="raise", passive_deletes=True
     )
 
+    # [EXTENDED] Migration 0009. NULL = not set at this level; a product's own
+    # rate beats it, and it beats the restaurant's.
+    commission_rate: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    # The admin console's Restaurant / Store tabs.
+    kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'RESTAURANT'")
+    )
+
     __table_args__ = (
         UniqueConstraint("slug", name="uq_categories_slug"),
         CheckConstraint("slug <> ''", name="ck_categories_slug"),
+        CheckConstraint(
+            "commission_rate IS NULL OR commission_rate BETWEEN 0 AND 1",
+            name="ck_categories_commission",
+        ),
+        CheckConstraint("kind IN ('RESTAURANT', 'STORE')", name="ck_categories_kind"),
     )

@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -55,6 +56,10 @@ class PromoCode(Base, UUIDPrimaryKey, CreatedAtMixin):
     )
     times_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # [EXTENDED] Advertisement screen counters (migration 0010), bumped by the
+    # apps through POST /promotions/events.
+    impressions: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    clicks: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
 
     __table_args__ = (
         CheckConstraint("valid_until > valid_from", name="ck_promo_window"),

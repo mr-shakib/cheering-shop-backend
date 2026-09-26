@@ -274,6 +274,9 @@ async def reject_order(
     order.auto_decline_at = None
     if str(order.payment_status) == "PAID":
         order.payment_status = "REFUNDED"
+        order.refunded_at = now
+        order.refunded_by = actor.id
+        order.refund_reason = reason or "Rejected by the restaurant"
     await db.flush()
 
     log.info(

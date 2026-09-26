@@ -131,6 +131,12 @@ what it cost. A vendor's price change shows up before the customer commits, and
 `is_available: false` on a line means the vendor turned it off — grey it and
 block checkout until it is removed.
 
+**Hidden and featured dishes.** A dish the platform has hidden does not appear
+anywhere: not in the menu, search, category lists or cart. A cart line for one
+simply drops out, the same way a deleted dish does. Menu items carry
+`is_featured: true` when the platform is promoting them; show a badge if the
+design has one.
+
 ---
 
 ## 4. Checkout and placing the order
