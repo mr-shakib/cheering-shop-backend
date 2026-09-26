@@ -141,3 +141,23 @@ async def vendor_live(websocket: WebSocket, token: str | None = Query(default=No
         await _pump(websocket, realtime.vendor_channel(str(restaurant_id)))
     except WebSocketDisconnect:
         return
+
+
+@router.websocket("/rider/offers")
+async def rider_offers(websocket: WebSocket, token: str | None = Query(default=None)):
+    """[EXTENDED] Delivery offers for riders, as they happen.
+
+    Frames: `offer.new` (a restaurant accepted an order — show it),
+    `offer.ready` (the food is ready and it still has no rider) and
+    `offer.taken` (someone accepted it — remove the card). Fetch the full
+    list with `GET /rider/offers` when the socket opens. Riders only.
+    """
+    payload = await _authenticate(websocket, token)
+    if payload.get("role") != "RIDER":
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Riders only")
+        return
+    await websocket.accept()
+    try:
+        await _pump(websocket, realtime.rider_offers_channel())
+    except WebSocketDisconnect:
+        return

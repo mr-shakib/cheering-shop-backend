@@ -114,6 +114,7 @@ async def list_orders(
     customer_id: str | None = None,
     restaurant_id: str | None = None,
     rider_id: str | None = None,
+    awaiting_rider: bool = False,
 ) -> tuple[list[AdminOrderRow], int]:
     """Newest first. Every filter is optional and they combine with AND.
 
@@ -146,6 +147,12 @@ async def list_orders(
         parsed = parse_uuid(raw, what)
         if parsed:
             conditions.append(column == parsed)
+    if awaiting_rider:
+        # Accepted by the kitchen, not yet taken by any rider: still on offer.
+        conditions += [
+            Order.rider_id.is_(None),
+            Order.status.in_([OrderStatus.PREPARING.value, OrderStatus.READY.value]),
+        ]
     if q and q.strip():
         pattern = like_pattern(q.strip())
         matches: list[ColumnElement[bool]] = [

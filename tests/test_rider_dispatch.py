@@ -1,4 +1,5 @@
-"""Rider dispatch, the roster behind it, and the PIN reissue it unblocks.
+"""Rider dispatch — offers every available rider can accept, the operator
+override, the roster behind them — and the PIN reissue they unblock.
 
 Before this module existed nothing wrote ``orders.rider_id``, which made spec
 #42 — ``POST /vendor/orders/{id}/handoff`` — unreachable on every real order:
@@ -33,65 +34,165 @@ async def _rider_id_of(order_id) -> uuid.UUID | None:
         return await session.scalar(select(Order.rider_id).where(Order.id == order_id))
 
 
+def _as_rider(rider) -> dict:
+    from app.core.security import create_access_token
+
+    return {"Authorization": f"Bearer {create_access_token(str(rider.id), 'RIDER')}"}
+
+
+async def _take(client, rider, order_id):
+    return await client.post(f"{V1}/rider/offers/{order_id}/accept", headers=_as_rider(rider))
+
+
 # ---------------------------------------------------------------------------
-# Automatic assignment
+# Offers — every available rider is asked, the first to accept wins
 # ---------------------------------------------------------------------------
 
 
-async def test_accepting_an_order_dispatches_a_rider(client, vendor, order_customer, riders):
-    """Assignment happens during the cooking window, not at handoff — a rider
-    needs that time to reach the restaurant."""
+async def test_accepting_an_order_offers_it_to_every_available_rider(
+    client, vendor, order_customer, riders
+):
+    """Nobody is chosen for the rider: the order waits for one to take it."""
+    one, two = await riders(name="One"), await riders(name="Two")
+    off_shift = await riders(is_online=False, name="Off shift")
+    not_cleared = await riders(is_verified=False, name="Not cleared")
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+
+    r = await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    assert await _rider_id_of(order.id) is None
+
+    for rider in (one, two):
+        r = await client.get(f"{V1}/rider/offers", headers=_as_rider(rider))
+        assert r.status_code == 200, r.text
+        offer = next(o for o in r.json()["data"] if o["order_id"] == str(order.id))
+        assert offer["can_accept"] is True
+        assert offer["trip_distance_km"] > 0
+    for rider in (off_shift, not_cleared):
+        r = await client.get(f"{V1}/rider/offers", headers=_as_rider(rider))
+        assert r.status_code == 409, r.text
+
+
+async def test_the_first_rider_to_accept_gets_the_order(client, vendor, order_customer, riders):
+    fast, slow = await riders(name="Fast"), await riders(name="Slow")
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+    await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+
+    r = await _take(client, fast, order.id)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["order_id"] == str(order.id)
+    assert await _rider_id_of(order.id) == fast.id
+
+    r = await _take(client, slow, order.id)
+    assert r.status_code == 409, r.text
+    assert "no longer available" in r.json()["error"]["message"]
+    offers = (await client.get(f"{V1}/rider/offers", headers=_as_rider(slow))).json()["data"]
+    assert str(order.id) not in {o["order_id"] for o in offers}
+
+
+async def test_simultaneous_accepts_produce_exactly_one_winner(
+    client, vendor, order_customer, riders
+):
+    import asyncio
+
+    crowd = [await riders(name=f"Rider {i}") for i in range(5)]
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+    await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+
+    results = await asyncio.gather(*(_take(client, r, order.id) for r in crowd))
+    codes = sorted(r.status_code for r in results)
+    assert codes == [200, 409, 409, 409, 409]
+    winner = crowd[[r.status_code for r in results].index(200)]
+    assert await _rider_id_of(order.id) == winner.id
+
+
+async def test_offers_are_announced_and_withdrawn_on_the_rider_channel(
+    client, vendor, order_customer, riders
+):
+    import json
+
+    from app.core.redis import get_redis
+    from app.services import realtime
+
     rider = await riders()
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
 
-    r = await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
-    assert r.status_code == 200, r.text
-    assert await _rider_id_of(order.id) == rider.id
+    pubsub = get_redis().pubsub()
+    await pubsub.subscribe(realtime.rider_offers_channel())
+    await pubsub.get_message(timeout=1)  # subscribe confirmation
+    try:
+        await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+        await _take(client, rider, order.id)
+        frames = []
+        for _ in range(10):
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
+            if message:
+                frame = json.loads(message["data"])
+                if frame["order_id"] == str(order.id):
+                    frames.append(frame["type"])
+            if len(frames) == 2:
+                break
+    finally:
+        await pubsub.unsubscribe()
+        await pubsub.aclose()
+    assert frames == ["offer.new", "offer.taken"]
 
 
-async def test_an_empty_rider_pool_does_not_block_the_kitchen(
-    client, vendor, order_customer, riders
-):
-    """Nobody on shift is the platform's problem, not the vendor's: accept still
-    succeeds, and `ready` tries again."""
-    await riders(is_online=False)
-    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+async def test_a_rider_at_capacity_cannot_accept_more(client, vendor, order_customer, riders):
+    from app.core.config import settings
 
-    r = await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
-    assert r.status_code == 200, r.text
-    assert await _rider_id_of(order.id) is None
-
-    # A rider comes on shift while the food cooks; READY picks them up.
-    late = await riders()
-    r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
-    assert r.status_code == 200, r.text
-    assert await _rider_id_of(order.id) == late.id
-
-
-async def test_only_online_verified_riders_are_dispatched(
-    client, vendor, order_customer, riders
-):
-    await riders(is_online=False, is_verified=True, name="Off shift")
-    await riders(is_online=True, is_verified=False, name="Not cleared")
-    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
-
-    await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
-    assert await _rider_id_of(order.id) is None
-
-
-async def test_dispatch_picks_the_least_loaded_rider(client, vendor, order_customer, riders):
-    """Load balancing, not geography — decision D2 forbids reading the stale
-    last-known position columns."""
     busy = await riders(name="Busy")
-    idle = await riders(name="Idle")
-    for _ in range(2):
+    for _ in range(settings.MAX_CONCURRENT_JOBS):
         await _seed_order(
             vendor.restaurant.id, order_customer.id, status="PREPARING", rider_id=busy.id
         )
-
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
     await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
-    assert await _rider_id_of(order.id) == idle.id
+
+    offers = (await client.get(f"{V1}/rider/offers", headers=_as_rider(busy))).json()["data"]
+    assert next(o for o in offers if o["order_id"] == str(order.id))["can_accept"] is False
+    r = await _take(client, busy, order.id)
+    assert r.status_code == 409, r.text
+
+
+async def test_an_unclaimed_order_stays_on_offer_and_blocks_only_the_handoff(
+    client, vendor, order_customer, riders
+):
+    """Nobody on shift is the platform's problem, not the vendor's: accept and
+    ready both succeed; only the handoff has to wait for a rider."""
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+    await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+    r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    pin = r.json()["data"]["handoff_code"]
+
+    r = await client.post(
+        f"{V1}/vendor/orders/{order.id}/handoff", json={"rider_pin": pin}, headers=vendor.headers
+    )
+    assert r.status_code == 409, r.text
+
+    # A rider comes on shift, sees it still on offer, and takes it.
+    late = await riders(name="Late")
+    offers = (await client.get(f"{V1}/rider/offers", headers=_as_rider(late))).json()["data"]
+    assert str(order.id) in {o["order_id"] for o in offers}
+    assert (await _take(client, late, order.id)).status_code == 200
+    r = await client.post(
+        f"{V1}/vendor/orders/{order.id}/handoff", json={"rider_pin": pin}, headers=vendor.headers
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_a_rejected_order_is_withdrawn(client, vendor, order_customer, riders):
+    rider = await riders()
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
+    await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+    await client.post(
+        f"{V1}/vendor/orders/{order.id}/reject",
+        json={"reason": "Out of stock"},
+        headers=vendor.headers,
+    )
+    r = await _take(client, rider, order.id)
+    assert r.status_code == 409, r.text
 
 
 # ---------------------------------------------------------------------------
@@ -104,11 +205,12 @@ async def test_the_whole_handoff_runs_without_touching_sql(
 ):
     """The regression this module exists to prevent: PENDING to PICKED_UP over
     the API alone."""
-    await riders()
+    rider = await riders()
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
 
     r = await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
     assert r.status_code == 200, r.text
+    assert (await _take(client, rider, order.id)).status_code == 200
 
     r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
     assert r.status_code == 200, r.text
@@ -133,9 +235,10 @@ async def test_a_locked_pin_is_reissued_by_marking_ready_again(
     impossible: READY has no self-edge, so `_transition` refused."""
     from app.core.config import settings
 
-    await riders()
+    rider = await riders()
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
     await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+    await _take(client, rider, order.id)
     r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
     first_pin = r.json()["data"]["handoff_code"]
     wrong = "0000" if first_pin != "0000" else "1111"
@@ -274,6 +377,7 @@ async def test_operator_override_reassigns_an_order(
     first = await riders(name="First choice")
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
     await client.post(f"{V1}/vendor/orders/{order.id}/accept", headers=vendor.headers)
+    await _take(client, first, order.id)
     assert await _rider_id_of(order.id) == first.id
 
     replacement = await riders(name="Replacement")

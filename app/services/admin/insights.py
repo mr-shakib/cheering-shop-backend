@@ -116,6 +116,14 @@ async def dashboard(db: AsyncSession, recent_n: int = 8) -> AdminDashboard:
         )
     ).all()
     live = {str(k): int(v) for k, v in live_rows}
+    awaiting_rider = await db.scalar(
+        select(func.count())
+        .select_from(Order)
+        .where(
+            Order.rider_id.is_(None),
+            Order.status.in_([OrderStatus.PREPARING.value, OrderStatus.READY.value]),
+        )
+    )
     cancelled_today = await db.scalar(
         select(func.count())
         .select_from(Order)
@@ -178,6 +186,7 @@ async def dashboard(db: AsyncSession, recent_n: int = 8) -> AdminDashboard:
             preparing=live.get(OrderStatus.PREPARING.value, 0)
             + live.get(OrderStatus.READY.value, 0),
             on_delivery=live.get(OrderStatus.PICKED_UP.value, 0),
+            awaiting_rider=int(awaiting_rider or 0),
             cancelled_today=int(cancelled_today or 0),
             avg_delivery_minutes=round(float(avg_seconds) / 60) if avg_seconds else None,
         ),

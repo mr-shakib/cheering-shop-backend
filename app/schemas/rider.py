@@ -179,3 +179,20 @@ class RiderPayoutOut(BaseModel):
     failure_reason: str | None = None
     requested_at: datetime
     processed_at: datetime | None = None
+
+
+class RiderOffer(RiderJobSummary):
+    """An order the restaurant has accepted that no rider has taken yet.
+
+    Sent to every available rider at once; the first to accept gets it.
+    """
+
+    earning: Decimal = Field(description="What delivering it pays you: delivery fee + tip")
+    distance_to_restaurant_km: float | None = Field(
+        default=None, description="From your live position; null if we have none"
+    )
+    trip_distance_km: float = Field(description="Restaurant to the customer")
+    offered_at: datetime = Field(description="When the restaurant accepted it")
+    can_accept: bool = Field(
+        description="False while you already carry the maximum number of orders"
+    )

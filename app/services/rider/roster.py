@@ -196,8 +196,8 @@ async def set_shift(db: AsyncSession, rider: User, is_online: bool) -> ShiftStat
         is_online=is_online,
         orders_in_flight=in_flight,
         message=(
-            "You are on shift and can be assigned orders"
+            "You are on shift and will be offered orders"
             if is_online
-            else "You are off shift. Orders already assigned to you stay yours."
+            else "You are off shift. Orders you already accepted stay yours."
         ),
     )

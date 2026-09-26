@@ -56,8 +56,8 @@ courier account is not something to hand back on the strength of an inbox.
 
 ## 2. Going on shift
 
-Dispatch only ever assigns orders to riders who are **online and verified**.
-Clocking on is what puts you in that pool:
+Only riders who are **online and verified** are offered orders. Clocking on is
+what puts you in that pool:
 
 ```http
 PATCH /rider/me/shift
@@ -71,16 +71,65 @@ PATCH /rider/me/shift
     "rider_id": "…",
     "is_online": true,
     "orders_in_flight": 0,
-    "message": "You are on shift and can be assigned orders"
+    "message": "You are on shift and will be offered orders"
   }
 }
 ```
 
-Clocking off stops new assignments. It does **not** release orders you are
+Clocking off stops new offers. It does **not** release orders you are
 already carrying — those are in a bag on your motorcycle, and a flag in a
 database does not bring them back. Finish them.
 
 `is_verified` is not yours to set; an administrator clears you to carry food.
+
+---
+
+## 2a. Delivery offers — first to accept gets it
+
+Orders are not assigned to you. When a restaurant accepts an order, it is
+offered to **every** rider on shift at the same moment, and the **first rider
+to accept it carries it**.
+
+**Hear about offers.** Open a WebSocket while you are on shift:
+
+```
+wss://…/api/v1/ws/rider/offers?token=<access token>
+```
+
+| Frame `type` | Meaning |
+|---|---|
+| `offer.new` | A restaurant accepted an order. Carries `order_id`, `order_number`, `restaurant_name`, the restaurant's coordinates and `earning`. |
+| `offer.ready` | The food is ready and nobody has taken it yet. |
+| `offer.taken` | Someone accepted it (`rider_id`). Remove the card. |
+
+Every rider on shift also gets a push notification ("New delivery request")
+if their device is registered with `POST /users/me/devices`, so the app can
+be in the background.
+
+**See what is waiting.** `GET /rider/offers` lists every open offer. Call it
+when the socket opens and after a reconnect. Each offer has the job card's
+fields (both addresses and coordinates, item count, `collect_on_delivery`)
+plus:
+
+| Field | Meaning |
+|---|---|
+| `earning` | What delivering it pays you: its delivery fee + tip |
+| `distance_to_restaurant_km` | From your live position; null if you are not reporting one |
+| `trip_distance_km` | Restaurant to the customer |
+| `offered_at` | When the restaurant accepted it |
+| `can_accept` | False while you already carry the maximum number of orders |
+
+Offers are sorted nearest first when you report your location, otherwise the
+longest-waiting first. Off shift or not yet cleared, this is `409`.
+
+**Take one.** `POST /rider/offers/{order_id}/accept`. If you are first, it is
+yours: the response is the job, and it appears in `GET /rider/orders`. If
+another rider was faster, or the order was cancelled, it is `409` "This order
+is no longer available". You can carry at most 3 orders at once; beyond that
+accepting is `409` too.
+
+There is no decline: an offer you do not want, you simply leave. If nobody
+takes an order, an operator assigns one by hand.
 
 ---
 
@@ -186,6 +235,8 @@ same event as one you confirmed at the door.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| GET | `/rider/offers` | rider | Orders waiting for a rider |
+| POST | `/rider/offers/{id}/accept` | rider | Take an order — first to accept wins |
 | GET | `/rider/earnings` | rider | My earnings and withdrawable balance |
 | GET | `/rider/earnings/days` | rider | Earnings per day |
 | GET | `/rider/payouts` | rider | My withdrawals |
@@ -200,7 +251,7 @@ same event as one you confirmed at the door.
 | POST | `/rider/location` | rider | Report a live position |
 | POST | `/admin/orders/{id}/deliver` | admin | Confirm a delivery the rider could not |
 
-Enrolment and dispatch are administrator endpoints, documented in
+Enrolment and manual assignment are administrator endpoints, documented in
 [VENDOR-API.md](VENDOR-API.md): `POST /admin/riders`, `GET /admin/riders`,
 `PATCH /admin/riders/{id}`, `POST /admin/orders/{id}/assign-rider`.
 
@@ -272,18 +323,10 @@ immediately and shows as `PROCESSING` until the finance team sends it
 
 ## 7. Known limitations
 
-1. **No rider earnings screen.** Deliveries are counted (`total_deliveries`) but
-   what a rider is paid is not modelled at all — there is no per-delivery fee,
-   no rider payout table, and no endpoint. Vendor payouts exist; rider payouts
-   do not.
-2. **You cannot decline a job.** Dispatch assigns and that is the assignment.
-   Refusing, returning an order to the pool, and the penalties real platforms
-   attach to both are not modelled. An operator reassigns with
+1. **You cannot hand an order back.** Once you accept, the order is yours.
+   Returning it to the pool is not modelled; an operator reassigns with
    `POST /admin/orders/{id}/assign-rider`.
-3. **No push for new jobs.** `WS /ws/orders/{id}/live-tracking` streams one
-   order you already have; there is no channel that tells you a job was
-   assigned. Poll `GET /rider/orders` for that.
-4. **No proof-of-delivery capture.** No photo, no signature, no drop-off note —
+2. **No proof-of-delivery capture.** No photo, no signature, no drop-off note —
    the delivery is the rider's word plus a timestamp.
 
 ---

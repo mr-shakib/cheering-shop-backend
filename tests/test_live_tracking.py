@@ -49,7 +49,9 @@ def _headers(rider):
     return {"Authorization": f"Bearer {create_access_token(str(rider.id), 'RIDER')}"}
 
 
-async def _place_and_accept(client, kitchen, shopper) -> str:
+async def _place_and_accept(client, kitchen, shopper, rider=None) -> str:
+    """Place an order and have the kitchen accept it. With `rider`, that rider
+    then accepts the delivery offer and carries it."""
     await _add_burger(client, kitchen, shopper, quantity=1)
     r = await client.post(
         f"{V1}/orders",
@@ -58,6 +60,11 @@ async def _place_and_accept(client, kitchen, shopper) -> str:
     )
     order_id = r.json()["data"]["id"]
     await client.post(f"{V1}/vendor/orders/{order_id}/accept", headers=kitchen.headers)
+    if rider is not None:
+        taken = await client.post(
+            f"{V1}/rider/offers/{order_id}/accept", headers=_headers(rider)
+        )
+        assert taken.status_code == 200, taken.text
     return order_id
 
 
@@ -149,7 +156,7 @@ async def test_tracking_shows_the_position_only_while_the_order_is_in_flight(
     """Before READY the rider is not yet going anywhere on this order; after
     DELIVERED where they drive next is nobody's business."""
     rider = await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
     await client.post(
         f"{V1}/rider/location",
         json={"latitude": NEARBY[0], "longitude": NEARBY[1]},
@@ -190,7 +197,7 @@ async def test_a_rider_who_has_gone_quiet_reports_no_position_at_all(
     from app.core.redis import RIDER_GEO_KEY, get_redis
 
     rider = await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
     await client.post(
         f"{V1}/rider/location",
         json={"latitude": NEARBY[0], "longitude": NEARBY[1]},
@@ -218,7 +225,7 @@ async def test_a_ping_reaches_the_order_channel(client, kitchen, shopper, riders
     from app.services import realtime
 
     rider = await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
     await client.post(f"{V1}/vendor/orders/{order_id}/ready", headers=kitchen.headers)
 
     pubsub = get_redis().pubsub()
@@ -260,7 +267,7 @@ async def test_the_tracking_channel_admits_the_customer_and_the_rider_only(
     from app.services.rider import tracking
 
     rider = await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
 
     async with SessionLocal() as db:
         order_uuid = uuid.UUID(order_id)
@@ -278,8 +285,20 @@ async def test_the_tracking_channel_admits_the_customer_and_the_rider_only(
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_prefers_the_nearest_rider_with_a_live_position(
-    client, kitchen, shopper, riders
+async def _operator_pick(client, admin_token, order_id) -> uuid.UUID:
+    """POST /admin/orders/{id}/assign-rider without a rider_id: the platform
+    picks, which is what an operator does when nobody accepted the offer."""
+    r = await client.post(
+        f"{V1}/admin/orders/{order_id}/assign-rider",
+        json={},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r.status_code == 200, r.text
+    return uuid.UUID(r.json()["data"]["rider"]["id"])
+
+
+async def test_operator_pick_prefers_the_nearest_rider_with_a_live_position(
+    client, kitchen, shopper, riders, admin_token
 ):
     """D2 put nearest-rider matching in Redis GEOSEARCH. This is it working."""
     far = await riders(name="Far away")
@@ -296,37 +315,19 @@ async def test_dispatch_prefers_the_nearest_rider_with_a_live_position(
     )
 
     order_id = await _place_and_accept(client, kitchen, shopper)
-
-    from sqlalchemy import select
-
-    from app.core.database import SessionLocal
-    from app.models.order import Order
-
-    async with SessionLocal() as session:
-        assigned = await session.scalar(
-            select(Order.rider_id).where(Order.id == uuid.UUID(order_id))
-        )
-    assert assigned == near.id, "the nearest live rider should have been chosen"
+    assert await _operator_pick(client, admin_token, order_id) == near.id, (
+        "the nearest live rider should have been chosen"
+    )
 
 
-async def test_dispatch_falls_back_to_load_when_nobody_has_reported_a_position(
-    client, kitchen, shopper, riders
+async def test_operator_pick_falls_back_to_load_when_nobody_has_reported_a_position(
+    client, kitchen, shopper, riders, admin_token
 ):
     """Not a degraded mode: a fleet that has not shipped location reporting, or
     a rider whose phone lost GPS in a basement, still gets work."""
-    from sqlalchemy import select
-
-    from app.core.database import SessionLocal
-    from app.models.order import Order
-
     only = await riders(name="No GPS")
     order_id = await _place_and_accept(client, kitchen, shopper)
-
-    async with SessionLocal() as session:
-        assigned = await session.scalar(
-            select(Order.rider_id).where(Order.id == uuid.UUID(order_id))
-        )
-    assert assigned == only.id
+    assert await _operator_pick(client, admin_token, order_id) == only.id
 
 
 async def test_the_socket_snapshot_draws_the_map_before_the_first_ping(
@@ -339,7 +340,7 @@ async def test_the_socket_snapshot_draws_the_map_before_the_first_ping(
     from app.services.rider import tracking
 
     rider = await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
     await client.post(f"{V1}/vendor/orders/{order_id}/ready", headers=kitchen.headers)
     await client.post(
         f"{V1}/rider/location",
@@ -366,8 +367,8 @@ async def test_the_snapshot_is_honest_when_nobody_has_pinged(client, kitchen, sh
     from app.models.order import Order
     from app.services.rider import tracking
 
-    await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    rider = await riders()
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
     await client.post(f"{V1}/vendor/orders/{order_id}/ready", headers=kitchen.headers)
 
     async with SessionLocal() as db:
@@ -387,8 +388,8 @@ async def test_a_lifecycle_change_reaches_both_the_vendor_and_the_customer(
     from app.core.redis import get_redis
     from app.services import realtime
 
-    await riders()
-    order_id = await _place_and_accept(client, kitchen, shopper)
+    rider = await riders()
+    order_id = await _place_and_accept(client, kitchen, shopper, rider)
 
     pubsub = get_redis().pubsub()
     await pubsub.subscribe(

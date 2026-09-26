@@ -38,6 +38,9 @@ async def list_orders(
     customer_id: Annotated[str | None, Query(description="One customer's orders")] = None,
     restaurant_id: Annotated[str | None, Query(description="One vendor's orders")] = None,
     rider_id: Annotated[str | None, Query(description="One rider's orders")] = None,
+    awaiting_rider: Annotated[
+        bool, Query(description="Only accepted orders no rider has taken yet")
+    ] = False,
     format: Annotated[
         Literal["json", "csv"], Query(description=f"csv downloads up to {EXPORT_MAX_ROWS} rows")
     ] = "json",
@@ -58,6 +61,7 @@ async def list_orders(
         customer_id=customer_id,
         restaurant_id=restaurant_id,
         rider_id=rider_id,
+        awaiting_rider=awaiting_rider,
     )
     if csv:
         return csv_response(rows, "orders.csv")

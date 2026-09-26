@@ -10,7 +10,7 @@ Signing up as a vendor is covered in [AUTH-API.md](AUTH-API.md) §11. Everything
 in this document assumes you already hold a `VENDOR` access token.
 
 Everything below is implemented and covered by tests. The customer ordering
-flow that fills your queue is live, riders are dispatched automatically, and an
+flow that fills your queue is live, riders are found for every order, and an
 order now runs all the way to DELIVERED. What is still missing is real-time
 push and the rider-side display of the handoff code — see
 [Known limitations](#known-limitations).
@@ -593,11 +593,12 @@ READY, `ready_at` keeps its original value, and no status-history row is
 written, because nothing changed status. Expect a new `handoff_code` in the
 response and show that one.
 
-**Who the rider is.** You do not choose. A rider is assigned automatically when
-you accept the order — during the cooking window, so they have time to reach
-you — and again at `ready` if nobody was on shift the first time. There is no
-vendor endpoint to pick or change a rider; an operator does that from the admin
-side when something goes wrong.
+**Who the rider is.** You do not choose. When you accept an order it is offered
+to every rider on shift, during the cooking window so they have time to reach
+you, and the first rider to accept it carries it. If nobody has taken it when
+you mark it `ready`, riders are reminded. The handoff needs a rider (`409`
+until one accepts). There is no vendor endpoint to pick or change a rider; an
+operator does that from the admin side when something goes wrong.
 
 > Displaying the code to the vendor is a deliberate interim posture: with no
 > rider app shipped yet, nothing else could receive it. When the rider app

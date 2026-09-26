@@ -200,7 +200,8 @@ PREPARING, READY or PICKED_UP in one filter.
 `GET /orders/{id}/tracking` bootstraps the map: status, the timeline that draws
 the dots on Ride Assign, both endpoints of the journey, and `eta_minutes`.
 
-`rider` names who is bringing it once dispatch has assigned someone — name,
+`rider` names who is bringing it once a rider has accepted the order (an
+`order.rider_assigned` frame on the tracking socket says when) — name,
 photo, rating and vehicle, never a phone number (`POST /orders/{id}/call`
 bridges the two of you without either side learning the other's).
 

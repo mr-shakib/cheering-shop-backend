@@ -43,7 +43,6 @@ from app.schemas.vendor import (
     VendorOrderItemOut,
     VendorOrderSummary,
 )
-from app.services.rider import dispatch
 
 log = structlog.get_logger()
 
@@ -226,12 +225,9 @@ async def accept_order(
     order.auto_decline_at = None
     await db.flush()
 
-    # Dispatch here, not at READY: a rider needs the cooking window to travel to
-    # the restaurant, which is the whole point of assigning before the food is
-    # done. Best effort — see `dispatch.auto_assign` for why an empty rider pool
-    # must not fail a vendor's accept.
-    await dispatch.auto_assign(db, order)
-
+    # No rider is chosen here. The endpoint offers the order to every
+    # available rider once this commits (services.rider.offers), during the
+    # cooking window so whoever accepts has time to reach the restaurant.
     log.info("order_accepted", order_id=str(order.id), restaurant_id=str(restaurant.id))
     return to_summary(order)
 
@@ -324,9 +320,8 @@ async def mark_ready(
     if not reissue:
         await _transition(db, order, OrderStatus.READY, actor)
         order.ready_at = datetime.now(UTC)
-        # A rider may still be missing if nobody was on shift when the kitchen
-        # accepted. Last chance to find one before the handoff has to refuse.
-        await dispatch.auto_assign(db, order)
+        # If no rider has accepted yet, the endpoint re-offers the order to
+        # every available rider once this commits.
 
     pin = generate_rider_pin()
     order.rider_pin_hash = hash_rider_pin(pin, str(order.id))
@@ -375,7 +370,7 @@ async def handoff_order(
         # turns a constraint violation into an explanation.
         raise ConflictError(
             "No rider has been assigned to this order yet",
-            details=["A handoff needs an assigned rider; wait for dispatch"],
+            details=["A handoff needs a rider; wait for one to accept the order"],
         )
     if order.handoff_attempts >= settings.HANDOFF_MAX_ATTEMPTS:
         raise ConflictError(

@@ -33,6 +33,11 @@ def order_channel(order_id: str) -> str:
     return f"order:{order_id}:track"
 
 
+def rider_offers_channel() -> str:
+    """One channel for every rider on shift: new offers, and offers taken."""
+    return "riders:offers"
+
+
 async def publish(channel: str, payload: dict[str, Any]) -> bool:
     """Fire a message at a channel. Never raises.
 
@@ -103,6 +108,7 @@ __all__ = [
     "order_channel",
     "publish",
     "publish_order_status",
+    "rider_offers_channel",
     "subscribe",
     "vendor_channel",
 ]

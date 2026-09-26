@@ -30,6 +30,9 @@ class LiveOrderCounts(BaseModel):
     new: int = Field(description="PENDING")
     preparing: int = Field(description="PREPARING and READY")
     on_delivery: int = Field(description="PICKED_UP")
+    awaiting_rider: int = Field(
+        description="Accepted by the kitchen, not yet taken by any rider — still on offer"
+    )
     cancelled_today: int
     avg_delivery_minutes: int | None = Field(
         description="Placed → delivered, over orders delivered today; null if none"

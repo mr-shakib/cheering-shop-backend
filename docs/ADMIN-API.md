@@ -79,7 +79,7 @@ The first admin account is created on the server with
 - `pending_approvals`: `{total, vendors, riders}`. `vendors` matches the count
   in `GET /admin/restaurants/pending`; `riders` is the rider applications
   waiting for review.
-- `live_orders`: `{new, preparing, on_delivery, cancelled_today, avg_delivery_minutes}`.
+- `live_orders`: `{new, preparing, on_delivery, awaiting_rider, cancelled_today, avg_delivery_minutes}`.
 - `support_tickets`: `{open, urgent}` — open counts OPEN and PENDING tickets.
 - `recent_orders`: the latest eight, in the same shape as an Orders row.
 
@@ -98,6 +98,13 @@ bucket is present and zero-filled, and each point carries a ready-made axis
 | `date_from`, `date_to` | Placed on or between these days |
 | `q` | Order number (`ORD-48210`, `#48210` or `48210`), customer name or phone, vendor name |
 | `customer_id`, `restaurant_id`, `rider_id` | One party's orders. Every profile's Order tab uses this. |
+| `awaiting_rider` | `true`: accepted orders no rider has taken yet |
+
+**Riders are not assigned automatically.** When a restaurant accepts an order
+it is offered to every rider on shift, and the first to accept carries it. An
+order nobody has taken yet shows `rider_id: null`; list them with
+`awaiting_rider=true`, and the dashboard counts them in
+`live_orders.awaiting_rider`. **Assign rider** is the override for those.
 
 Statuses are `PENDING`, `PREPARING`, `READY`, `PICKED_UP`, `DELIVERED` and
 `CANCELLED`. There is no `ACCEPTED`: when a vendor accepts an order it moves
@@ -113,7 +120,7 @@ Use `actions` to decide which drawer buttons are enabled:
 
 | Button | Enabled when | Call |
 |---|---|---|
-| Assign rider | `actions.can_assign_rider` | `POST /admin/orders/{id}/assign-rider` `{"rider_id"}`. Omit `rider_id` to let dispatch choose. |
+| Assign rider | `actions.can_assign_rider` | `POST /admin/orders/{id}/assign-rider` `{"rider_id"}`. Omit `rider_id` to let the platform pick (nearest, else least busy). |
 | Cancel order | `actions.can_cancel` | `POST /admin/orders/{id}/cancel` `{"reason"}` |
 | Refund order | `actions.can_refund` | `POST /admin/orders/{id}/refund` `{"reason"}` |
 | Call Customer | always | Dial `customer.delivery_contact_phone` (the number on this order), falling back to `customer.phone` |

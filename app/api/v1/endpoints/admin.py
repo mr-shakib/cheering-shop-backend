@@ -40,6 +40,7 @@ from app.services import (
     dispatch_service,
     realtime,
     rider_jobs_service,
+    rider_offer_service,
     rider_roster_service,
     vendor_application_service,
     vendor_finance_service,
@@ -460,13 +461,13 @@ async def update_rider(
 async def assign_rider(
     order_id: uuid.UUID, body: AssignRiderRequest, admin: AdminUser, db: DbSession
 ):
-    """The operator override on dispatch — foodpanda's control-centre reassign.
+    """The operator override — foodpanda's control-centre reassign.
 
-    Orders are assigned automatically when a vendor accepts them, and again at
-    READY if the pool was empty the first time. This is what an operator uses
-    when the automatic choice is wrong: a rider whose bike broke down, a
-    no-show, a manual rebalance. Omit `rider_id` to ask dispatch to pick again
-    instead of naming someone.
+    An accepted order is offered to every available rider and the first to
+    accept carries it. This is what an operator uses when that does not work
+    out: nobody accepted in time, a rider's bike broke down, a no-show. Omit
+    `rider_id` to let the platform pick (nearest, else least busy) instead of
+    naming someone.
 
     The vendor API deliberately has no equivalent. A vendor choosing their own
     rider is not how any delivery platform works, and adding it later would be
@@ -474,6 +475,8 @@ async def assign_rider(
     """
     order, rider = await dispatch_service.assign_to_order(db, order_id, body.rider_id)
     await db.commit()
+    # If it was still on offer, take it off every rider's screen.
+    await rider_offer_service.announce_taken(order.id, rider.id)
 
     user, profile = await rider_roster_service.get_rider(db, rider.id)
     in_flight = await dispatch_service.count_in_flight(db, rider.id)

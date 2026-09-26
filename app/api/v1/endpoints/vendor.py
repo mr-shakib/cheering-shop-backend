@@ -53,6 +53,7 @@ from app.schemas.requests import (
 from app.services import (
     menu_service,
     realtime,
+    rider_offer_service,
     vendor_finance_service,
     vendor_insights_service,
     vendor_order_service,
@@ -497,6 +498,8 @@ async def accept_order(
     summary = await vendor_order_service.accept_order(db, restaurant, order_id, user)
     await db.commit()
     await _announce(summary, restaurant)
+    # Offer it to every available rider; the first to accept carries it.
+    await rider_offer_service.announce(db, order_id, reason="new")
     return ok(summary.model_dump())
 
 
@@ -544,6 +547,8 @@ async def mark_ready(
     summary, pin = await vendor_order_service.mark_ready(db, restaurant, order_id, user)
     await db.commit()
     await _announce(summary, restaurant)
+    # Still nobody? Remind every available rider — the food is waiting now.
+    await rider_offer_service.announce(db, order_id, reason="ready")
     payload = summary.model_dump()
     payload["handoff_code"] = pin
     return ok(payload)

@@ -264,3 +264,7 @@ async def deliver_as_admin(db: AsyncSession, admin: User, order_id: uuid.UUID) -
             details=["An order nobody collected cannot have been delivered"],
         )
     return await _complete(db, order, actor=ActorType.ADMIN, actor_id=admin.id)
+
+
+# Offers render the same card as jobs; see services.rider.offers.
+to_summary = _to_summary

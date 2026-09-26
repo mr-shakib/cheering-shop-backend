@@ -1,34 +1,24 @@
-"""[EXTENDED] Rider assignment — who carries the order.
+"""[EXTENDED] Rider assignment by an operator — who carries the order.
 
-Every delivery platform assigns centrally. foodpanda's dispatcher picks from
-whoever is on shift and pushes the job to them; the vendor never chooses a
-rider and never sees the pool; an operator can override when reality disagrees
-with the algorithm. That shape is what this module implements, because it is
-the shape the vendor API has to live with permanently —
+Riders are no longer chosen automatically. An accepted order is offered to
+every available rider at once and the first to accept it carries it — see
+`services.rider.offers`. What remains here is the operator override
+(`POST /admin/orders/{id}/assign-rider`): name a rider, or omit the id and let
+this module pick one when nobody has accepted in time.
+
+The vendor still never chooses a rider and never sees the pool:
 ``POST /vendor/orders/{id}/accept`` must never grow a ``rider_id`` parameter,
 and the handoff must never care how the rider got there.
 
-``assign_rider`` is the single entry point. When real dispatch lands — Redis
-GEOSEARCH over live positions, batching, shift schedules — ``_pick_rider`` is
-the only body that changes and nothing above it moves.
-
-Selection is nearest-first, then load. **Decision D2** is specific about where
-"nearest" may come from: Redis GEOSEARCH owns it, and
-``rider_profiles.current_latitude/longitude`` are LAST KNOWN, synced
-periodically and explicitly not to be read here. A rider who has not pinged
-recently has no live position at all and falls back to the load-balanced pool
-rather than being placed at a point they may have left ten minutes ago.
-
-So there are two tiers, in this order:
+When the operator lets it pick, selection is nearest-first, then load.
+**Decision D2** is specific about where "nearest" may come from: Redis
+GEOSEARCH owns it, and ``rider_profiles.current_latitude/longitude`` are LAST
+KNOWN, synced periodically and explicitly not to be read here. Two tiers:
 
 1. **Live and near.** Riders with a fresh Redis position, within
    ``DISPATCH_SEARCH_RADIUS_M`` of the restaurant, nearest first — skipping any
-   whose current load would make them a worse choice than the distance
-   suggests.
+   already carrying ``MAX_CONCURRENT_JOBS``.
 2. **Live but unlocated, or nobody in range.** The idlest rider on shift.
-
-Tier 2 is not a degraded mode. A fleet that has not shipped location reporting
-yet, or a rider whose phone lost GPS in a basement, still gets work.
 """
 
 import uuid
@@ -38,7 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import AppError, ConflictError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.core.redis import find_nearby_riders
 from app.models.enums import OrderStatus, UserRole
 from app.models.order import Order
@@ -242,24 +232,6 @@ async def assign_rider(
         chosen_by="operator" if rider_id else "dispatch",
     )
     return rider
-
-
-async def auto_assign(db: AsyncSession, order: Order) -> User | None:
-    """Best effort, called from the order lifecycle. Never raises.
-
-    Dispatch failing is not a reason to refuse a kitchen its order. If nobody
-    is on shift the order carries on unassigned and the next lifecycle step
-    tries again — a vendor who cannot accept an order because the platform has
-    no riders is being punished for someone else's problem. The handoff is
-    where the absence finally has to be reported, and it already says so.
-    """
-    if order.rider_id is not None:
-        return None
-    try:
-        return await assign_rider(db, order)
-    except AppError as exc:
-        log.info("dispatch_deferred", order_id=str(order.id), reason=exc.message)
-        return None
 
 
 async def assign_to_order(

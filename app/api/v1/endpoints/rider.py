@@ -24,6 +24,7 @@ from app.services import (
     realtime,
     rider_earnings_service,
     rider_jobs_service,
+    rider_offer_service,
     rider_roster_service,
     rider_tracking_service,
 )
@@ -174,3 +175,33 @@ async def request_payout(body: PayoutCreateRequest, rider: RiderUser, db: DbSess
     payout = await rider_earnings_service.request_payout(db, rider, body)
     await db.commit()
     return ok(rider_earnings_service.to_out(payout).model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Delivery offers — sent to every available rider, first to accept wins
+# ---------------------------------------------------------------------------
+
+
+@router.get("/offers", summary="Orders waiting for a rider [EXTENDED]")
+async def list_offers(rider: RiderUser, db: DbSession):
+    """**[EXTENDED]** — every order a restaurant has accepted that no rider has
+    taken, with what it pays (`earning`) and the distances. Nearest first when
+    you are reporting your location. You must be on shift. Listen on
+    `/ws/rider/offers` to hear about new ones instantly instead of polling."""
+    offers = await rider_offer_service.list_offers(db, rider)
+    return ok([o.model_dump() for o in offers], {"total": len(offers)})
+
+
+@router.post("/offers/{order_id}/accept", summary="Accept an order [EXTENDED]")
+async def accept_offer(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
+    """**[EXTENDED]** — first come, first served: if you are first, the order
+    is yours and this returns the job. `409` if another rider was faster, it
+    was cancelled, or you already carry the maximum number of orders."""
+    job = await rider_offer_service.accept(db, rider, order_id)
+    await db.commit()
+    await rider_offer_service.announce_taken(order_id, rider.id)
+    await realtime.publish(
+        realtime.order_channel(str(order_id)),
+        {"type": "order.rider_assigned", "order_id": str(order_id)},
+    )
+    return ok(job.model_dump())

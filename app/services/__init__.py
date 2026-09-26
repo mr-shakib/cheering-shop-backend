@@ -47,6 +47,7 @@ from app.services.rider import applications as rider_application_service
 from app.services.rider import dispatch as dispatch_service
 from app.services.rider import earnings as rider_earnings_service
 from app.services.rider import jobs as rider_jobs_service
+from app.services.rider import offers as rider_offer_service
 from app.services.rider import roster as rider_roster_service
 from app.services.rider import tracking as rider_tracking_service
 from app.services.vendor import applications as vendor_application_service
@@ -84,6 +85,7 @@ __all__ = [
     "review_service",
     "rider_application_service",
     "rider_earnings_service",
+    "rider_offer_service",
     "rider_jobs_service",
     "rider_roster_service",
     "rider_tracking_service",

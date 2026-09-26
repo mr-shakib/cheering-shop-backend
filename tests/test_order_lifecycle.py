@@ -81,8 +81,16 @@ async def test_an_order_goes_from_cart_to_delivered_without_any_sql(
     order_id = r.json()["data"]["id"]
     assert r.json()["data"]["payment_status"] == "PENDING"
 
-    # 2. The kitchen accepts — and dispatch puts our courier on it.
+    # 2. The kitchen accepts — which offers it to every rider on shift. Our
+    #    courier sees the offer, with what it pays, and takes it.
     r = await client.post(f"{V1}/vendor/orders/{order_id}/accept", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"{V1}/rider/offers", headers=courier.headers)
+    assert r.status_code == 200, r.text
+    offer = next(o for o in r.json()["data"] if o["order_id"] == order_id)
+    assert offer["can_accept"] is True
+    r = await client.post(f"{V1}/rider/offers/{order_id}/accept", headers=courier.headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"{V1}/rider/orders", headers=courier.headers)
@@ -205,6 +213,11 @@ async def test_shift_toggle_takes_a_rider_out_of_the_dispatch_pool(
 
     r = await client.get(f"{V1}/rider/orders", headers=courier.headers)
     assert r.json()["data"] == [], "an off-shift rider must not be assigned work"
+    # …and cannot see or take offers until back on shift.
+    r = await client.get(f"{V1}/rider/offers", headers=courier.headers)
+    assert r.status_code == 409
+    r = await client.post(f"{V1}/rider/offers/{order_id}/accept", headers=courier.headers)
+    assert r.status_code == 409
 
 
 async def test_an_admin_can_confirm_a_delivery_the_rider_could_not(
@@ -226,6 +239,7 @@ async def test_an_admin_can_confirm_a_delivery_the_rider_could_not(
     order_id = r.json()["data"]["id"]
 
     await client.post(f"{V1}/vendor/orders/{order_id}/accept", headers=kitchen.headers)
+    await client.post(f"{V1}/rider/offers/{order_id}/accept", headers=courier.headers)
     r = await client.post(f"{V1}/vendor/orders/{order_id}/ready", headers=kitchen.headers)
     await client.post(
         f"{V1}/vendor/orders/{order_id}/handoff",

@@ -1027,6 +1027,24 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "GET",
+        "/rider/offers",
+        "Orders are offered to every available rider instead of being assigned "
+        "to one; a rider needs to see what is waiting, what it pays and how far.",
+    ),
+    (
+        "POST",
+        "/rider/offers/{id}/accept",
+        "The claim itself: the first rider to accept carries the order, decided "
+        "by one conditional update so two riders can never both win it.",
+    ),
+    (
+        "WS",
+        "/ws/rider/offers",
+        "Pushes new offers to riders on shift the moment a kitchen accepts, and "
+        "withdraws them when taken, so riders do not have to poll to compete.",
+    ),
+    (
+        "GET",
         "/admin/search",
         "The console's search bar: one query across orders, customers, "
         "vendors and riders, so support can start from whatever the caller "
