@@ -44,6 +44,10 @@ class AddOnOut(BaseModel):
     name: str
     price: Decimal
     is_available: bool
+    max_quantity: int = Field(
+        default=1,
+        description="Most a customer may pick per unit — 1 means a checkbox, more a stepper",
+    )
 
 
 class MenuItemOut(BaseModel):

@@ -37,6 +37,7 @@ from app.models.user import User
 from app.schemas.customer import (
     CheckoutSummary,
     OrderDetail,
+    OrderItemAddOnOut,
     OrderItemOut,
     OrderStatusEvent,
     OrderSummary,
@@ -236,10 +237,19 @@ async def place_order(
         )
         db.add(item)
         await db.flush()
-        for name in line.add_on_names:
+        for add_on in line.add_ons:
             # Name and price are snapshots; the add-on row itself may be
-            # renamed or deleted later without rewriting this receipt.
-            db.add(OrderItemAddOn(order_item_id=item.id, name=name, price=0))
+            # renamed, re-priced or deleted later without rewriting this
+            # receipt. `quantity` is per unit of the line.
+            db.add(
+                OrderItemAddOn(
+                    order_item_id=item.id,
+                    add_on_id=_as_uuid(add_on.add_on_id, "add_on_id"),
+                    name=add_on.name,
+                    price=add_on.price,
+                    quantity=add_on.quantity,
+                )
+            )
 
     db.add(
         OrderStatusHistory(
@@ -412,7 +422,15 @@ async def order_detail(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> O
                 add_ons_total=to_major(i.add_ons_total),
                 line_total=to_major(i.line_total),
                 variant_name=i.variant_name,
-                add_on_names=[a.name for a in i.add_ons],
+                add_on_names=[
+                    a.name if a.quantity == 1 else f"{a.name} ×{a.quantity}" for a in i.add_ons
+                ],
+                add_ons=[
+                    OrderItemAddOnOut(
+                        name=a.name, unit_price=to_major(a.price), quantity=a.quantity
+                    )
+                    for a in i.add_ons
+                ],
                 image_url=i.image_url,
                 notes=i.notes,
             )

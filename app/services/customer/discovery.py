@@ -553,6 +553,7 @@ def _to_item(item: MenuItem) -> MenuItemOut:
                 name=a.name,
                 price=to_major(a.price),
                 is_available=a.is_available,
+                max_quantity=a.max_quantity,
             )
             for a in sorted(item.add_ons, key=lambda a: (a.sort_order, a.name))
         ],

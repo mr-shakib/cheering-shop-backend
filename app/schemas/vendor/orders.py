@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 class VendorOrderItemAddOnOut(BaseModel):
     name: str
-    price: Decimal
+    price: Decimal = Field(description="Price of one, as charged")
+    quantity: int = Field(default=1, description="How many per unit of the line — cook this many")
 
 
 class VendorOrderItemOut(BaseModel):

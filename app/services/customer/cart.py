@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections import Counter
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,24 +30,36 @@ from app.models.cart import Cart, CartItem, CartItemAddOn
 from app.models.enums import RestaurantStatus
 from app.models.menu import ItemAddOn, ItemVariant, MenuItem
 from app.models.restaurant import Restaurant
-from app.schemas.customer import CartLineOut, CartOut
-from app.schemas.requests import CartItemRequest
+from app.schemas.customer import CartAddOnOut, CartLineOut, CartOut
+from app.schemas.requests import CartItemRequest, CartLineUpdateRequest
 from app.services import commission
-from app.services.pricing import QuoteLine
+from app.services.pricing import QuoteAddOn, QuoteLine
+
+# The request schema caps one call at 99; `mode: "add"` could otherwise climb past it.
+MAX_LINE_QUANTITY = 99
 
 
-def _fingerprint(add_on_ids: list[uuid.UUID]) -> str:
-    """Stable id for a set of add-ons.
+def _fingerprint(add_ons: dict[uuid.UUID, int]) -> str:
+    """Stable id for a choice of add-ons and their quantities.
 
     Sorted before hashing so {cheese, bacon} and {bacon, cheese} collapse into
-    one cart line, while {cheese} stays separate. This is what makes tapping
-    "+" twice on an identically configured item increment a row rather than
-    create a duplicate — the UNIQUE constraint keys on it.
+    one cart line, while {cheese} and {cheese ×2} stay separate. This is what
+    makes tapping "+" twice on an identically configured item increment a row
+    rather than create a duplicate — the UNIQUE constraint keys on it.
+
+    A quantity of 1 is written as the bare id, so every line created before
+    add-on quantities existed keeps the fingerprint it already has.
     """
-    if not add_on_ids:
+    if not add_ons:
         return ""
-    joined = ",".join(sorted(str(a) for a in add_on_ids))
+    joined = ",".join(
+        sorted(str(a) if n == 1 else f"{a}*{n}" for a, n in add_ons.items())
+    )
     return hashlib.sha256(joined.encode()).hexdigest()[:32]
+
+
+def _display_name(name: str, quantity: int) -> str:
+    return name if quantity == 1 else f"{name} ×{quantity}"
 
 
 def _as_uuid(value: str, what: str) -> uuid.UUID:
@@ -121,14 +134,18 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
             # 500 — the customer sees it vanish, which is the truth.
             continue
         variant = variants.get(line.variant_id) if line.variant_id else None
-        chosen = [add_ons[a.add_on_id] for a in line.add_ons if a.add_on_id in add_ons]
+        chosen = sorted(
+            ((add_ons[a.add_on_id], a.quantity) for a in line.add_ons if a.add_on_id in add_ons),
+            key=lambda pair: (pair[0].sort_order, pair[0].name),
+        )
 
         unit_price = variant.price if variant else item.base_price
-        add_ons_total = sum(a.price for a in chosen)
+        # Per unit of the line: one burger's worth of extras.
+        add_ons_total = sum(a.price * n for a, n in chosen)
         available = (
             item.is_available
             and (variant is None or variant.is_available)
-            and all(a.is_available for a in chosen)
+            and all(a.is_available for a, _ in chosen)
         )
 
         out.append(
@@ -140,8 +157,14 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
                 quantity=line.quantity,
                 variant_id=str(variant.id) if variant else None,
                 variant_name=variant.name if variant else None,
-                add_on_ids=[str(a.id) for a in chosen],
-                add_on_names=[a.name for a in chosen],
+                add_on_ids=[str(a.id) for a, _ in chosen],
+                add_on_names=[_display_name(a.name, n) for a, n in chosen],
+                add_ons=[
+                    CartAddOnOut(
+                        id=str(a.id), name=a.name, unit_price=to_major(a.price), quantity=n
+                    )
+                    for a, n in chosen
+                ],
                 unit_price=to_major(unit_price),
                 add_ons_total=to_major(add_ons_total),
                 line_total=to_major((unit_price + add_ons_total) * line.quantity),
@@ -158,7 +181,11 @@ async def _price_lines(db: AsyncSession, cart: Cart) -> tuple[list[CartLineOut],
                 add_ons_total=add_ons_total,
                 image_url=item.image_url,
                 variant_name=variant.name if variant else None,
-                add_on_names=[a.name for a in chosen],
+                add_on_names=[_display_name(a.name, n) for a, n in chosen],
+                add_ons=[
+                    QuoteAddOn(add_on_id=str(a.id), name=a.name, price=a.price, quantity=n)
+                    for a, n in chosen
+                ],
                 notes=line.notes,
                 commission_rate=commission.line_rate(
                     item.commission_rate, category_rates.get(item.category_id)
@@ -242,14 +269,9 @@ async def modify_item(db: AsyncSession, user_id: uuid.UUID, body: CartItemReques
     elif body.variant_id:
         raise ValidationError(f"'{item.name}' has no variants")
 
-    valid_add_ons = {a.id for a in item.add_ons}
-    requested = [_as_uuid(a, "add_on_ids") for a in body.add_on_ids]
-    unknown = [a for a in requested if a not in valid_add_ons]
-    if unknown:
-        raise ValidationError(
-            "Those add-ons do not belong to this item",
-            details=[str(a) for a in unknown],
-        )
+    requested = _requested_add_ons(item, body)
+    if body.mode == "add" and body.quantity == 0:
+        raise ValidationError("quantity must be at least 1 when adding")
 
     cart = await _load_cart(db, user_id)
     if cart is None:
@@ -287,27 +309,16 @@ async def modify_item(db: AsyncSession, user_id: uuid.UUID, body: CartItemReques
 
     if body.quantity == 0:
         if existing is not None:
-            await db.delete(existing)
-            await db.flush()
-            # An empty cart is deleted rather than kept as a husk pointing at a
-            # restaurant — otherwise the next add from elsewhere hits the
-            # cross-restaurant 409 for a cart with nothing in it.
-            remaining = await db.scalar(
-                select(func.count()).select_from(CartItem).where(CartItem.cart_id == cart.id)
-            )
-            if not remaining:
-                # Core DELETE rather than db.delete(cart): the ORM cascade would
-                # re-issue a delete for the line we just removed, which matches
-                # zero rows and warns. `fk_cart_items_cart` is ON DELETE CASCADE,
-                # so the database clears any children itself.
-                await db.execute(delete(Cart).where(Cart.id == cart.id))
-                await db.flush()
-                return CartOut()
+            return await _remove_line(db, user_id, cart, existing)
         return await get_cart(db, user_id)
 
     if existing is not None:
-        existing.quantity = body.quantity
-        existing.notes = body.notes
+        quantity = existing.quantity + body.quantity if body.mode == "add" else body.quantity
+        if quantity > MAX_LINE_QUANTITY:
+            raise ValidationError(f"At most {MAX_LINE_QUANTITY} of one item per order")
+        existing.quantity = quantity
+        if body.notes is not None or body.mode == "set":
+            existing.notes = body.notes
         # Must be flushed before the re-read below: `_load_cart` uses
         # populate_existing, which refreshes the instance FROM the database and
         # would otherwise discard this change and echo back the old quantity.
@@ -324,14 +335,83 @@ async def modify_item(db: AsyncSession, user_id: uuid.UUID, body: CartItemReques
         )
         db.add(line)
         await db.flush()
-        for add_on_id in requested:
+        for add_on_id, count in requested.items():
             db.add(
                 CartItemAddOn(
-                    cart_item_id=line.id, add_on_id=add_on_id, menu_item_id=item.id
+                    cart_item_id=line.id,
+                    add_on_id=add_on_id,
+                    menu_item_id=item.id,
+                    quantity=count,
                 )
             )
         await db.flush()
 
+    return await get_cart(db, user_id)
+
+
+def _requested_add_ons(item: MenuItem, body: CartItemRequest) -> dict[uuid.UUID, int]:
+    """The add-ons asked for, as {id: quantity per unit}.
+
+    `add_on_ids` and `add_ons` are combined: a repeated id in `add_on_ids`
+    counts once per repeat. Each add-on must belong to the item and stay
+    within the vendor's `max_quantity` for it.
+    """
+    counts: Counter[uuid.UUID] = Counter(_as_uuid(a, "add_on_ids") for a in body.add_on_ids)
+    for choice in body.add_ons:
+        counts[_as_uuid(choice.add_on_id, "add_on_id")] += choice.quantity
+
+    by_id = {a.id: a for a in item.add_ons}
+    unknown = [str(a) for a in counts if a not in by_id]
+    if unknown:
+        raise ValidationError("Those add-ons do not belong to this item", details=unknown)
+    too_many = [
+        f"{by_id[a].name}: at most {by_id[a].max_quantity}"
+        for a, n in counts.items()
+        if n > by_id[a].max_quantity
+    ]
+    if too_many:
+        raise ValidationError("Too many of an add-on", details=too_many)
+    return dict(counts)
+
+
+async def _remove_line(
+    db: AsyncSession, user_id: uuid.UUID, cart: Cart, line: CartItem
+) -> CartOut:
+    await db.delete(line)
+    await db.flush()
+    # An empty cart is deleted rather than kept as a husk pointing at a
+    # restaurant — otherwise the next add from elsewhere hits the
+    # cross-restaurant 409 for a cart with nothing in it.
+    remaining = await db.scalar(
+        select(func.count()).select_from(CartItem).where(CartItem.cart_id == cart.id)
+    )
+    if not remaining:
+        # Core DELETE rather than db.delete(cart): the ORM cascade would
+        # re-issue a delete for the line we just removed, which matches zero
+        # rows and warns. `fk_cart_items_cart` is ON DELETE CASCADE, so the
+        # database clears any children itself.
+        await db.execute(delete(Cart).where(Cart.id == cart.id))
+        await db.flush()
+        return CartOut()
+    return await get_cart(db, user_id)
+
+
+async def update_line(
+    db: AsyncSession, user_id: uuid.UUID, line_id: str, body: CartLineUpdateRequest
+) -> CartOut:
+    """The cart screen's − / + / bin, by line id: no need to resend the item's
+    whole configuration to change how many. `quantity: 0` removes the line."""
+    cart = await _load_cart(db, user_id)
+    wanted = _as_uuid(line_id, "line_id")
+    line = next((i for i in cart.items if i.id == wanted), None) if cart else None
+    if cart is None or line is None:
+        raise NotFoundError("That line is not in your cart")
+    if body.quantity == 0:
+        return await _remove_line(db, user_id, cart, line)
+    line.quantity = body.quantity
+    if "notes" in body.model_fields_set:
+        line.notes = body.notes
+    await db.flush()
     return await get_cart(db, user_id)
 
 

@@ -42,6 +42,9 @@ class AddOnRequest(BaseModel):
     price: Money
     is_available: bool = True
     sort_order: int = Field(default=0, ge=0, le=9999)
+    max_quantity: int = Field(
+        default=1, ge=1, le=20, description="How many a customer may pick per unit (1 = on/off)"
+    )
 
 
 class VariantCreateRequest(BaseModel):
@@ -83,6 +86,9 @@ class AddOnCreateRequest(BaseModel):
     sort_order: int | None = Field(
         default=None, ge=0, le=9999, description="Omit to append after the current last add-on"
     )
+    max_quantity: int = Field(
+        default=1, ge=1, le=20, description="How many a customer may pick per unit (1 = on/off)"
+    )
 
 
 class VariantUpdateRequest(BaseModel):
@@ -116,6 +122,7 @@ class AddOnUpdateRequest(BaseModel):
     price: Money | None = None
     is_available: bool | None = None
     sort_order: int | None = Field(default=None, ge=0, le=9999)
+    max_quantity: int | None = Field(default=None, ge=1, le=20)
 
 
 class MenuItemCreateRequest(BaseModel):

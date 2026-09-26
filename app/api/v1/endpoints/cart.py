@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import CustomerUser, DbSession
 from app.core.responses import ok
-from app.schemas.requests import CartItemRequest
+from app.schemas.requests import CartItemRequest, CartLineUpdateRequest
 from app.services import cart_service, order_service
 
 router = APIRouter(tags=["Cart & Checkout"])
@@ -27,7 +27,10 @@ async def get_cart(user: CustomerUser, db: DbSession):
 
 @router.post("/cart/items", summary="Add, update or remove a cart item")
 async def modify_cart_item(body: CartItemRequest, user: CustomerUser, db: DbSession):
-    """Spec #27. `quantity: 0` removes the line.
+    """Spec #27. `quantity: 0` removes the line. `mode: "add"` adds to an
+    identical line instead of replacing its quantity — use it for the menu's
+    Add to cart. Add-ons may repeat (`add_on_ids`) or carry quantities
+    (`add_ons`), up to each add-on's `max_quantity`.
 
     Enforces the single-restaurant rule with a 409. Note the database refuses a
     cross-restaurant item outright via paired composite FKs, so this check
@@ -38,6 +41,28 @@ async def modify_cart_item(body: CartItemRequest, user: CustomerUser, db: DbSess
     when the screen said large.
     """
     cart = await cart_service.modify_item(db, user.id, body)
+    await db.commit()
+    return ok(cart.model_dump())
+
+
+@router.patch("/cart/items/{line_id}", summary="Change a cart line's quantity [EXTENDED]")
+async def update_cart_line(
+    line_id: str, body: CartLineUpdateRequest, user: CustomerUser, db: DbSession
+):
+    """**[EXTENDED]** — the cart screen's − and + buttons. Addresses the line by
+    its `id` from `GET /cart`, so the item's variant and add-ons do not have to
+    be sent again. `quantity: 0` removes the line."""
+    cart = await cart_service.update_line(db, user.id, line_id, body)
+    await db.commit()
+    return ok(cart.model_dump())
+
+
+@router.delete("/cart/items/{line_id}", summary="Remove a cart line [EXTENDED]")
+async def remove_cart_line(line_id: str, user: CustomerUser, db: DbSession):
+    """**[EXTENDED]** — the bin button. Removing the last line empties the cart."""
+    cart = await cart_service.update_line(
+        db, user.id, line_id, CartLineUpdateRequest(quantity=0)
+    )
     await db.commit()
     return ok(cart.model_dump())
 

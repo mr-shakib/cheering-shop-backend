@@ -6,6 +6,12 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
+class OrderItemAddOnOut(BaseModel):
+    name: str
+    unit_price: Decimal = Field(description="Price of one, as charged")
+    quantity: int = Field(description="Per unit of the line")
+
+
 class OrderItemOut(BaseModel):
     """A line as it was bought. Names and prices are SNAPSHOTS.
 
@@ -22,7 +28,10 @@ class OrderItemOut(BaseModel):
     add_ons_total: Decimal
     line_total: Decimal
     variant_name: str | None = None
-    add_on_names: list[str] = Field(default_factory=list)
+    add_on_names: list[str] = Field(
+        default_factory=list, description='Display names, e.g. "Extra cheese ×2"'
+    )
+    add_ons: list[OrderItemAddOnOut] = Field(default_factory=list)
     image_url: str | None = None
     notes: str | None = None
 

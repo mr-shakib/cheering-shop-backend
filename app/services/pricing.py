@@ -45,6 +45,16 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 @dataclass(frozen=True)
+class QuoteAddOn:
+    """One chosen add-on on a line: `quantity` of them per unit, paisa each."""
+
+    add_on_id: str
+    name: str
+    price: int
+    quantity: int = 1
+
+
+@dataclass(frozen=True)
 class QuoteLine:
     """One priced cart line. All money in paisa."""
 
@@ -52,11 +62,12 @@ class QuoteLine:
     name: str
     quantity: int
     unit_price: int  # variant price if chosen, else base_price
-    add_ons_total: int  # per single unit, not multiplied
+    add_ons_total: int  # per single unit: Σ price × quantity over `add_ons`
     image_url: str | None = None
     variant_name: str | None = None
     add_on_names: list[str] = field(default_factory=list)
     notes: str | None = None
+    add_ons: list[QuoteAddOn] = field(default_factory=list)
     # The product's or its category's rate, resolved by services.commission.
     # None falls back to the restaurant rate passed to `quote`.
     commission_rate: float | None = None

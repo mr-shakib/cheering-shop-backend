@@ -9,12 +9,37 @@ from pydantic import BaseModel, Field
 from app.schemas.requests.base import Money
 
 
+class CartAddOnChoice(BaseModel):
+    add_on_id: str
+    quantity: int = Field(default=1, ge=1, le=20, description="Per unit of the item")
+
+
 class CartItemRequest(BaseModel):
-    """POST /cart/items — quantity 0 removes the line."""
+    """POST /cart/items.
+
+    A line is one configuration: item + variant + add-ons with their
+    quantities. `mode` decides what `quantity` means for that line:
+
+    * `set` (default) — the line's quantity becomes `quantity`; 0 removes it.
+    * `add` — `quantity` is added to the line if it already exists (the menu's
+      Add to cart), and creates it otherwise.
+
+    Add-ons: send `add_ons` with quantities, or list ids in `add_on_ids` —
+    repeating an id counts it twice. Both may be sent; they are combined.
+    """
 
     menu_item_id: str
     variant_id: str | None = None
-    add_on_ids: list[str] = Field(default_factory=list)
+    add_on_ids: list[str] = Field(default_factory=list, max_length=100)
+    add_ons: list[CartAddOnChoice] = Field(default_factory=list, max_length=50)
+    quantity: int = Field(ge=0, le=99)
+    mode: Literal["set", "add"] = "set"
+    notes: str | None = Field(default=None, max_length=255)
+
+
+class CartLineUpdateRequest(BaseModel):
+    """PATCH /cart/items/{line_id} — the cart screen's − and +. 0 removes."""
+
     quantity: int = Field(ge=0, le=99)
     notes: str | None = Field(default=None, max_length=255)
 

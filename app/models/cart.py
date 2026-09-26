@@ -118,10 +118,13 @@ class CartItemAddOn(Base):
     )
     add_on_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     menu_item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Per unit of the line: a line of 2 burgers with quantity 2 is 4 cheeses.
+    quantity: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("1"))
 
     cart_item: Mapped["CartItem"] = relationship(back_populates="add_ons", lazy="raise")
 
     __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_cart_item_add_ons_quantity"),
         ForeignKeyConstraint(
             ["add_on_id", "menu_item_id"],
             ["item_add_ons.id", "item_add_ons.menu_item_id"],

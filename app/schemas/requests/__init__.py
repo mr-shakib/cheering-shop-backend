@@ -61,7 +61,9 @@ from app.schemas.requests.categories import (
     CategoryUpdateRequest,
 )
 from app.schemas.requests.commerce import (
+    CartAddOnChoice,
     CartItemRequest,
+    CartLineUpdateRequest,
     ChatMessageRequest,
     OrderCancelRequest,
     OrderCreateRequest,
@@ -145,6 +147,8 @@ __all__ = [
     "PresignedUrlRequest",
     # commerce
     "CartItemRequest",
+    "CartAddOnChoice",
+    "CartLineUpdateRequest",
     "ChatMessageRequest",
     "OrderCreateRequest",
     "OrderCancelRequest",

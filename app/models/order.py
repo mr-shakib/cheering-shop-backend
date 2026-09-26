@@ -280,12 +280,15 @@ class OrderItemAddOn(Base, UUIDPrimaryKey):
         UUID(as_uuid=True), ForeignKey("item_add_ons.id", ondelete="SET NULL")
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Snapshot of ONE add-on's price; `quantity` of them per unit of the line.
     price: Mapped[int] = mapped_column(Money, nullable=False)
+    quantity: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("1"))
 
     order_item: Mapped["OrderItem"] = relationship(back_populates="add_ons", lazy="raise")
 
     __table_args__ = (
         CheckConstraint("price >= 0", name="ck_order_item_add_ons_price"),
+        CheckConstraint("quantity > 0", name="ck_order_item_add_ons_quantity"),
         Index("ix_order_item_add_ons_item", "order_item_id"),
     )
 

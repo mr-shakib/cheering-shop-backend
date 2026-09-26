@@ -113,18 +113,49 @@ hide it. Hiding makes customers think the restaurant left the platform.
 One restaurant per cart. Adding a dish from somewhere else is a **409** telling
 you which restaurant is currently in the cart; empty it first.
 
-`POST /cart/items` is add, update *and* remove:
+**A line is one configuration**: an item, its variant, and its add-ons with
+their quantities. The same dish can sit in the cart several times with
+different add-ons (a plain burger and a burger with extra cheese are two lines).
+
+**Adding from the item sheet** — `POST /cart/items` with `mode: "add"`:
 
 ```json
-{ "menu_item_id": "…", "variant_id": "…", "add_on_ids": ["…"], "quantity": 2, "notes": "extra spicy" }
+{
+  "menu_item_id": "…",
+  "variant_id": "…",
+  "add_ons": [{"add_on_id": "…", "quantity": 2}],
+  "quantity": 1,
+  "mode": "add",
+  "notes": "extra spicy"
+}
 ```
 
-- `quantity: 0` removes the line. Removing the last line deletes the cart.
+- `mode: "add"` adds `quantity` to an identical line, or creates it. The
+  default `mode: "set"` sets the line's quantity instead (`0` removes it).
 - If the dish **has variants, `variant_id` is required** — a 400 lists the
   choices. There is no silent default: defaulting to the cheapest is how a
   customer ends up charged for a small when the screen said large.
-- Same item + same variant + same add-ons = the same line, so tapping "+" twice
-  increments rather than duplicating.
+- **Add-on quantities.** Each add-on on the menu has `max_quantity`: `1` means
+  on/off (a checkbox); more means a stepper, e.g. "Extra cheese, up to 3".
+  Send `add_ons: [{add_on_id, quantity}]`; the older `add_on_ids` list still
+  works, and repeating an id there counts it again. Over the limit is a 400.
+  An add-on's quantity is **per unit**: 2 burgers each with 2× cheese is
+  4 cheeses, priced (burger + 2 × cheese) × 2.
+
+**The cart screen's buttons** — address the line by the `id` from `GET /cart`,
+so nothing else has to be sent again:
+
+| Button | Call |
+|---|---|
+| + / − | `PATCH /cart/items/{line_id}` `{"quantity": 3}` (`0` removes) |
+| Bin | `DELETE /cart/items/{line_id}` |
+
+Removing the last line deletes the cart.
+
+Each line returns `add_ons` (`id`, `name`, `unit_price`, `quantity`),
+`add_on_names` ready to print ("Extra cheese ×2"), `add_ons_total` (per unit)
+and `line_total`. Orders keep the same: each order line lists its add-ons with
+the price charged and the quantity.
 
 **Prices are recomputed on every read.** The cart stores what was chosen, never
 what it cost. A vendor's price change shows up before the customer commits, and
@@ -274,6 +305,8 @@ Auth column: **public** needs no token, **customer** needs a CUSTOMER token,
 | GET | `/search` | public | Restaurants, dishes and categories |
 | GET | `/cart` | customer | Current cart, live prices |
 | POST | `/cart/items` | customer | Add / update / remove a line |
+| PATCH | `/cart/items/{line_id}` | customer | Change a line's quantity |
+| DELETE | `/cart/items/{line_id}` | customer | Remove a line |
 | GET | `/checkout/summary` | customer | The full bill |
 | POST | `/orders` | customer | Place the order |
 | GET | `/orders` | customer | Order history |

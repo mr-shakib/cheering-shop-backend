@@ -91,6 +91,7 @@ def add_on_to_out(add_on: ItemAddOn) -> AddOnOut:
         price=to_major(add_on.price),
         is_available=add_on.is_available,
         sort_order=add_on.sort_order,
+        max_quantity=add_on.max_quantity,
     )
 
 
@@ -472,6 +473,7 @@ async def _sync_add_ons(db: AsyncSession, item: MenuItem, payload: list[AddOnReq
             add_on.price = to_minor(entry.price)
             add_on.is_available = entry.is_available
             add_on.sort_order = entry.sort_order
+            add_on.max_quantity = entry.max_quantity
             keep.add(add_on.id)
         else:
             add_on = ItemAddOn(
@@ -480,6 +482,7 @@ async def _sync_add_ons(db: AsyncSession, item: MenuItem, payload: list[AddOnReq
                 price=to_minor(entry.price),
                 is_available=entry.is_available,
                 sort_order=entry.sort_order,
+                max_quantity=entry.max_quantity,
             )
             db.add(add_on)
             item.add_ons.append(add_on)
@@ -645,6 +648,8 @@ async def update_add_on(
         add_on.is_available = fields["is_available"]
     if fields.get("sort_order") is not None:
         add_on.sort_order = fields["sort_order"]
+    if fields.get("max_quantity") is not None:
+        add_on.max_quantity = fields["max_quantity"]
 
     try:
         await db.flush()
@@ -706,6 +711,7 @@ async def add_add_on(
         sort_order=(
             body.sort_order if body.sort_order is not None else _next_sort_order(item.add_ons)
         ),
+        max_quantity=body.max_quantity,
     )
     item.add_ons.append(add_on)
     try:

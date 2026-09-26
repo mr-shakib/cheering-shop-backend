@@ -175,11 +175,17 @@ class ItemAddOn(Base, UUIDPrimaryKey):
     price: Mapped[int] = mapped_column(Money, nullable=False)
     is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"))
+    # How many of this add-on a customer may pick per unit ("up to 3 extra
+    # cheese"). 1 is the old on/off behaviour.
+    max_quantity: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("1")
+    )
 
     item: Mapped["MenuItem"] = relationship(back_populates="add_ons", lazy="raise")
 
     __table_args__ = (
         CheckConstraint("price >= 0", name="ck_item_add_ons_price"),
+        CheckConstraint("max_quantity BETWEEN 1 AND 20", name="ck_item_add_ons_max_quantity"),
         UniqueConstraint("menu_item_id", "name", name="uq_item_add_ons_name"),
         UniqueConstraint("id", "menu_item_id", name="uq_item_add_ons_id_item"),
     )

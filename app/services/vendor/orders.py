@@ -146,7 +146,10 @@ def to_detail(
             line_total=to_major(line.line_total),
             notes=line.notes,
             add_ons=[
-                VendorOrderItemAddOnOut(name=a.name, price=to_major(a.price)) for a in line.add_ons
+                VendorOrderItemAddOnOut(
+                    name=a.name, price=to_major(a.price), quantity=a.quantity
+                )
+                for a in line.add_ons
             ],
         )
         for line in sorted(order.items, key=lambda i: i.item_name)

@@ -1044,6 +1044,18 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "withdraws them when taken, so riders do not have to poll to compete.",
     ),
     (
+        "PATCH",
+        "/cart/items/{id}",
+        "The cart screen's minus and plus by line id. Spec #27 finds a line by its "
+        "whole configuration, so changing a count meant resending every add-on.",
+    ),
+    (
+        "DELETE",
+        "/cart/items/{id}",
+        "The cart screen's bin by line id — removing one configured line without "
+        "reconstructing its variant and add-ons.",
+    ),
+    (
         "GET",
         "/admin/search",
         "The console's search bar: one query across orders, customers, "

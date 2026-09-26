@@ -492,7 +492,9 @@ CREATE TABLE item_add_ons (
     price        bigint       NOT NULL,            -- paisa, additive
     is_available boolean      NOT NULL DEFAULT true,
     sort_order   smallint     NOT NULL DEFAULT 0,
+    max_quantity smallint     NOT NULL DEFAULT 1,  -- how many a customer may pick per unit
     CONSTRAINT ck_item_add_ons_price CHECK (price >= 0),
+    CONSTRAINT ck_item_add_ons_max_quantity CHECK (max_quantity BETWEEN 1 AND 20),
     CONSTRAINT uq_item_add_ons_name UNIQUE (menu_item_id, name),
     CONSTRAINT uq_item_add_ons_id_item UNIQUE (id, menu_item_id)
 );
@@ -568,7 +570,9 @@ CREATE TABLE cart_item_add_ons (
     cart_item_id uuid NOT NULL REFERENCES cart_items(id) ON DELETE CASCADE,
     add_on_id    uuid NOT NULL,
     menu_item_id uuid NOT NULL,
+    quantity     smallint NOT NULL DEFAULT 1,  -- per unit of the line: "2× extra cheese"
     PRIMARY KEY (cart_item_id, add_on_id),
+    CONSTRAINT ck_cart_item_add_ons_quantity CHECK (quantity > 0),
     CONSTRAINT fk_cart_item_add_ons_addon FOREIGN KEY (add_on_id, menu_item_id)
         REFERENCES item_add_ons(id, menu_item_id) ON DELETE CASCADE
 );
@@ -875,8 +879,10 @@ CREATE TABLE order_item_add_ons (
     order_item_id uuid         NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
     add_on_id     uuid         REFERENCES item_add_ons(id) ON DELETE SET NULL,
     name          varchar(120) NOT NULL,   -- snapshot
-    price         bigint       NOT NULL,   -- snapshot
-    CONSTRAINT ck_order_item_add_ons_price CHECK (price >= 0)
+    price         bigint       NOT NULL,   -- snapshot, per single add-on
+    quantity      smallint     NOT NULL DEFAULT 1,  -- per unit of the line
+    CONSTRAINT ck_order_item_add_ons_price CHECK (price >= 0),
+    CONSTRAINT ck_order_item_add_ons_quantity CHECK (quantity > 0)
 );
 CREATE INDEX ix_order_item_add_ons_item ON order_item_add_ons (order_item_id);
 

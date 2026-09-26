@@ -5,6 +5,15 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
+class CartAddOnOut(BaseModel):
+    """One chosen add-on. `quantity` is per unit of the line."""
+
+    id: str
+    name: str
+    unit_price: Decimal = Field(description="Price of one")
+    quantity: int
+
+
 class CartLineOut(BaseModel):
     """One line. Prices are LIVE, never a snapshot.
 
@@ -21,10 +30,15 @@ class CartLineOut(BaseModel):
     quantity: int
     variant_id: str | None = None
     variant_name: str | None = None
-    add_on_ids: list[str] = Field(default_factory=list)
-    add_on_names: list[str] = Field(default_factory=list)
+    add_on_ids: list[str] = Field(default_factory=list, description="Each chosen add-on once")
+    add_on_names: list[str] = Field(
+        default_factory=list, description='Display names, e.g. "Extra cheese ×2"'
+    )
+    add_ons: list[CartAddOnOut] = Field(default_factory=list)
     unit_price: Decimal
-    add_ons_total: Decimal = Field(description="Per single unit, not multiplied")
+    add_ons_total: Decimal = Field(
+        description="Per single unit: Σ add-on price × its quantity; not multiplied by the line"
+    )
     line_total: Decimal
     notes: str | None = None
     # False when the vendor turned the dish off after it was added. The Cart

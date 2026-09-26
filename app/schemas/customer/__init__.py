@@ -15,7 +15,7 @@ from app.schemas.customer.account import (
     ScheduleDay,
     ScheduleOptions,
 )
-from app.schemas.customer.cart import CartLineOut, CartOut, CheckoutSummary
+from app.schemas.customer.cart import CartAddOnOut, CartLineOut, CartOut, CheckoutSummary
 from app.schemas.customer.chat import ChatMessageOut, ChatMessageSent, ChatThread
 from app.schemas.customer.discovery import (
     AddOnOut,
@@ -34,6 +34,7 @@ from app.schemas.customer.discovery import (
 )
 from app.schemas.customer.orders import (
     OrderDetail,
+    OrderItemAddOnOut,
     OrderItemOut,
     OrderStatusEvent,
     OrderSummary,
@@ -46,6 +47,7 @@ from app.schemas.customer.orders import (
 __all__ = [
     "AddOnOut",
     "AddressOut",
+    "CartAddOnOut",
     "CartLineOut",
     "CartOut",
     "CategoryChip",
@@ -62,6 +64,7 @@ __all__ = [
     "MenuItemOut",
     "MinimumOrder",
     "OrderDetail",
+    "OrderItemAddOnOut",
     "OrderItemOut",
     "OrderStatusEvent",
     "OrderSummary",

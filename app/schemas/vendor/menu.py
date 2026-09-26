@@ -26,6 +26,7 @@ class AddOnOut(BaseModel):
     price: Decimal
     is_available: bool
     sort_order: int
+    max_quantity: int = Field(default=1, description="Most a customer may pick per unit")
 
 
 class MenuItemOut(BaseModel):

@@ -229,6 +229,13 @@ That distinction is the one thing to get right. A variant's `price` **is** the
 price the customer pays; `base_price` becomes a "from" display price the moment
 an item has variants. An add-on's `price` is added on top.
 
+An add-on's `max_quantity` (default `1`, up to `20`) is how many a customer may
+pick per unit — `1` makes it on/off, `3` lets them order up to three extra
+cheeses. Set it when creating the add-on or with
+`PATCH /vendor/menu/items/{id}/add-ons/{add_on_id}`. Order details list each
+add-on with its `quantity` per unit of the line: cook that many for every one
+of the line's items.
+
 ### Build order
 
 You must create a category first — items require a `category_id`.
