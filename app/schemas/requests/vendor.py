@@ -3,7 +3,7 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.requests.base import Money, _IdentifierBody
 
@@ -138,3 +138,139 @@ class BusinessHoursRequest(BaseModel):
     fri: DayHours
     sat: DayHours
     sun: DayHours
+
+
+# ---------------------------------------------------------------------------
+# Admin: add and edit any vendor
+# ---------------------------------------------------------------------------
+
+# The document slots on the partner form (ApplicationDocuments' fields).
+VendorDocumentKind = Literal["shop_image", "owner_nid", "menu_list", "trade_license"]
+_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+class AdminVendorPayout(BaseModel):
+    """Bank or mobile-wallet details, as on the partner form."""
+
+    method: Literal["BANK", "BKASH", "NAGAD", "ROCKET"]
+    account_name: str = Field(min_length=2, max_length=150)
+    account_number: str = Field(min_length=4, max_length=50)
+    bank_name: str | None = Field(default=None, max_length=150)
+    branch_name: str | None = Field(default=None, max_length=150)
+
+
+class AdminVendorCreateRequest(BaseModel):
+    """POST /admin/vendors — [EXTENDED].
+
+    An administrator adding a vendor IS the review, so the store is approved
+    (`is_verified`) at creation and customers can find it straight away. It
+    starts CLOSED unless `status` says otherwise, like an approved application.
+
+    `owner_password` is optional: without one the owner is emailed the same
+    "set your password" instructions an approved applicant gets. Files are
+    uploaded first with `POST /admin/uploads/presigned-url`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Store
+    name: str = Field(min_length=2, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    phone: str | None = Field(
+        default=None, max_length=20, description="Store phone; defaults to the owner's"
+    )
+    address_line: str = Field(min_length=5, max_length=500)
+    area: str | None = Field(default=None, max_length=120)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    cuisine_types: list[str] = Field(default_factory=list, max_length=10)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    cover_image_url: str | None = Field(default=None, max_length=2048)
+    min_order_amount: Money | None = None
+    avg_prep_time_mins: int | None = Field(default=None, ge=1, le=240)
+    status: Literal["OPEN", "CLOSED"] = "CLOSED"
+    is_verified: bool = Field(default=True, description="False adds it unapproved (hidden)")
+
+    # Business
+    business_type: Literal["RESTAURANT", "GROCERY", "PHARMACY"] = "RESTAURANT"
+    business_category: str = Field(default="General", min_length=2, max_length=80)
+    branch_count: int = Field(default=1, ge=1, le=50)
+    commission_rate: Decimal | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        decimal_places=4,
+        description="0.15 == 15%. Omit for the Settings screen's rate for the business type",
+    )
+
+    # Owner — the account the vendor app signs in with
+    owner_full_name: str = Field(min_length=2, max_length=150)
+    owner_email: str = Field(max_length=254, pattern=_EMAIL)
+    owner_phone: str = Field(min_length=6, max_length=20)
+    owner_password: str | None = Field(default=None, min_length=8, max_length=128)
+    national_id: str | None = Field(default=None, min_length=4, max_length=50)
+
+    documents: dict[VendorDocumentKind, str] = Field(
+        default_factory=dict, description="Document kind -> URL"
+    )
+    payout: AdminVendorPayout | None = None
+
+
+class AdminVendorUpdateRequest(BaseModel):
+    """PATCH /admin/vendors/{id} — [EXTENDED]. Every field on Vendor Details.
+
+    PATCH: omitted fields are left alone. `documents` is merged — send a kind
+    with a URL to set it, or with null to remove it. Coordinates move
+    together. Business fields (type, category, NID, documents, payout) live on
+    the vendor's partner record; a vendor registered without one gets one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Store
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    description: str | None = Field(default=None, max_length=2000)
+    phone: str | None = Field(default=None, max_length=20)
+    address_line: str | None = Field(default=None, min_length=5, max_length=500)
+    area: str | None = Field(default=None, max_length=120)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    cuisine_types: list[str] | None = Field(default=None, max_length=10)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    cover_image_url: str | None = Field(default=None, max_length=2048)
+    min_order_amount: Money | None = None
+    avg_prep_time_mins: int | None = Field(default=None, ge=1, le=240)
+    business_hours: BusinessHoursRequest | None = None
+    status: Literal["OPEN", "CLOSED"] | None = None
+    is_verified: bool | None = Field(
+        default=None, description="Approve (true) or suspend (false); suspending closes the store"
+    )
+    is_active: bool | None = Field(
+        default=None, description="False takes the storefront out of discovery"
+    )
+    commission_rate: Decimal | None = Field(default=None, ge=0, le=1, decimal_places=4)
+
+    # Business
+    business_type: Literal["RESTAURANT", "GROCERY", "PHARMACY"] | None = None
+    business_category: str | None = Field(default=None, min_length=2, max_length=80)
+    branch_count: int | None = Field(default=None, ge=1, le=50)
+    national_id: str | None = Field(default=None, min_length=4, max_length=50)
+    documents: dict[VendorDocumentKind, str | None] | None = None
+    payout: AdminVendorPayout | None = None
+
+    # Owner
+    owner_full_name: str | None = Field(default=None, min_length=2, max_length=150)
+    owner_email: str | None = Field(default=None, max_length=254, pattern=_EMAIL)
+    owner_phone: str | None = Field(default=None, min_length=6, max_length=20)
+    owner_password: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="Issue or reset the owner's password",
+    )
+
+    @model_validator(mode="after")
+    def _needs_a_field(self):
+        if not self.model_fields_set:
+            raise ValueError("Send at least one field to change")
+        return self

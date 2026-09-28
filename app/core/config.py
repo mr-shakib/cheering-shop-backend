@@ -146,7 +146,11 @@ class Settings(BaseSettings):
     VENDOR_AUTO_DECLINE_SECONDS: int = 60  # the timeout the task queue enforces
     ORDER_CANCEL_GRACE_SECONDS: int = 60  # cancel allowed only while PENDING
     RIDER_PIN_LENGTH: int = 4
-    DEFAULT_SEARCH_RADIUS_METRES: int = 5000
+    # How far GET /restaurants and the Nearby carousel look when the app sends
+    # no radius. Matches MAX_DELIVERY_DISTANCE_KM: at 5 km, a restaurant 8 km
+    # away could be ordered from but never appeared in a list, so a new
+    # restaurant just outside town looked like it had not been added at all.
+    DEFAULT_SEARCH_RADIUS_METRES: int = 15000
     MAX_SEARCH_RADIUS_METRES: int = 25000
 
     # --- Money -------------------------------------------------------------

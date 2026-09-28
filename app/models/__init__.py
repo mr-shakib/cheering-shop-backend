@@ -11,6 +11,7 @@ from app.models.cart import Cart, CartItem, CartItemAddOn
 from app.models.category import Category
 from app.models.chat import OrderMessage
 from app.models.community import CommunityPost, CommunityReport
+from app.models.content import AppBanner, Reel
 from app.models.menu import ItemAddOn, ItemVariant, MenuCategory, MenuItem
 from app.models.notification import NotificationCampaign, UserNotification
 from app.models.order import Order, OrderItem, OrderItemAddOn, OrderStatusHistory
@@ -47,6 +48,9 @@ __all__ = [
     "SupportMessage",
     "SupportTicket",
     "UserNotification",
+    # Reels and banners (migration 0012)
+    "AppBanner",
+    "Reel",
     # Identity & security
     "User",
     "AuthIdentity",

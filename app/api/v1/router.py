@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     admin_accounts,
     admin_ads,
     admin_community,
+    admin_content,
     admin_insights,
     admin_invitations,
     admin_invite_accept,
@@ -28,6 +29,7 @@ from app.api.v1.endpoints import (
     cart,
     comms,
     community,
+    content,
     discovery,
     favorites,
     notifications,
@@ -57,6 +59,7 @@ api_router.include_router(favorites.router)
 
 # Public discovery
 api_router.include_router(discovery.router)
+api_router.include_router(content.router)
 api_router.include_router(promotion_events.router)
 
 # Customer commerce
@@ -89,6 +92,7 @@ api_router.include_router(admin_notifications.router)
 api_router.include_router(admin_invitations.router)
 api_router.include_router(admin_ads.router)
 api_router.include_router(admin_community.router)
+api_router.include_router(admin_content.router)
 
 # Help & support, inbox and devices — any signed-in role
 api_router.include_router(support.router)

@@ -43,8 +43,10 @@ from app.schemas.requests import (
     MenuReorderRequest,
     OrderRejectRequest,
     PayoutCreateRequest,
+    PresignedUrlRequest,
     PromotionCreateRequest,
     PromotionUpdateRequest,
+    ReelCreateRequest,
     RestaurantProfileUpdateRequest,
     StoreStatusRequest,
     VariantCreateRequest,
@@ -53,7 +55,9 @@ from app.schemas.requests import (
 from app.services import (
     menu_service,
     realtime,
+    reels,
     rider_offer_service,
+    storage_service,
     vendor_finance_service,
     vendor_insights_service,
     vendor_order_service,
@@ -826,3 +830,47 @@ async def set_hours(body: BusinessHoursRequest, restaurant: VendorRestaurant, db
     result = await vendor_service.set_hours(db, restaurant, body)
     await db.commit()
     return ok(result.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Reels
+# ---------------------------------------------------------------------------
+
+
+@router.post("/reels/uploads", summary="Get an upload URL for a reel [EXTENDED]")
+async def reel_upload_url(body: PresignedUrlRequest, user: VendorUser):
+    """**[EXTENDED]** — a presigned PUT for the video (MP4, MOV or WebM) or its
+    thumbnail (JPEG, PNG or WebP). Upload, then send the `public_url` to
+    `POST /vendor/reels`."""
+    result = storage_service.create_presigned_put(
+        str(user.id), body.file_type, body.file_name, extra_types=storage_service.VIDEO_TYPES
+    )
+    return ok(result.model_dump())
+
+
+@router.get("/reels", summary="My reels [EXTENDED]")
+async def list_reels(restaurant: VendorRestaurant, db: DbSession, page: Paginated):
+    """**[EXTENDED]** — newest first, including any an administrator hid (with
+    `hidden_reason`)."""
+    rows, total = await reels.list_for_restaurant(db, restaurant, page.limit, page.offset)
+    return paginated(
+        [r.model_dump() for r in rows], total=total, limit=page.limit, offset=page.offset
+    )
+
+
+@router.post("/reels", status_code=status.HTTP_201_CREATED, summary="Post a reel [EXTENDED]")
+async def create_reel(
+    body: ReelCreateRequest, restaurant: VendorRestaurant, user: VendorUser, db: DbSession
+):
+    """**[EXTENDED]** — live in the customer feed at once. Reels only show while
+    the restaurant itself is visible to customers (approved and active)."""
+    reel = await reels.create(db, restaurant, user, body)
+    await db.commit()
+    return ok(reel.model_dump())
+
+
+@router.delete("/reels/{reel_id}", summary="Delete a reel [EXTENDED]")
+async def delete_reel(reel_id: uuid.UUID, restaurant: VendorRestaurant, db: DbSession):
+    await reels.delete_own(db, restaurant, reel_id)
+    await db.commit()
+    return ok({"message": "Reel deleted", "reel_id": str(reel_id)})

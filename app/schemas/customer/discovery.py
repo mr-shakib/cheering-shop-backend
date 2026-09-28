@@ -5,6 +5,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.content import BannerOut
+
 
 class RestaurantCard(BaseModel):
     """One row in a list: home feed, search results, favorites, category list.
@@ -159,6 +161,8 @@ class HomeFeed(BaseModel):
     client renders an empty carousel instead of branching on null.
     """
 
+    # [EXTENDED] The admin-managed banners for the HOME placement, in order.
+    banners: list[BannerOut] = Field(default_factory=list)
     cuisines: list[CuisineChip] = Field(default_factory=list)
     # The chip row. Pinned categories first, then by how many restaurants sell
     # under each; at most twelve — `GET /categories` has the full list.
@@ -193,3 +197,24 @@ class SearchItemHit(BaseModel):
 
 RestaurantDetail.model_rebuild()
 SearchResults.model_rebuild()
+
+
+class ReelDish(BaseModel):
+    id: str
+    name: str
+    price: Decimal
+
+
+class ReelOut(BaseModel):
+    """[EXTENDED] One reel in the customer feed. `restaurant` is the same card
+    the lists show, so the overlay (name, rating, time, distance) and the View
+    button need no second request."""
+
+    id: str
+    video_url: str
+    thumbnail_url: str | None = None
+    caption: str | None = None
+    duration_seconds: int | None = None
+    restaurant: RestaurantCard
+    menu_item: ReelDish | None = None
+    created_at: datetime

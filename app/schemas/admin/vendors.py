@@ -54,9 +54,16 @@ class AdminVendorDetail(AdminVendorRow):
     commission_rate: float = Field(description="0.15 == 15%")
     application_id: str | None = None
     application_no: str | None = None
+    onboarding_source: str | None = Field(
+        default=None,
+        description="APPLICATION (partner form), ADMIN (added in the console), "
+        "or null (registered through the API fast path, no partner record)",
+    )
+    area: str | None = None
     documents: dict[str, str] = Field(
         default_factory=dict, description="Document kind -> URL, from the application"
     )
+    payout: dict = Field(default_factory=dict, description="Bank / mobile-wallet details")
 
 
 class AdminVendorReviews(BaseModel):

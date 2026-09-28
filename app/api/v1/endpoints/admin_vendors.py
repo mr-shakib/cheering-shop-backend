@@ -3,15 +3,19 @@
 Tab by tab: Store Info is `GET /admin/vendors/{id}`; Order is
 `GET /admin/orders?restaurant_id=`; Review and Withdrawal have their own
 endpoints below, and the Withdrawal table is `GET /admin/payouts?restaurant_id=`.
+Adding a vendor is `POST /admin/vendors`; editing any of it is
+`PATCH /admin/vendors/{id}`. Images and documents are uploaded first with
+`POST /admin/uploads/presigned-url`.
 """
 
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import AdminUser, DbSession, Paginated
 from app.core.responses import PageMeta, ok, paginated
+from app.schemas.requests import AdminVendorCreateRequest, AdminVendorUpdateRequest
 from app.services import admin_vendor_service
 from app.services.admin.common import EXPORT_MAX_ROWS, csv_response
 
@@ -23,8 +27,9 @@ async def list_vendors(
     admin: AdminUser,
     db: DbSession,
     page: Paginated,
-    status: Annotated[
-        str, Query(description="ACTIVE (verified, the default), SUSPENDED or ALL")
+    status_filter: Annotated[
+        str,
+        Query(alias="status", description="ACTIVE (verified, the default), SUSPENDED or ALL"),
     ] = "ACTIVE",
     q: Annotated[str | None, Query(description="Store name or phone")] = None,
     business_type: Annotated[
@@ -42,7 +47,7 @@ async def list_vendors(
         db,
         limit=EXPORT_MAX_ROWS if csv else page.limit,
         offset=0 if csv else page.offset,
-        status=status,
+        status=status_filter,
         q=q,
         business_type=business_type,
         min_rating=min_rating,
@@ -52,6 +57,33 @@ async def list_vendors(
     return paginated(
         [r.model_dump() for r in rows], total=total, limit=page.limit, offset=page.offset
     )
+
+
+@router.post(
+    "/vendors", status_code=status.HTTP_201_CREATED, summary="Add a vendor [EXTENDED]"
+)
+async def create_vendor(body: AdminVendorCreateRequest, admin: AdminUser, db: DbSession):
+    """**[EXTENDED]** — the owner's account, the restaurant and its partner
+    record in one call. Approved at creation, so customers can find it at
+    once (CLOSED until opened, unless `status` says otherwise). Without
+    `owner_password` the owner is emailed how to set one."""
+    detail = await admin_vendor_service.create_vendor(db, admin, body)
+    await db.commit()
+    return ok(detail.model_dump())
+
+
+@router.patch("/vendors/{restaurant_id}", summary="Edit a vendor [EXTENDED]")
+async def update_vendor(
+    restaurant_id: uuid.UUID, body: AdminVendorUpdateRequest, admin: AdminUser, db: DbSession
+):
+    """**[EXTENDED]** — any field on Vendor Details: store info and images,
+    location, hours, fees, commission, approval and active state, the owner's
+    name, email, phone and password, and business type, category, NID,
+    documents and payout. Omitted fields are left alone. Returns the updated
+    details."""
+    detail = await admin_vendor_service.update_vendor(db, admin, restaurant_id, body)
+    await db.commit()
+    return ok(detail.model_dump())
 
 
 @router.get("/vendors/{restaurant_id}", summary="Vendor details [EXTENDED]")

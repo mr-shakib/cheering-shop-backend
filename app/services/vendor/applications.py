@@ -401,6 +401,7 @@ def to_detail(application: VendorApplication) -> VendorApplicationDetail:
         national_id=application.national_id,
         documents=dict(application.documents or {}),
         payout=dict(application.payout or {}),
+        source=application.source,
         review_note=application.review_note,
         reviewed_by=str(application.reviewed_by) if application.reviewed_by else None,
         reviewed_at=application.reviewed_at,

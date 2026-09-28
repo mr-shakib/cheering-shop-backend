@@ -14,6 +14,7 @@ import-path migration.
 
 from app.services import (
     auth_service,
+    banners,
     category_service,
     community,
     idempotency,
@@ -24,6 +25,7 @@ from app.services import (
     platform_settings,
     push_service,
     realtime,
+    reels,
     storage_service,
     support,
     token_service,
@@ -68,6 +70,7 @@ __all__ = [
     "admin_rider_service",
     "admin_vendor_service",
     "auth_service",
+    "banners",
     "cart_service",
     "category_service",
     "community",
@@ -82,6 +85,7 @@ __all__ = [
     "otp_service",
     "promo_service",
     "realtime",
+    "reels",
     "review_service",
     "rider_application_service",
     "rider_earnings_service",

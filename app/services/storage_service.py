@@ -47,20 +47,37 @@ _SERVICE = "s3"
 # because there is nothing to configure.
 _REGION = "auto"
 
-# MIME type -> file extension. Restricted to the image types the config allows;
-# an extension is what makes the object render inline in a browser rather than
-# download as an opaque blob.
+# MIME type -> file extension. Restricted to the types some upload purpose
+# allows; an extension is what makes the object render inline in a browser
+# rather than download as an opaque blob.
 _EXTENSIONS = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
     "image/gif": "gif",
     "application/pdf": "pdf",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "application/json": "json",
 }
 
 # Accepted for partner-application documents on top of ALLOWED_UPLOAD_TYPES:
 # a trade licence is routinely a PDF scan, never a photo.
 APPLICATION_EXTRA_TYPES = frozenset({"application/pdf"})
+
+# Reels: the video itself (its thumbnail is an ordinary image). Scoped to the
+# reel upload endpoints rather than the general one, where a customer avatar
+# has no business being a video.
+VIDEO_TYPES = frozenset({"video/mp4", "video/quicktime", "video/webm"})
+
+# A Lottie animation is a JSON document. Not executable in a browser, which is
+# why it is acceptable on our public domain where SVG, say, would not be.
+LOTTIE_TYPE = "application/json"
+
+# The admin console uploads everything the apps display: vendor documents
+# (PDF), reels (video) and banners (GIF, Lottie) as well as images.
+ADMIN_EXTRA_TYPES = APPLICATION_EXTRA_TYPES | VIDEO_TYPES | {"image/gif", LOTTIE_TYPE}
 
 
 class StorageNotConfiguredError(AppError):

@@ -37,10 +37,14 @@ screen is wrong.
 
 ## 2. Discovery
 
-`GET /home/feed` is one request per app launch: the category chip row, cuisine
-chips, restaurants with live offers, nearby, and top rated. Send `lat`/`lng`
-when you have them — without coordinates `nearby` comes back as an empty list
-(not absent) and every `distance_km` is `null`.
+`GET /home/feed` is one request per app launch: the banners, the category chip
+row, cuisine chips, restaurants with live offers, nearby, and top rated. Send
+`lat`/`lng` when you have them — without coordinates `nearby` comes back as an
+empty list (not absent) and every `distance_km` is `null`.
+
+A new restaurant has no reviews and no offers, so on the home feed it appears
+only in `nearby`. For a screen that lists every restaurant, use
+`GET /restaurants`.
 
 ### Categories — the chip row
 
@@ -100,7 +104,7 @@ session.
 | `cuisine` | one cuisine name (restaurant-level tag; predates categories) |
 | `is_open` | `true` / `false` — omit to get both |
 | `max_delivery_fee`, `min_rating` | numbers. `max_delivery_fee` keeps restaurants whose card fee fits — in effect a distance ceiling. Unlocated, it matches everything at or above the base fee and nothing below it |
-| `radius` | metres, capped at 25000 |
+| `radius` | metres. Default 15000 — the delivery range, so everything that can deliver to the customer is listed. Capped at 25000 |
 | `q` | name search |
 
 Every card's `delivery_fee` is quoted for its `distance_km`, on the same tariff
@@ -110,6 +114,31 @@ a free-delivery threshold apply.
 
 A **closed** restaurant still appears unless you filter it out. Grey it — do not
 hide it. Hiding makes customers think the restaurant left the platform.
+
+### Banners
+
+The home feed's `banners` are the HOME banners showing right now, in display
+order. `GET /banners?placement=HOME` returns the same list on its own, and any
+other placement the admin console uses. Each banner:
+
+| Field | Notes |
+|---|---|
+| `media_url` | The file to show |
+| `media_type` | `IMAGE` or `GIF`: render as an image. `LOTTIE`: a Lottie JSON animation — play it with a Lottie player |
+| `action_type` | What a tap opens: `NONE`, `RESTAURANT`, `CATEGORY` or `URL` |
+| `action_value` | The restaurant id, the category slug, or the http(s) URL |
+| `title` | Use as the accessibility label |
+
+### Reels
+
+`GET /reels?lat=&lng=` is the Reels screen, newest first and paginated. Each
+reel has `video_url`, `thumbnail_url` (show it while the video loads),
+`caption`, `duration_seconds`, an optional `menu_item` (`id`, `name`, `price`)
+and `restaurant`: the same card the lists return. The overlay's name, rating,
+prep time and distance come from that card, and **View** opens
+`GET /restaurants/{restaurant.id}`. Coordinates fill in the distance and
+delivery fee; they do not filter the feed. `restaurant_id=` shows one
+restaurant's reels only.
 
 ---
 
@@ -308,6 +337,8 @@ Auth column: **public** needs no token, **customer** needs a CUSTOMER token,
 | GET | `/restaurants/{id}/menu` | public | Categorised menu, variants, add-ons |
 | GET | `/restaurants/{id}/schedule` | public | Bookable delivery slots |
 | GET | `/search` | public | Restaurants, dishes and categories |
+| GET | `/banners` | public | App banners at a placement (HOME by default) |
+| GET | `/reels` | public | The Reels feed |
 | GET | `/cart` | customer | Current cart, live prices |
 | POST | `/cart/items` | customer | Add / update / remove a line |
 | PATCH | `/cart/items/{line_id}` | customer | Change a line's quantity |
@@ -343,7 +374,5 @@ Auth column: **public** needs no token, **customer** needs a CUSTOMER token,
 4. **No push notifications.** `POST /users/me/devices` does not exist, so the
    app learns about status changes by polling or by holding the vendor
    WebSocket.
-5. **Reels has no backend.** The screen exists in `ui/food-ui/`; nothing serves
-   it.
-6. **Slot capacity is not modelled.** Every open window is bookable, because
+5. **Slot capacity is not modelled.** Every open window is bookable, because
    nothing tracks kitchen throughput. A busy restaurant can be over-booked.

@@ -33,6 +33,7 @@ push and the rider-side display of the handoff code — see
 12. [Earnings & payouts](#12-earnings--payouts) — balance, withdraw, history
 13. [Business hours](#13-business-hours) — the weekly schedule
 14. [Promotions](#14-promotions) — offers, budgets, pause/end
+15. [Reels](#15-reels) — short videos in the customer app
 
 ---
 
@@ -745,6 +746,10 @@ All require a `VENDOR` bearer token unless noted.
 | POST | `/vendor/promotions` | vendor | Launch a promotion |
 | GET | `/vendor/promotions/{id}` | vendor | Detail + 7-day chart |
 | PATCH | `/vendor/promotions/{id}` | vendor | Pause / resume / end early |
+| POST | `/vendor/reels/uploads` | vendor | Upload URL for a reel video or thumbnail |
+| GET | `/vendor/reels` | vendor | My reels |
+| POST | `/vendor/reels` | vendor | Post a reel |
+| DELETE | `/vendor/reels/{id}` | vendor | Delete a reel |
 | POST | `/uploads/presigned-url` | any | Image upload URL |
 | GET | `/admin/payouts` | admin | Transfer work queue |
 | POST | `/admin/payouts/{id}/complete` | admin | Confirm a transfer |
@@ -944,6 +949,41 @@ have already seen is a bait-and-switch. Ended promotions are immutable.
 
 Promotions are redeemed at checkout, which is live, so a launched offer starts
 accumulating real stats as soon as customers use it.
+
+---
+
+## 15. Reels
+
+Short videos of your food, shown in the customer app's Reels feed with your
+restaurant's name, rating and a **View** button that opens your store.
+
+1. `POST /vendor/reels/uploads` `{"file_type": "video/mp4", "file_name": "burger.mp4"}`
+   returns `upload_url`, `public_url` and `headers`. PUT the video bytes to
+   `upload_url` with exactly those headers. Videos may be `video/mp4`,
+   `video/quicktime` (.mov) or `video/webm`. Do the same for a thumbnail
+   image (JPEG, PNG or WebP).
+2. `POST /vendor/reels`:
+
+```json
+{
+  "video_url": "<public_url of the video>",
+  "thumbnail_url": "<public_url of the image>",
+  "caption": "Our new double beef burger",
+  "duration_seconds": 18,
+  "menu_item_id": "<optional: the dish in the video>"
+}
+```
+
+The reel is in the feed straight away — as long as your restaurant is approved
+and active, since customers only see reels of restaurants they can find.
+`menu_item_id` must be a dish on your own menu.
+
+`GET /vendor/reels` lists your reels, newest first. A reel an administrator
+took out of the feed has `is_hidden: true` and a `hidden_reason`.
+`DELETE /vendor/reels/{id}` removes one.
+
+Keep videos short and compressed before upload: the upload goes straight to
+storage and no size limit or transcoding is applied.
 
 ---
 

@@ -1062,6 +1062,103 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "vendors and riders, so support can start from whatever the caller "
         "gave them.",
     ),
+    (
+        "POST",
+        "/admin/vendors",
+        "Adding a vendor from the console. Vendors could only self-register and "
+        "wait for approval; an administrator onboarding a shop had no way to "
+        "create it.",
+    ),
+    (
+        "PATCH",
+        "/admin/vendors/{id}",
+        "Editing any vendor's store, owner and partner details. Only the vendor "
+        "could edit their storefront, and fields like NID or business type could "
+        "not be edited at all.",
+    ),
+    (
+        "POST",
+        "/admin/uploads/presigned-url",
+        "Uploads for the console: vendor documents (PDF), reel videos and Lottie "
+        "banners, which the general upload endpoint does not accept.",
+    ),
+    (
+        "GET",
+        "/admin/banners",
+        "The banner list for the console, with whether each is showing now.",
+    ),
+    (
+        "POST",
+        "/admin/banners",
+        "Adds an in-app banner (image, GIF or Lottie). The apps had no managed "
+        "banners.",
+    ),
+    (
+        "GET",
+        "/admin/banners/{id}",
+        "One banner with its schedule and status, to fill the edit form.",
+    ),
+    (
+        "PATCH",
+        "/admin/banners/{id}",
+        "Edits, reorders, schedules or takes down a banner without a deploy.",
+    ),
+    (
+        "DELETE",
+        "/admin/banners/{id}",
+        "Removes a banner for good; is_active=false only takes it down.",
+    ),
+    (
+        "GET",
+        "/banners",
+        "The banners showing now at a placement, for the apps.",
+    ),
+    (
+        "GET",
+        "/reels",
+        "The customer Reels feed. The Reels screen existed with no backend.",
+    ),
+    (
+        "POST",
+        "/vendor/reels/uploads",
+        "A presigned URL for a reel video or thumbnail; the general upload "
+        "endpoint takes images only.",
+    ),
+    (
+        "GET",
+        "/vendor/reels",
+        "A vendor's own reels, including any an administrator hid.",
+    ),
+    (
+        "POST",
+        "/vendor/reels",
+        "A vendor posting a reel for their restaurant.",
+    ),
+    (
+        "DELETE",
+        "/vendor/reels/{id}",
+        "A vendor taking down one of their own reels; it leaves the feed at once.",
+    ),
+    (
+        "GET",
+        "/admin/reels",
+        "Every reel, hidden ones included, for moderation in the console.",
+    ),
+    (
+        "POST",
+        "/admin/reels",
+        "An administrator posting a reel for any restaurant.",
+    ),
+    (
+        "PATCH",
+        "/admin/reels/{id}",
+        "Edits a reel or hides it from the feed without deleting it.",
+    ),
+    (
+        "DELETE",
+        "/admin/reels/{id}",
+        "Removes a reel for good; hiding it keeps it for the vendor to see.",
+    ),
 ]
 
 PREFIX = "/api/v1"

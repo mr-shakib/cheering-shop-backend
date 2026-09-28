@@ -72,7 +72,8 @@ class VendorApplication(Base, UUIDPrimaryKey, TimestampMixin):
     owner_full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     owner_email: Mapped[str] = mapped_column(CIText(), nullable=False)
     owner_phone: Mapped[str] = mapped_column(String(20), nullable=False)
-    national_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Required on the form; may be missing for a vendor an administrator added.
+    national_id: Mapped[str | None] = mapped_column(String(50))
 
     # --- Documents & payout (form step 4) ----------------------------------
     # {kind: url} — kinds are validated at the schema boundary, but JSONB keeps
@@ -82,6 +83,12 @@ class VendorApplication(Base, UUIDPrimaryKey, TimestampMixin):
     payout: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
 
     agreed_to_terms: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # APPLICATION: submitted through the partner form. ADMIN: a vendor an
+    # administrator added directly (POST /admin/vendors); the row is then their
+    # partner record, approved at creation, with no in-app terms consent.
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'APPLICATION'")
+    )
 
     # --- Review -------------------------------------------------------------
     status: Mapped[str] = mapped_column(
@@ -97,7 +104,12 @@ class VendorApplication(Base, UUIDPrimaryKey, TimestampMixin):
         CheckConstraint("branch_count >= 1", name="ck_vendor_applications_branches"),
         CheckConstraint("latitude BETWEEN -90 AND 90", name="ck_vendor_applications_lat"),
         CheckConstraint("longitude BETWEEN -180 AND 180", name="ck_vendor_applications_lng"),
-        CheckConstraint("agreed_to_terms", name="ck_vendor_applications_terms"),
+        CheckConstraint(
+            "agreed_to_terms OR source = 'ADMIN'", name="ck_vendor_applications_terms"
+        ),
+        CheckConstraint(
+            "source IN ('APPLICATION', 'ADMIN')", name="ck_vendor_applications_source"
+        ),
         # The admin queue: pending applications, oldest first.
         Index(
             "ix_vendor_applications_queue",

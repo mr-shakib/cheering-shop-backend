@@ -339,7 +339,7 @@ CREATE TABLE vendor_applications (
     owner_full_name   varchar(150)  NOT NULL,
     owner_email       citext        NOT NULL,
     owner_phone       varchar(20)   NOT NULL,
-    national_id       varchar(50)   NOT NULL,
+    national_id       varchar(50),                         -- may be empty for source = ADMIN
 
     -- Documents & payout (form step 4): {kind: url} and free-shaped payout
     -- details, so a new document type is a code change, not a migration.
@@ -347,6 +347,9 @@ CREATE TABLE vendor_applications (
     payout            jsonb         NOT NULL DEFAULT '{}',
 
     agreed_to_terms   boolean       NOT NULL,
+    -- APPLICATION: submitted through the partner form. ADMIN: a vendor an
+    -- administrator added directly; this row is then their partner record.
+    source            varchar(20)   NOT NULL DEFAULT 'APPLICATION',
 
     -- Review
     status            vendor_application_status NOT NULL DEFAULT 'PENDING',
@@ -360,7 +363,8 @@ CREATE TABLE vendor_applications (
     CONSTRAINT ck_vendor_applications_branches CHECK (branch_count >= 1),
     CONSTRAINT ck_vendor_applications_lat      CHECK (latitude  BETWEEN -90  AND 90),
     CONSTRAINT ck_vendor_applications_lng      CHECK (longitude BETWEEN -180 AND 180),
-    CONSTRAINT ck_vendor_applications_terms    CHECK (agreed_to_terms)
+    CONSTRAINT ck_vendor_applications_terms    CHECK (agreed_to_terms OR source = 'ADMIN'),
+    CONSTRAINT ck_vendor_applications_source   CHECK (source IN ('APPLICATION', 'ADMIN'))
 );
 -- The admin queue: pending applications, oldest first.
 CREATE INDEX ix_vendor_applications_queue ON vendor_applications (status, created_at ASC);
@@ -1274,5 +1278,66 @@ CREATE TABLE community_reports (
     CONSTRAINT fk_community_reports_reporter FOREIGN KEY (reporter_id)
         REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Reels -----------------------------------------------------------------------
+-- [EXTENDED] Short restaurant videos for the customer Reels feed.
+CREATE TABLE reels (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_id    uuid         NOT NULL,
+    video_url        text         NOT NULL,
+    thumbnail_url    text,
+    caption          varchar(300),
+    duration_seconds smallint,
+    menu_item_id     uuid,
+    uploaded_by      uuid,
+    is_hidden        boolean      NOT NULL DEFAULT false,
+    hidden_reason    varchar(255),
+    created_at       timestamptz  NOT NULL DEFAULT now(),
+    updated_at       timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_reels_restaurant FOREIGN KEY (restaurant_id)
+        REFERENCES restaurants(id) ON DELETE CASCADE,
+    CONSTRAINT fk_reels_menu_item FOREIGN KEY (menu_item_id)
+        REFERENCES menu_items(id) ON DELETE SET NULL,
+    CONSTRAINT fk_reels_uploaded_by FOREIGN KEY (uploaded_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_reels_duration CHECK (duration_seconds IS NULL OR duration_seconds > 0)
+);
+CREATE INDEX ix_reels_feed ON reels (created_at DESC) WHERE NOT is_hidden;
+CREATE INDEX ix_reels_restaurant ON reels (restaurant_id, created_at DESC);
+CREATE TRIGGER trg_reels_updated_at BEFORE UPDATE ON reels
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- App banners -------------------------------------------------------------------
+-- [EXTENDED] Admin-managed banners shown in the apps (image, GIF or Lottie).
+CREATE TABLE app_banners (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    title        varchar(120) NOT NULL,
+    media_url    text         NOT NULL,
+    media_type   varchar(10)  NOT NULL,
+    placement    varchar(40)  NOT NULL DEFAULT 'HOME',
+    action_type  varchar(20)  NOT NULL DEFAULT 'NONE',
+    action_value text,
+    sort_order   integer      NOT NULL DEFAULT 0,
+    is_active    boolean      NOT NULL DEFAULT true,
+    starts_at    timestamptz,
+    ends_at      timestamptz,
+    created_by   uuid,
+    created_at   timestamptz  NOT NULL DEFAULT now(),
+    updated_at   timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_app_banners_created_by FOREIGN KEY (created_by)
+        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ck_app_banners_media_type CHECK (media_type IN ('IMAGE', 'GIF', 'LOTTIE')),
+    CONSTRAINT ck_app_banners_action CHECK (
+        action_type IN ('NONE', 'RESTAURANT', 'CATEGORY', 'URL')
+        AND (action_type = 'NONE' OR action_value IS NOT NULL)
+    ),
+    CONSTRAINT ck_app_banners_window CHECK (
+        starts_at IS NULL OR ends_at IS NULL OR ends_at > starts_at
+    )
+);
+CREATE INDEX ix_app_banners_placement ON app_banners (placement, sort_order)
+    WHERE is_active;
+CREATE TRIGGER trg_app_banners_updated_at BEFORE UPDATE ON app_banners
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

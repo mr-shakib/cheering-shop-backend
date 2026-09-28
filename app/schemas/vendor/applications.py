@@ -53,11 +53,14 @@ class VendorApplicationDetail(BaseModel):
     owner_full_name: str
     owner_email: str
     owner_phone: str
-    national_id: str
+    national_id: str | None = None
 
     documents: dict[str, str] = Field(default_factory=dict)
     payout: dict = Field(default_factory=dict)
 
+    source: str = Field(
+        default="APPLICATION", description="APPLICATION, or ADMIN for a vendor added in the console"
+    )
     review_note: str | None = None
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None

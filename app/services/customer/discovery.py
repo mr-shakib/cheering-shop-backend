@@ -44,6 +44,7 @@ from app.schemas.customer import (
     SearchResults,
     VariantOut,
 )
+from app.services import banners as banner_service
 from app.services import category_service, platform_settings
 from app.services.pricing import (
     DeliveryFees,
@@ -266,6 +267,7 @@ async def home_feed(
         Restaurant.rating_count > 0,
     )
     return HomeFeed(
+        banners=await banner_service.live(db, "HOME"),
         cuisines=cuisines,
         categories=categories,
         promoted=promoted,

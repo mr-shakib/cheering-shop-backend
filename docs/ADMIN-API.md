@@ -182,6 +182,49 @@ response.
 To change a vendor's commission, call `PATCH /admin/restaurants/{id}/commission`
 `{"commission_rate": 0.15}`.
 
+**Uploading files.** Every image, document, video or Lottie file the console
+sends is uploaded first. `POST /admin/uploads/presigned-url`
+`{"file_type", "file_name"}` returns `upload_url`, `public_url` and `headers`.
+PUT the bytes to `upload_url` with exactly those headers, then send
+`public_url` in the field. Accepted types: `image/jpeg`, `image/png`,
+`image/webp`, `image/gif`, `application/pdf`, `video/mp4`, `video/quicktime`,
+`video/webm` and `application/json` (Lottie).
+
+**Add Vendor:** `POST /admin/vendors` creates the owner's account, the
+restaurant and its partner record in one call, and returns the same body as
+`GET /admin/vendors/{id}`.
+
+| Field | Notes |
+|---|---|
+| `name`, `address_line`, `latitude`, `longitude` | Required. The coordinates are the map pin — they decide who sees the restaurant |
+| `owner_full_name`, `owner_email`, `owner_phone` | Required. The email and phone must not belong to another account |
+| `owner_password` | Optional. Without it, the owner is emailed how to set one (the approved-applicant email) |
+| `business_type` | `RESTAURANT` (default), `GROCERY` or `PHARMACY`. Sets the default commission |
+| `business_category`, `branch_count`, `national_id`, `area` | Optional |
+| `description`, `phone`, `cuisine_types`, `logo_url`, `cover_image_url`, `min_order_amount`, `avg_prep_time_mins` | Optional store info. `phone` defaults to the owner's |
+| `documents` | Optional `{kind: url}`; kinds are `shop_image`, `owner_nid`, `menu_list`, `trade_license` |
+| `payout` | Optional `{method: BANK/BKASH/NAGAD/ROCKET, account_name, account_number, bank_name, branch_name}` |
+| `commission_rate` | Optional fraction (`0.15` = 15%); omitted, the Settings rate for the business type |
+| `is_verified` | Default `true`: customers can find it at once. `false` puts it in the application queue instead |
+| `status` | `CLOSED` (default) or `OPEN` |
+
+A vendor added here has `onboarding_source: "ADMIN"` in its details and an
+application number, and shows in `GET /admin/vendor-applications?status=APPROVED`
+with `source: "ADMIN"`.
+
+**Edit Vendor:** `PATCH /admin/vendors/{id}` takes any of the fields above
+(except `branch_count` is optional too) plus `business_hours` (the seven-day
+body of `PUT /vendor/hours`), `is_verified` (true approves — and settles a
+pending application with its email; false suspends and closes the store) and
+`is_active` (false takes the storefront out of discovery). Omitted fields are
+left alone. `documents` is merged: `{"owner_nid": "<url>"}` sets one,
+`{"trade_license": null}` removes one. `latitude` and `longitude` move
+together. It returns the updated details.
+
+Business type, category, NID, documents and payout live on the vendor's
+partner record. A vendor that registered through the API fast path has none;
+the first edit of one of those fields creates it.
+
 **Application (the review queue):** `GET /admin/vendor-applications` takes:
 
 | Query | Meaning |
@@ -476,6 +519,23 @@ and, once removed, `removed_at` and `removal_reason`.
 | Delete | `POST /admin/community/posts/{id}/remove` `{"reason"}`. The post leaves every feed; it stays on record. |
 | Ban user | `PATCH /admin/users/{author.id}/status` `{"is_active": false}` |
 
+### Reels
+
+Restaurants post short videos to the customer app's Reels feed; an
+administrator can post for any restaurant and moderate them all.
+
+| Action | Call |
+|---|---|
+| List | `GET /admin/reels`, newest first. Query: `status` (`LIVE`, `HIDDEN` or `ALL`, the default) and `restaurant_id` |
+| Post | Upload the video and a thumbnail (`POST /admin/uploads/presigned-url`), then `POST /admin/reels` `{restaurant_id, video_url, thumbnail_url, caption, duration_seconds, menu_item_id}` |
+| Hide / unhide | `PATCH /admin/reels/{id}` `{"is_hidden": true, "hidden_reason": "…"}`. The reel leaves the feed; the vendor still sees it with the reason |
+| Edit | `PATCH /admin/reels/{id}` `{caption, thumbnail_url, menu_item_id}` |
+| Delete | `DELETE /admin/reels/{id}` |
+
+Rows carry `restaurant_name`, `menu_item_name`, `is_hidden` and `uploaded_by`.
+The feed only shows reels of restaurants customers can find (approved and
+active).
+
 ## 14. Advertisement
 
 The campaigns are vendor promotions: the offers behind the home feed's
@@ -494,6 +554,33 @@ change in their app.
 Impressions and clicks come from the customer app reporting the promoted
 cards it shows and the ones tapped (`POST /promotions/events`). They count only
 while a campaign is live.
+
+### App banners
+
+The banners the apps show (the top of the customer home screen is placement
+`HOME`). Upload the file with `POST /admin/uploads/presigned-url`, then:
+
+`POST /admin/banners`
+
+| Field | Notes |
+|---|---|
+| `title` | Required. The console label, and the app's accessibility text |
+| `media_url` | Required. The uploaded file's `public_url` |
+| `media_type` | `IMAGE` (png/jpg/webp), `GIF` or `LOTTIE` (a Lottie `.json`). Omitted, it is inferred from the URL's extension |
+| `placement` | `HOME` by default. Any `UPPER_SNAKE` name the apps agree on |
+| `action_type`, `action_value` | What a tap opens: `NONE`; `RESTAURANT` + restaurant id; `CATEGORY` + category slug; `URL` + an http(s) link. The restaurant or category must exist |
+| `sort_order` | Lowest shows first |
+| `is_active` | `false` keeps it without showing it |
+| `starts_at`, `ends_at` | Optional window. It shows from `starts_at` until `ends_at`, with no job to run |
+
+`GET /admin/banners` lists them by placement and order, filterable by
+`placement` and `status`. Each row's `status` is computed: `LIVE` (showing
+now), `SCHEDULED`, `EXPIRED` or `INACTIVE`. `GET`, `PATCH` and `DELETE
+/admin/banners/{id}` read, edit and remove one; `PATCH` takes any field above,
+and `null` clears `starts_at`, `ends_at` or `action_value`.
+
+The apps read `GET /banners?placement=HOME`, and the home feed carries the
+HOME ones as `banners`.
 
 ## 15. Live Tracking
 
@@ -602,6 +689,9 @@ either way.
 | PATCH | `/admin/users/{id}/status` | admin | Block or unblock a customer or rider |
 | GET | `/admin/vendors` | admin | Active vendors; `format=csv` exports |
 | GET | `/admin/vendors/{id}` | admin | Vendor details — Store Info |
+| POST | `/admin/vendors` | admin | Add a vendor (approved at once) |
+| PATCH | `/admin/vendors/{id}` | admin | Edit any vendor detail |
+| POST | `/admin/uploads/presigned-url` | admin | Upload URL for images, PDFs, videos, Lottie |
 | GET | `/admin/vendors/{id}/reviews` | admin | Vendor reviews and rating histogram |
 | GET | `/admin/vendors/{id}/finance` | admin | Vendor money tiles |
 | GET | `/admin/restaurants/pending` | admin | Unverified restaurants |
@@ -648,6 +738,15 @@ either way.
 | PATCH | `/admin/support/tickets/{id}` | admin | Close, prioritise, assign |
 | GET | `/admin/community/posts` | admin | Community moderation queue |
 | POST | `/admin/community/posts/{id}/remove` | admin | Remove a post |
+| GET | `/admin/reels` | admin | Every reel, hidden ones included |
+| POST | `/admin/reels` | admin | Post a reel for any restaurant |
+| PATCH | `/admin/reels/{id}` | admin | Edit or hide a reel |
+| DELETE | `/admin/reels/{id}` | admin | Delete a reel |
+| GET | `/admin/banners` | admin | App banners with live status |
+| POST | `/admin/banners` | admin | Add a banner (image, GIF, Lottie) |
+| GET | `/admin/banners/{id}` | admin | One banner |
+| PATCH | `/admin/banners/{id}` | admin | Edit, schedule, reorder, take down |
+| DELETE | `/admin/banners/{id}` | admin | Delete a banner |
 | GET | `/admin/advertisements` | admin | Vendor ad campaigns |
 | PATCH | `/admin/advertisements/{id}` | admin | Pause, resume or end a campaign |
 | GET | `/admin/notifications` | admin | Notification campaigns |

@@ -36,13 +36,13 @@ reader needs. Check it when you change a row.
 
 | Status | Rows | Means |
 |---|---|---|
-| 🟢 live | 70 | A real endpoint serves it |
+| 🟢 live | 71 | A real endpoint serves it |
 | ⚪ client | 9 | No network call — static, or data an earlier screen already fetched |
 | 🟠 partial | 3 | The screen renders, but part of what it promises is stubbed |
-| 🔴 none | 2 | Nothing serves it |
+| 🔴 none | 1 | Nothing serves it |
 
-**The amber and red rows are the point of this document.** Reels and the vendor
-"Chat with us" screen have no backend at all. Track order renders, but the rider
+**The amber and red rows are the point of this document.** The vendor
+"Chat with us" screen has no backend at all. Track order renders, but the rider
 dot is a `501` because no rider client reports a position, and Call Screen
 returns `available: false` rather than a real phone number. Finding that out
 here is cheaper than finding it out three days into the sprint.
@@ -72,7 +72,7 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 | My favorite-1.png | Saved list | `GET /users/me/favorites`; heart → `POST /users/me/favorites/{id}` | 🟢 live |
 | Schedule Order.png | Delivery-time sheet | `GET /restaurants/{id}/schedule`; Confirm carries the slot into `scheduled_for` | 🟢 live |
 | Share Details.png | Share sheet | client-side (OS share; no backend) | ⚪ client |
-| Reels.png | Video feed | **no backend** — not in the spec, nothing serves it | 🔴 none |
+| Reels.png | Video feed | `GET /reels?lat=&lng=` (View → `GET /restaurants/{id}`) | 🟢 live |
 
 ### Cart and checkout
 
