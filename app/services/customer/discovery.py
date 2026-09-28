@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.errors import NotFoundError
-from app.core.money import to_major
+from app.core.money import to_major, to_minor
 from app.models.category import Category
 from app.models.enums import RestaurantStatus
 from app.models.menu import MenuCategory, MenuItem
@@ -44,7 +44,13 @@ from app.schemas.customer import (
     SearchResults,
     VariantOut,
 )
-from app.services import category_service
+from app.services import category_service, platform_settings
+from app.services.pricing import (
+    DeliveryFees,
+    delivery_fee_minor,
+    delivery_reach_km,
+    haversine_km,
+)
 
 # A restaurant is only discoverable when the vendor is verified AND has not
 # deactivated the storefront. `status` (OPEN/CLOSED) is separate and does NOT
@@ -68,8 +74,11 @@ def _distance_expr(lat: float | None, lng: float | None):
     return func.ST_Distance(Restaurant.location, func.cast(origin, Restaurant.location.type))
 
 
-def _to_card(row, favorite_ids: set[uuid.UUID] | None = None) -> RestaurantCard:
+def _to_card(
+    row, fees: DeliveryFees, favorite_ids: set[uuid.UUID] | None = None
+) -> RestaurantCard:
     restaurant, distance_m = row
+    distance_km = distance_m / 1000 if distance_m is not None else 0.0
     return RestaurantCard(
         id=str(restaurant.id),
         name=restaurant.name,
@@ -80,10 +89,12 @@ def _to_card(row, favorite_ids: set[uuid.UUID] | None = None) -> RestaurantCard:
         rating_avg=float(restaurant.rating_avg or 0),
         rating_count=restaurant.rating_count,
         avg_prep_time_mins=restaurant.avg_prep_time_mins,
-        # Platform policy, identical everywhere. The card shows the base a
-        # customer pays before distance; the real fee for their address is
-        # quoted at checkout, which is the first point we know where they are.
-        delivery_fee=Decimal(settings.DELIVERY_FEE_BASE),
+        # The fee for this distance on the tariff checkout charges, so a
+        # restaurant 6 km away no longer advertises the 1 km price. Unlocated,
+        # it is the fee at zero distance — the least any address pays. An
+        # item_total of 0 leaves the free-delivery threshold out: there is no
+        # cart here, and checkout still applies it.
+        delivery_fee=to_major(delivery_fee_minor(distance_km, 0, fees)),
         min_order_amount=to_major(restaurant.min_order_amount),
         is_open=str(restaurant.status) == RestaurantStatus.OPEN,
         distance_km=round(distance_m / 1000, 2) if distance_m is not None else None,
@@ -123,6 +134,7 @@ async def list_restaurants(
     of them.
     """
     distance = _distance_expr(lat, lng)
+    fees = await platform_settings.delivery_fees(db)
     conditions = [_VISIBLE]
 
     if lat is not None and lng is not None:
@@ -145,11 +157,15 @@ async def list_restaurants(
         conditions.append(category_service.sells_under(category))
     if search:
         conditions.append(Restaurant.name.ilike(f"%{search}%"))
-    if max_delivery_fee is not None and max_delivery_fee < settings.DELIVERY_FEE_BASE:
-        # Delivery costs the same from every restaurant now, so this filter is
-        # all-or-nothing rather than a discriminator. Still honoured, because a
-        # client that asks for "under ৳5 delivery" must not be shown ৳10 ones.
-        conditions.append(false())
+    if max_delivery_fee is not None:
+        # The fee grows with distance, so a fee ceiling is a distance ceiling.
+        # Unlocated, every card shows the zero-distance fee, so the filter is
+        # all-or-nothing against that.
+        reach_km = delivery_reach_km(to_minor(max_delivery_fee), fees)
+        if reach_km is not None and reach_km < 0:
+            conditions.append(false())
+        elif reach_km is not None and lat is not None and lng is not None:
+            conditions.append(distance <= reach_km * 1000)
     if min_rating is not None:
         conditions.append(Restaurant.rating_avg >= min_rating)
     if is_open is not None:
@@ -161,10 +177,9 @@ async def list_restaurants(
 
     order_by = {
         "rating": (Restaurant.rating_avg.desc(), Restaurant.rating_count.desc()),
-        # Accepted and stable, but no longer a discriminator: every
-        # restaurant carries the same platform delivery base. Kept so a
-        # shipped client asking for it gets a list rather than a 400.
-        "delivery_fee": (Restaurant.rating_avg.desc(),),
+        # The fee only rises with distance, so cheapest delivery first is
+        # nearest first. Unlocated, every fee is the same and rating decides.
+        "delivery_fee": (distance.asc().nulls_last(), Restaurant.rating_avg.desc()),
         "prep_time": (Restaurant.avg_prep_time_mins.asc(),),
         # NULLS LAST so an unlocated caller does not get a list ordered by
         # nothing in particular ahead of the rating tiebreak.
@@ -175,7 +190,7 @@ async def list_restaurants(
         select(Restaurant, distance).where(where).order_by(*order_by).limit(limit).offset(offset)
     )
     favorites = await _favorite_ids(db, user_id)
-    return [_to_card(r, favorites) for r in rows.all()], total
+    return [_to_card(r, fees, favorites) for r in rows.all()], total
 
 
 async def home_feed(
@@ -192,6 +207,7 @@ async def home_feed(
     three would be slower and far harder to change than three indexed reads.
     """
     favorites = await _favorite_ids(db, user_id)
+    fees = await platform_settings.delivery_fees(db)
     distance = _distance_expr(lat, lng)
 
     # unnest() must be expanded in a subquery before it can be grouped:
@@ -216,7 +232,7 @@ async def home_feed(
         rows = await db.execute(
             select(Restaurant, distance).where(where).order_by(*order_by).limit(limit)
         )
-        return [_to_card(r, favorites) for r in rows.all()]
+        return [_to_card(r, fees, favorites) for r in rows.all()]
 
     nearby: list[RestaurantCard] = []
     if lat is not None and lng is not None:
@@ -438,12 +454,11 @@ async def restaurant_detail(
     restaurant = await _load_visible(db, restaurant_id)
     distance_m = None
     if lat is not None and lng is not None:
-        from app.services.pricing import haversine_km
-
         distance_m = haversine_km(lat, lng, restaurant.latitude, restaurant.longitude) * 1000
 
     favorites = await _favorite_ids(db, user_id)
-    card = _to_card((restaurant, distance_m), favorites)
+    fees = await platform_settings.delivery_fees(db)
+    card = _to_card((restaurant, distance_m), fees, favorites)
 
     now = func.now()
     promos = await db.scalars(

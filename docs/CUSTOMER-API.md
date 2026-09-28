@@ -95,13 +95,18 @@ session.
 
 | Param | Values |
 |---|---|
-| `sort` | `distance` (default), `rating`, `prep_time`. `delivery_fee` is accepted but no longer discriminates — the fee is the same everywhere |
+| `sort` | `distance` (default), `rating`, `delivery_fee`, `prep_time`. The fee only rises with distance, so `delivery_fee` orders like `distance` (by rating when unlocated) |
 | `category` | a category `slug` from the chip row — see *Categories* above |
 | `cuisine` | one cuisine name (restaurant-level tag; predates categories) |
 | `is_open` | `true` / `false` — omit to get both |
-| `max_delivery_fee`, `min_rating` | numbers. `max_delivery_fee` is all-or-nothing now: below ৳10 it matches nothing |
+| `max_delivery_fee`, `min_rating` | numbers. `max_delivery_fee` keeps restaurants whose card fee fits — in effect a distance ceiling. Unlocated, it matches everything at or above the base fee and nothing below it |
 | `radius` | metres, capped at 25000 |
 | `q` | name search |
+
+Every card's `delivery_fee` is quoted for its `distance_km`, on the same tariff
+checkout charges (see §4). Without `lat`/`lng` it is the base fee — the least any
+address pays. Checkout re-quotes from the delivery address, and only there does
+a free-delivery threshold apply.
 
 A **closed** restaurant still appears unless you filter it out. Grey it — do not
 hide it. Hiding makes customers think the restaurant left the platform.

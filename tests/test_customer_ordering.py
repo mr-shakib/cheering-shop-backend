@@ -731,3 +731,75 @@ async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitch
     )
     assert r.json()["data"]["delivery_fee"] < 40
     assert r.json()["data"]["delivery_fee"] >= settings.DELIVERY_FEE_BASE
+
+
+# The kitchen fixture sits at (23.7936, 90.4064). ~3.5 km due north of it is
+# 2.5 chargeable km — three started — well clear of a tier boundary.
+_FAR = {"lat": 23.8250, "lng": 90.4064}
+
+
+def _card(r, kitchen):
+    assert r.status_code == 200, r.text
+    return next(c for c in r.json()["data"] if c["id"] == str(kitchen.restaurant.id))
+
+
+async def test_cards_quote_the_delivery_fee_for_their_distance(client, kitchen):
+    """The listing used to show the base fee whatever the distance. Each card
+    now carries the fee checkout would charge from where the caller is."""
+    from app.core.config import settings
+
+    base, per_km = settings.DELIVERY_FEE_BASE, settings.DELIVERY_FEE_PER_KM
+
+    unlocated = _card(await client.get(f"{V1}/restaurants"), kitchen)
+    assert unlocated["delivery_fee"] == base
+
+    at_door = _card(
+        await client.get(f"{V1}/restaurants", params={"lat": 23.7936, "lng": 90.4064}), kitchen
+    )
+    assert at_door["delivery_fee"] == base
+
+    far = _card(await client.get(f"{V1}/restaurants", params=_FAR), kitchen)
+    assert 3.0 < far["distance_km"] < 4.0, f"fixture geometry moved: {far['distance_km']} km"
+    assert far["delivery_fee"] == base + 3 * per_km == 34
+
+    detail = await client.get(f"{V1}/restaurants/{kitchen.restaurant.id}", params=_FAR)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["delivery_fee"] == 34
+
+
+async def test_max_delivery_fee_is_a_distance_ceiling(client, kitchen):
+    listing = f"{V1}/restaurants"
+    ids = lambda r: [c["id"] for c in r.json()["data"]]  # noqa: E731
+    mine = str(kitchen.restaurant.id)
+
+    assert mine in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 34}))
+    assert mine not in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 33}))
+    # Unlocated, every card shows the base, so only a ceiling under it bites.
+    assert mine in ids(await client.get(listing, params={"max_delivery_fee": 10}))
+    assert mine not in ids(await client.get(listing, params={"max_delivery_fee": 9}))
+
+
+async def test_sorting_by_delivery_fee_is_cheapest_first(client, kitchen):
+    r = await client.get(f"{V1}/restaurants", params={**_FAR, "sort": "delivery_fee"})
+    assert r.status_code == 200, r.text
+    fees = [c["delivery_fee"] for c in r.json()["data"]]
+    assert fees == sorted(fees)
+
+
+def test_delivery_reach_is_the_inverse_of_the_fee():
+    """Brute force: for every budget, a distance fits exactly when its fee does."""
+    from app.services.pricing import DeliveryFees, delivery_fee_minor, delivery_reach_km
+
+    tariffs = [
+        DeliveryFees(base=1000, per_km=800),
+        DeliveryFees(base=1000, per_km=800, minimum=3000, surcharge=1500),
+        DeliveryFees(base=2000, per_km=0),
+    ]
+    for fees in tariffs:
+        for budget in range(0, 8000, 100):
+            reach = delivery_reach_km(budget, fees)
+            for tenth in range(0, 150):
+                km = tenth / 10
+                fits = delivery_fee_minor(km, 0, fees) <= budget
+                within = reach is None or km <= reach
+                assert fits == within, (fees, budget, km, reach)

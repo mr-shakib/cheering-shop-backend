@@ -168,6 +168,22 @@ def delivery_fee_minor(
     return max(distance_fee, fees.minimum) + fees.surcharge
 
 
+def delivery_reach_km(budget: int, fees: DeliveryFees) -> float | None:
+    """The farthest distance whose delivery fee fits `budget` (paisa) — the
+    inverse of `delivery_fee_minor`, for the "max delivery fee" filter.
+
+    None means every distance fits (no per-km charge); a negative value means
+    none does. The free-delivery threshold is ignored: it depends on a cart
+    the listing screens do not have.
+    """
+    headroom = budget - fees.surcharge
+    if headroom < max(fees.base, fees.minimum):
+        return -1.0
+    if fees.per_km == 0:
+        return None
+    return settings.DELIVERY_FREE_KM + (headroom - fees.base) // fees.per_km
+
+
 def quote(
     lines: list[QuoteLine],
     *,

@@ -170,15 +170,17 @@ async def set_default(db: AsyncSession, user_id: uuid.UUID, address_id: str) -> 
 async def list_favorites(db: AsyncSession, user_id: uuid.UUID) -> list[RestaurantCard]:
     """My Favorites. Reuses the discovery card so the row renders identically
     to the same restaurant seen anywhere else."""
+    from app.services import platform_settings
     from app.services.customer.discovery import _to_card
 
+    fees = await platform_settings.delivery_fees(db)
     rows = await db.execute(
         select(Restaurant)
         .join(Favorite, Favorite.restaurant_id == Restaurant.id)
         .where(Favorite.user_id == user_id)
         .order_by(Favorite.created_at.desc())
     )
-    return [_to_card((r, None), {r.id}) for r in rows.scalars().all()]
+    return [_to_card((r, None), fees, {r.id}) for r in rows.scalars().all()]
 
 
 async def toggle_favorite(
