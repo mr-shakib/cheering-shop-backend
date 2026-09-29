@@ -1,3 +1,17 @@
+# The admin console (admin-web/, React + Vite) is built here and copied into
+# the API image below, which serves it at /admin. Node exists only in this
+# stage; the final image carries the static files and nothing else.
+FROM node:24-slim AS admin-web
+
+WORKDIR /web
+# Lockfile first, so `npm ci` is cached until dependencies change.
+COPY admin-web/package.json admin-web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY admin-web/ ./
+# Typecheck, then build into /web/dist instead of the source tree's
+# ../app/static/admin, which does not exist inside this stage.
+RUN npm run build -- --outDir /web/dist
+
 # 3.13-slim rather than 3.14: every dependency was import-tested on 3.14 and
 # works, but 3.13 is the conservative choice for a deployed image while the
 # 3.14 wheel ecosystem settles. Bump the tag when you are ready — nothing in
@@ -23,6 +37,9 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app ./app
+# Replaces anything a local build left in app/static/admin (it is gitignored,
+# and .dockerignore keeps it out of the context anyway).
+COPY --from=admin-web /web/dist ./app/static/admin
 COPY migrations ./migrations
 # Operator tooling (create_admin.py) — the README tells people to run it with
 # `docker exec`, which only works if it is actually in the image.

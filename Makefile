@@ -1,4 +1,4 @@
-.PHONY: help install up down migrate revision run worker test lint verify-db smoke smoke-prod dev
+.PHONY: help install up down migrate revision run worker test lint verify-db smoke smoke-prod dev admin-install admin-dev admin-build
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n",$$1,$$2}'
@@ -44,3 +44,12 @@ dev:  ## One command: start services, migrate, run the API
 
 verify-db:  ## Run the schema invariant harness against the running database
 	docker compose exec -T postgres psql -U crshop -d crshop -v ON_ERROR_STOP=1 < db/verify_constraints.sql
+
+admin-install:  ## Install the admin console's dependencies (admin-web/)
+	cd admin-web && npm ci
+
+admin-dev:  ## Admin console with hot reload at :5173/admin/ (needs `make run`)
+	cd admin-web && npm run dev
+
+admin-build:  ## Typecheck and build the admin console into app/static/admin
+	cd admin-web && npm run build

@@ -9,9 +9,9 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.core.admin_ui import AdminConsoleFiles
 from app.core.config import settings
 from app.core.database import check_database, dispose_engine
 from app.core.errors import register_exception_handlers
@@ -94,15 +94,13 @@ register_exception_handlers(app)
 # Spec §2: every endpoint lives under /api/v1
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
-# The admin console: static HTML/JS served by the API itself, so it needs no
-# build step, no separate host and no CORS entry. It lives at /admin (outside
-# the /api/v1 prefix, so it cannot collide with the /api/v1/admin endpoints)
-# and calls the API on the same origin. `SecurityHeadersMiddleware` relaxes the
-# CSP for exactly this path prefix.
+# The admin console: the React app in admin-web/, built into static/admin and
+# served by the API itself, so it needs no separate host and no CORS entry. It
+# lives at /admin (outside the /api/v1 prefix, so it cannot collide with the
+# /api/v1/admin endpoints) and calls the API on the same origin.
+# `SecurityHeadersMiddleware` sets its CSP for exactly this path prefix.
 app.mount(
-    "/admin",
-    StaticFiles(directory=Path(__file__).parent / "static" / "admin", html=True),
-    name="admin_ui",
+    "/admin", AdminConsoleFiles(Path(__file__).parent / "static" / "admin"), name="admin_ui"
 )
 
 _PRIVACY_POLICY = Path(__file__).parent / "static" / "legal" / "privacy.html"

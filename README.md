@@ -14,7 +14,7 @@ FastAPI · PostgreSQL 16 + PostGIS · SQLAlchemy 2.0 (async) · Alembic · Redis
 | **Step 2** Database schema | Complete — 25 tables, 21 invariant assertions passing |
 | **Step 3** Project scaffolding | Complete — all 47 endpoints routed, zero model drift |
 | **Step 4** API implementation | Complete — all 47 spec endpoints plus the [EXTENDED] vendor, admin, rider and chat routes (105 routes). Nothing returns 501 |
-| **Step 5** Admin console | Basic — vendor approval at `/admin/`, see [docs/ADMIN-APP.md](docs/ADMIN-APP.md) |
+| **Step 5** Admin console | Complete — every admin screen, a React app served at `/admin/`, see [docs/ADMIN-APP.md](docs/ADMIN-APP.md) |
 
 ---
 
@@ -42,7 +42,7 @@ make verify-db   # the 21 schema invariant assertions
 **Setting up OTP email?** Read [docs/email-setup-resend.md](docs/email-setup-resend.md).
 **Frontend integrating auth?** Send them [docs/AUTH-API.md](docs/AUTH-API.md).
 **Building the restaurant app?** Send them [docs/VENDOR-API.md](docs/VENDOR-API.md).
-**Approving vendors?** Open `/admin/` on the API host — see [docs/ADMIN-APP.md](docs/ADMIN-APP.md).
+**Running the platform?** Open `/admin/` on the API host (build it first with `make admin-build`) — see [docs/ADMIN-APP.md](docs/ADMIN-APP.md).
 **Curating the home screen chips?** Read [docs/CATEGORIES.md](docs/CATEGORIES.md).
 
 > **Host ports:** Postgres binds `5433` by default, not 5432, because 5432 is
@@ -63,13 +63,14 @@ app/
     vendor/      the vendor domain: storefront, applications, orders, insights,
                  finance, promotions — aliased as vendor_*_service in app.services
     *_service.py auth, menu, OTP, tokens, storage, email
-  static/admin/  the admin console — static HTML/JS served at /admin/
+  static/admin/  the admin console build, served at /admin/ (gitignored; `make admin-build`)
   api/
     deps.py      auth, RBAC, pagination, idempotency
     v1/
       router.py  aggregation
       endpoints/ one module per spec section
   workers/       arq background tasks
+admin-web/       the admin console source (React + Vite); builds into app/static/admin
 db/
   schema.sql              authoring source for the schema
   verify_constraints.sql  21 assertions that the DB REJECTS invalid data

@@ -139,7 +139,10 @@ wrong produces a 404 or 502 that is tedious to debug.
 **Admin console on its own subdomain (optional):** add a second domain to the
 same `api` service, e.g. `admin.yourdomain.com`, port 8000, HTTPS on, and set
 `ADMIN_UI_HOST=admin.yourdomain.com` in the Environment tab. Full steps in
-[docs/ADMIN-APP.md](../docs/ADMIN-APP.md).
+[docs/ADMIN-APP.md](../docs/ADMIN-APP.md). The console is built inside the
+image (the Dockerfile's Node stage), so there is no separate build step; for
+uploads from it, the R2 bucket's CORS rules must allow `PUT` from the console's
+origin.
 
 ---
 

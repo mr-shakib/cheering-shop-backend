@@ -10,6 +10,7 @@ from starlette.responses import Response
 
 from app.core.client import client_ip
 from app.core.config import settings
+from app.services.storage_service import browser_origins
 
 log = structlog.get_logger()
 
@@ -126,15 +127,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # so the obvious "set then remove" spelling raises AttributeError and turns
     # every docs request into a 500.
     CSP_EXEMPT_PATHS = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
-    ADMIN_UI_CSP = (
-        "default-src 'self'; img-src 'self' https: data:; connect-src 'self'; "
-        "frame-ancestors 'none'"
-    )
     # The privacy policy is one self-contained document: its only styling is an
     # inline <style>, and it has no scripts, images or requests. Allowing inline
     # style adds nothing an attacker can use when no script can ever run.
     LEGAL_PAGE_PATHS = frozenset({"/privacy"})
     LEGAL_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+
+    @staticmethod
+    def admin_ui_csp() -> str:
+        """The admin console's policy. Its code is same-origin files with no
+        inline script, so 'self' covers scripts and styles. Images, reel videos
+        and map tiles come from object storage and OpenStreetMap over https.
+        Uploads are PUT straight to the bucket, so `connect-src` also names the
+        storage origins; built per request because they come from settings."""
+        connect = " ".join(["'self'", *browser_origins()])
+        return (
+            f"default-src 'self'; img-src 'self' https: data:; media-src 'self' https:; "
+            f"connect-src {connect}; frame-ancestors 'none'"
+        )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
@@ -144,16 +154,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
 
         # The admin console under /admin is the one place this process serves
-        # HTML with scripts. Its assets are same-origin files (no inline code),
-        # so 'self' is enough; images may come from object storage over https.
-        # Everywhere else the API returns JSON, so the policy can be maximally
-        # restrictive.
+        # HTML with scripts (see admin_ui_csp). Everywhere else the API returns
+        # JSON, so the policy can be maximally restrictive.
         path = request.url.path
         if path == "/admin" or path.startswith("/admin/"):
-            response.headers.setdefault("Content-Security-Policy", self.ADMIN_UI_CSP)
-            # Always revalidate the console's files. Without this a browser
-            # heuristically caches admin.js/admin.css and keeps running a stale
-            # copy for days after a deploy; the 304 round-trip is cheap.
+            response.headers.setdefault("Content-Security-Policy", self.admin_ui_csp())
+            # Revalidate the console's HTML on every load, or a browser keeps
+            # running last week's build after a deploy. Its hashed assets say
+            # otherwise themselves (AdminConsoleFiles marks them immutable).
             response.headers.setdefault("Cache-Control", "no-cache")
         elif path in self.LEGAL_PAGE_PATHS:
             response.headers.setdefault("Content-Security-Policy", self.LEGAL_PAGE_CSP)

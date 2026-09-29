@@ -1,0 +1,134 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "leaflet/dist/leaflet.css";
+
+/* Brand and surface tokens sampled from the admin_screen/ mockups. Everything
+ * else is Tailwind's default palette, which the mockups also use. */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #fef1f7;
+  --color-brand-100: #fde8f1;
+  --color-brand-200: #fbc9df;
+  --color-brand-300: #f79bc4;
+  --color-brand-400: #ef5c9c;
+  --color-brand-500: #e3146e;
+  --color-brand-600: #ca0f61;
+  --color-brand-700: #a80d51;
+  --color-brand-800: #8a0f45;
+  --color-brand-900: #73113d;
+
+  --color-page: #f8f9fb;
+  --color-line: #edf0f4;
+  --color-field: #f1f4f8;
+  --color-ink: #111827;
+  --color-muted: #64748b;
+
+  --animate-slide-in: slide-in 180ms ease-out;
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-pop-in: pop-in 150ms ease-out;
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: translateY(4px) scale(0.98);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-page text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-400;
+  }
+}
+
+/* Leaflet sets its container's font; keep the console's. */
+.leaflet-container {
+  font: inherit;
+}
+
+/* The sign-in screens' faint tile pattern in two corners. */
+.auth-tiles {
+  background-image:
+    linear-gradient(to right, rgb(237 240 244 / 0.9) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(237 240 244 / 0.9) 1px, transparent 1px);
+  background-size: 96px 96px;
+  mask-image: radial-gradient(closest-side, black 20%, transparent 100%);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
+}
+
+/* Map pins (components/map): a teardrop drawn in CSS. */
+.map-pin {
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 1px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.35);
+  transition: transform 150ms;
+}
+.map-pin::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: #fff;
+}
+.map-pin-brand {
+  background: var(--color-brand-500);
+}
+.map-pin-green {
+  background: #16a34a;
+}
+.map-pin-orange {
+  background: #f97316;
+}
+.map-pin-gray {
+  background: #94a3b8;
+}
+.map-pin-active {
+  transform: rotate(-45deg) scale(1.25);
+  box-shadow: 0 0 0 6px rgb(227 20 110 / 0.25), 0 2px 6px rgb(0 0 0 / 0.35);
+}

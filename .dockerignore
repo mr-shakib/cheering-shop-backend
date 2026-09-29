@@ -1,0 +1,32 @@
+# Keep the build context small and free of secrets. The Dockerfile copies
+# only what the image needs; everything below is never needed.
+.git
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+htmlcov
+.coverage
+
+# The admin console is built inside the image (see the Dockerfile's first
+# stage), from source, never from a developer's local node_modules or build.
+admin-web/node_modules
+admin-web/dist
+app/static/admin
+
+# Design references, not code.
+admin_screen
+ui
+
+# Secrets: read at runtime from the environment, never baked into an image.
+.env
+.env.*
+!.env.example
+deploy/.env.production
+dokploy.env
+client_secret_*.json
+backups

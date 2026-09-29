@@ -101,7 +101,31 @@ The endpoint is derived from `R2_ACCOUNT_ID`. Set it explicitly only for:
 - a **jurisdiction-locked** bucket — `https://<account>.eu.r2.cloudflarestorage.com`
 - pointing a local stack at **MinIO** or another S3-compatible server
 
-## Step 6 — Verify
+## Step 6 — CORS, for the admin console
+
+The mobile apps upload without CORS: a browser is the only client that checks
+it. The admin console is a browser, so it can only PUT to the bucket once the
+bucket allows its origin. In the Cloudflare dashboard: the bucket → **Settings
+→ CORS Policy → Add**:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://api.cheeringshop.online", "https://admin.cheeringshop.online"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["Content-Type"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+List every origin the console is opened from (add `http://localhost:8000` and
+`http://localhost:5173` on a development bucket). `GET` is there because the
+console reads Lottie banner files back to preview them. The API side needs no
+change: the console's Content-Security-Policy already names the bucket's
+upload endpoint and public domain, derived from the variables in Step 4.
+
+## Step 7 — Verify
 
 ```bash
 curl -s https://api.cheeringshop.online/health/ready | jq .data.storage

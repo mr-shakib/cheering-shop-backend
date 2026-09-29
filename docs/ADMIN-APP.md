@@ -1,51 +1,111 @@
 # Admin console
 
-A minimal browser app for administrators, served by the API itself at
-**`/admin/`** (for example `http://localhost:8000/admin/` locally, or
-`https://api.cheeringshop.online/admin/` in production). There is no build
-step: it is three static files in `app/static/admin/` and it calls `/api/v1`
-on the same origin, so it needs no CORS entry and ships inside the existing
-Docker image.
+The browser app administrators run the platform from: every screen in
+`admin_screen/`. The API serves it at **`/admin/`** (for example
+`http://localhost:8000/admin/` locally, or
+`https://api.cheeringshop.online/admin/` in production), and at the root of its
+own subdomain when `ADMIN_UI_HOST` is set. It calls `/api/v1` on the same
+origin, so it needs no CORS entry.
 
-## What it does today
+The source is `admin-web/`: React 19, TypeScript, Vite, Tailwind CSS 4,
+TanStack Query, React Router, Recharts, and Leaflet with OpenStreetMap tiles.
+The API documentation it is built against is [ADMIN-API.md](ADMIN-API.md).
 
-Two jobs: **approving vendors after they register**, and **curating the
-category chips** on the customer home screen.
+## Running it
 
-| Tab | Backed by | Actions |
-|---|---|---|
-| Vendor applications | `GET /admin/vendor-applications?status=` | Review the full form (business, owner, documents, payout), then `approve` or `reject` with a note. Rejection requires a note because it is emailed to the applicant. Filter by Pending / Approved / Rejected. |
-| Restaurants awaiting approval | `GET /admin/restaurants/pending` | Restaurants created through the fast path (`role: "VENDOR"` at sign-up). Approve with `POST /admin/restaurants/{id}/verify`. |
-| Categories | `GET /admin/categories` | The Burger / Pizza / Biryani chips customers browse by. **Filter to *Needs review*: that is a work queue.** A vendor whose menu section name matched no existing chip created one, and it stays hidden from customers until you *Approve* it or *Keep hidden*. Anything sitting there is a vendor whose food is not browsable, so the queue is ordered by how many restaurants are waiting. The rest of the tab is curation: image, pinned order, aliases, and **merge** ("Burgers" into "Burger" — the sections move and the old spelling becomes an alias so it cannot come back). *New category* seeds a chip before anyone sells under it, and is approved by definition because you typed it. Delete only works on a category nothing links to; merge or hide are the operations for one in use. |
+| Task | Command |
+|---|---|
+| Install dependencies (once) | `make admin-install` |
+| Develop, with hot reload | `make run` in one terminal, `make admin-dev` in another, then open `http://localhost:5173/admin/`. Vite proxies `/api` to `:8000`. |
+| Build what the API serves | `make admin-build`. Typechecks, then writes `app/static/admin/`, so `make run` serves it at `:8000/admin/`. |
+| Deploy | Nothing extra. The Dockerfile's first stage builds the console with Node, and the image carries only the built files. |
 
-The Categories tab is documented in full — including hide vs delete vs merge,
-and what to do on day one — in [CATEGORIES.md](CATEGORIES.md).
+`app/static/admin/` is build output and is gitignored. A checkout that has not
+built the console still starts the API; `/admin/` answers 503 with the build
+command until `make admin-build` has run.
 
-### Category images
-
-The form takes an image URL. Upload the file first through
-`POST /uploads/presigned-url` (any signed-in user, including an admin) and
-paste the returned `public_url`; the console cannot upload directly because its
-Content-Security-Policy only lets it talk to the API's own origin.
-
-### The category queue, in one line
-
-Approving a chip is one click and publishes every restaurant already
-accumulated under it. Check it whenever you approve a vendor. It is empty most
-of the time, because the seeded taxonomy absorbs the common spellings.
+Needs Node 20.19 or newer (the Docker stage uses Node 24).
 
 ## Signing in
 
-Use an `ADMIN` account. Create one on the server with:
+Use an `ADMIN` account. Create the first one on the server with:
 
 ```bash
-.venv/bin/python scripts/create_admin.py
+.venv/bin/python scripts/create_admin.py admin@example.com
 ```
 
-The login form handles the 2FA challenge if the admin has enabled it. A
-non-admin account is refused client-side after login and never reaches the
-console. The access token is held in `sessionStorage` for the tab's lifetime;
-there is no refresh flow yet, so after the token expires you sign in again.
+After that, invite administrators from **Settings → Administrators**. The
+invitation email links to the console's *Sign up for admin* screen
+(`/accept-invite?token=…`); `ADMIN_INVITE_URL` must point there (see
+[ADMIN-API.md §20](ADMIN-API.md#20-deployment-and-gaps)). In development the
+invitation list offers **Copy link**, because the API returns the token there
+when it is not running in production.
+
+- The sign-in form handles the 2FA challenge if the admin has enabled it.
+- A non-admin account is refused, and its tokens are revoked on the way out.
+- **Remember me** keeps the session in `localStorage` across browser restarts;
+  without it the session lasts as long as the tab (`sessionStorage`).
+- The access token refreshes itself. Refreshes are serialised across tabs with
+  a Web Lock, because the refresh token rotates and presenting a used one
+  revokes the whole session.
+- **Forgot password** is the three-step flow: email, 4-digit code, new
+  password.
+
+## What is where
+
+| Sidebar | Screens |
+|---|---|
+| Overview | Stat cards, revenue chart, live orders, recent orders. Refreshes every 30 seconds. |
+| Order | Every order with filters and CSV export. A row opens the order drawer: timeline, parties, money, and the Assign rider / Cancel / Refund / Confirm delivery actions the API enables for that order. |
+| Customers | List and export; the details page blocks or unblocks the account. |
+| Vendor → Active Vendors | List and export, **Add Vendor**, and the vendor profile: Store Info, Products (with **Add Product**), Order, Review, Withdrawal. **Edit** changes any field, including business hours and the map pin. The ⋮ menu sets commission, hides the store from discovery, or suspends/approves it. |
+| Vendor → Application | The partner-application queue, and **Unverified stores**: fast-path sign-ups and suspended stores. |
+| Vendor / Rider → Withdrawal | The payout queues: Mark Paid, Failed (money returns to the balance), Mark Unpaid. |
+| Rider → Active Rider | Roster, **Add Rider**, and the rider profile: Personal Info, Earning, Order, Withdrawal. The ⋮ menu grants incentives, sets the sign-in password, takes the rider off shift, or blocks the account. |
+| Rider → Application | Applications from the rider app; approving creates the account. |
+| Product | Every product. The drawer edits it, sets its commission and category, and hides, features or deletes it. |
+| Category | The Restaurant and Store chips. The **Needs review** filter is the queue of chips vendors created, which stay hidden until you approve or keep them hidden. The drawer edits, moves products between categories, and merges. See [CATEGORIES.md](CATEGORIES.md). |
+| Support Ticket / Live Chat | The ticket queue, and the conversation with history, priority, resolve and close. An open conversation polls every 5 seconds; there is no push channel for the console. |
+| Community / Reels | Post moderation and user bans; reels posted, hidden or deleted for any restaurant. |
+| Finance | GMV, net, commission and delivery revenue for a period, the revenue split by service, and delivered-order transactions. |
+| Advertisement / App Banners | Vendor promotions (pause, resume, end), and the image, GIF and Lottie banners the apps show. |
+| Live Tracking | Riders on shift on a map, polled every 12 seconds. A rider without a recent position is listed without a pin. |
+| Notification | Campaign history, and composing a notification to send now or schedule. |
+| Settings | Platform settings (each card saves on its own), administrator invitations, change password, sign out. |
+
+The top bar searches orders, customers, vendors and riders. The bell lists
+what is waiting on an administrator: approvals, orders no rider has taken,
+open and urgent tickets.
+
+## Uploads
+
+Images, documents, videos and Lottie files are uploaded straight from the
+browser to R2 with `POST /admin/uploads/presigned-url`. Two things must be set
+for that to work from a deployed console:
+
+1. **The R2 settings** (`R2_*`, see [storage-setup-r2.md](storage-setup-r2.md)).
+   The console's Content-Security-Policy lists the bucket's upload endpoint and
+   public domain, derived from those settings, in `connect-src`.
+2. **CORS on the bucket** allowing `PUT` from the console's origin (the API
+   host, and the admin subdomain if you use one), with the `Content-Type`
+   header. Without it the upload fails with "Could not reach the storage
+   server".
+
+## Security
+
+The console runs under a Content-Security-Policy with no `unsafe-inline` or
+`unsafe-eval` (`SecurityHeadersMiddleware.admin_ui_csp`):
+
+- Scripts and styles are same-origin files; `index.html` may not contain
+  inline script or style (`tests/test_admin_app.py` checks it).
+- Images, videos and map tiles may come from any `https:` origin; the API and
+  the storage origins are the only places it can send requests.
+- Lottie banners use lottie-web's *light* build, which never evaluates code.
+  The full build would need `unsafe-eval`.
+
+`index.html` and other un-fingerprinted files are served `Cache-Control:
+no-cache`, so a deploy takes effect on the next load. Files under `assets/`
+have a content hash in their name and are cached for a year.
 
 ## Deploying on its own subdomain
 
@@ -75,7 +135,8 @@ is one DNS record, one Dokploy domain and one environment variable:
    then **Deploy**. `AdminHostMiddleware` serves the console at `/` for
    requests carrying that Host header and leaves `/api/…` and `/health` alone,
    so the console talks to the API on its own origin. No CORS change.
-4. **Check.** `https://admin.cheeringshop.online/` shows the sign-in form;
+4. **Check.** `https://admin.cheeringshop.online/` shows the sign-in form, and
+   so does a reload on any console page, such as `/orders`;
    `https://admin.cheeringshop.online/health` returns the API health JSON;
    `https://api.cheeringshop.online/` still 404s and `/admin/` there still
    works.
@@ -85,13 +146,20 @@ On the bare-metal Caddy deployment the same variable feeds Caddy's site block
 
 ## Adding to it
 
-- Add screens by editing `index.html` / `admin.js`; every admin endpoint is
-  listed under **[EXTENDED]** in `app/api/v1/endpoints/admin.py` (riders,
-  payouts, commission, categories).
-- Keep scripts and styles in files, not inline. The console runs under a
-  Content-Security-Policy of `default-src 'self'` (see
-  `SecurityHeadersMiddleware`), so inline `<script>` blocks and `onclick=`
-  handlers will not execute. `tests/test_admin_app.py` guards this.
+- A screen is a component under `admin-web/src/features/`, registered in
+  `src/router.tsx` (each route is its own lazily loaded chunk) and linked from
+  `src/components/layout/Sidebar.tsx`.
+- API calls live in `admin-web/src/api/`, one module per area, typed from the
+  Pydantic response models in `app/schemas/`. The endpoints do not declare
+  response models in OpenAPI, so keep those types in step by hand when a
+  schema changes.
+- Shared UI is in `src/components/ui/`: tables, pagination, drawers, dialogs,
+  the confirm dialog (use it for anything that moves money or reaches a user),
+  file upload, the searchable picker, and badges. Status labels and colours for
+  every API enum are in `src/lib/vocab.ts`.
+- List filters live in the URL (`useListParams`), so a reload or a shared link
+  keeps them.
+- `npm run typecheck` in `admin-web/` checks types without building.
 - Any new mount outside `/api/v1` must be added to `INFRA_PATHS` in
   `tests/test_route_inventory.py`, or the inventory test will flag it as an
   undocumented endpoint.

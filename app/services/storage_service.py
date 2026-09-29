@@ -29,7 +29,7 @@ import hashlib
 import hmac
 import uuid
 from datetime import UTC, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import structlog
 
@@ -160,6 +160,25 @@ def _endpoint() -> str:
     if settings.R2_ENDPOINT_URL:
         return settings.R2_ENDPOINT_URL.rstrip("/")
     return f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+
+def browser_origins() -> list[str]:
+    """The origins a browser uploading from the admin console talks to.
+
+    The console PUTs straight to the S3 endpoint and reads the object back from
+    the public domain, and its Content-Security-Policy has to name both in
+    `connect-src` or the browser refuses the request. Empty while storage is
+    not configured, so an unconfigured deployment grants nothing.
+    """
+    if missing_config():
+        return []
+    origins: list[str] = []
+    for url in (_endpoint(), settings.R2_PUBLIC_BASE_URL):
+        parts = urlsplit(url)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        if parts.scheme in {"http", "https"} and parts.netloc and origin not in origins:
+            origins.append(origin)
+    return origins
 
 
 def build_object_key(

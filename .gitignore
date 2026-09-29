@@ -21,3 +21,7 @@ dokploy.env
 
 # Google OAuth client downloads (contain the client secret) — never commit.
 client_secret_*.json
+
+# The admin console build (admin-web/ -> `make admin-build`); the Docker image
+# builds its own copy.
+app/static/admin/
