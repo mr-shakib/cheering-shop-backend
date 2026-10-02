@@ -128,6 +128,18 @@ async def send_due_notifications(ctx: dict) -> int:
     return sent
 
 
+async def apply_business_hours(ctx: dict) -> int:
+    """Open and close stores at their business hours. Every minute, and once
+    at startup so a deploy or restart catches up straight away rather than at
+    the next tick. See services.business_hours."""
+    from app.services import business_hours
+
+    async with SessionLocal() as session:
+        changed = await business_hours.sync_all(session, datetime.now(UTC))
+        await session.commit()
+    return changed
+
+
 async def startup(ctx: dict) -> None:
     log.info("worker_starting", environment=settings.ENVIRONMENT, at=datetime.now(UTC).isoformat())
 
@@ -148,6 +160,7 @@ class WorkerSettings:
         flush_rider_trail,
         recompute_restaurant_rating,
         send_due_notifications,
+        apply_business_hours,
     ]
     # Staggered minutes so three DELETEs never land on the database at once.
     cron_jobs = [
@@ -155,6 +168,8 @@ class WorkerSettings:
         cron(prune_expired_refresh_tokens, hour=3, minute=20),
         cron(expire_idempotency_keys, hour=3, minute=30),
         cron(send_due_notifications, second=5),  # every minute
+        # On the minute, so a store opening at 12:00 opens at 12:00:00.
+        cron(apply_business_hours, second=0, run_at_startup=True),
     ]
     on_startup = startup
     on_shutdown = shutdown

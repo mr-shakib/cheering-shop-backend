@@ -58,6 +58,9 @@ class OrderCreateRequest(BaseModel):
     scheduled_for: datetime | None = Field(
         default=None, description="Slot start from GET /restaurants/{id}/schedule"
     )
+    # The Delivery tab. PRIORITY adds the priority fee and cannot be combined
+    # with scheduled_for: a booked slot has a fixed time to be fast towards.
+    delivery_type: Literal["STANDARD", "PRIORITY"] = "STANDARD"
 
 
 class OrderCancelRequest(BaseModel):

@@ -81,7 +81,7 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 | Empty Cart.png | Nothing added | `GET /cart` returns an empty cart, not a 404 | 🟢 live |
 | Cart.png | Lines + quantities | `GET /cart`; +/−/remove → `POST /cart/items` (`quantity: 0` removes) | 🟢 live |
 | Order Modify.png | Edit a line's options | `POST /cart/items` with the new `variant_id` / `add_on_ids` | 🟢 live |
-| Checkout.png | Address, payment, bill | `GET /checkout/summary?address_id=&promo_code=&tip=` | 🟢 live |
+| Checkout.png | Address, payment, bill, Standard / Priority | `GET /checkout/summary?address_id=&promo_code=&tip=&delivery_type=`; the Delivery tab's rows are `delivery_options` | 🟢 live |
 | Checkout-1.png | Promo applied | same call; a bad code returns the bill plus `promo_error` | 🟢 live |
 | Address.png | Address picker + add | `GET/POST /users/me/addresses`; star → `PATCH …/{id}/default` | 🟢 live |
 | Order Complete.png | "Order placed" | rendered from `POST /orders` (send an `Idempotency-Key`) | 🟢 live |
@@ -148,7 +148,7 @@ Full request/response detail is in [CUSTOMER-API.md](CUSTOMER-API.md).
 | Withdraw-5.png | "Your promotion is live" | rendered from the create response | 🟢 live |
 | Withdraw-6.png | Promotion Details (+ pause/end) | `GET /vendor/promotions/{id}`; buttons → `PATCH /vendor/promotions/{id}` `{is_active}` / `{end_now}` | 🟢 live |
 | Menu-2.png | Business Hour | `GET /vendor/hours` | 🟢 live |
-| Menu-3.png | Edit hours | `PUT /vendor/hours` (whole week) | 🟢 live |
+| Menu-3.png | Edit hours | `PUT /vendor/hours` (whole week, Dhaka time; the hours open and close the store) | 🟢 live |
 | Menu-4.png | Report (+ CSV) | `GET /vendor/analytics?date_from&date_to`; button → `GET /vendor/reports/csv` (text/csv download) | 🟢 live |
 | Menu-5.png | Feedback (4.3★ histogram) | `GET /vendor/reviews/summary` + `GET /vendor/reviews` (filter chips are client-side — reviews have no tags) | 🟢 live |
 | Menu-19.png | Commission Details | `commission_rate` from `GET /vendor/profile` | 🟢 live |

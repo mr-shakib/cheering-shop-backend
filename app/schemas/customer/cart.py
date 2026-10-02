@@ -1,6 +1,7 @@
 """Cart and the checkout bill — spec #26–28."""
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,24 +68,38 @@ class CartOut(BaseModel):
     meets_minimum: bool = True
 
 
+class DeliveryOption(BaseModel):
+    """One row of the Delivery tab at checkout: Standard or Priority."""
+
+    type: Literal["STANDARD", "PRIORITY"]
+    label: str = Field(description='"Standard" or "Priority"')
+    extra_fee: Decimal = Field(description="Added to the bill; the +20 chip. 0 for Standard")
+    eta_min_minutes: int = Field(description='The window\'s lower end: "20–30 min"')
+    eta_max_minutes: int
+    is_selected: bool = Field(description="The one this bill was priced with")
+
+
 class CheckoutSummary(BaseModel):
     """Spec #28. The backend is the single source of truth for pricing.
 
     Every field is whole taka. The same arithmetic is re-run and persisted by
     POST /orders, where a CHECK constraint refuses a total that does not add
-    up — see services/pricing.py.
+    up — see services/pricing.py. There is no tax or packaging line.
     """
 
     item_total: Decimal
     delivery_fee: Decimal
-    packaging_fee: Decimal
-    tax_amount: Decimal
+    delivery_type: Literal["STANDARD", "PRIORITY"]
+    priority_fee: Decimal = Field(description="0 unless delivery_type is PRIORITY")
     platform_fee: Decimal
     discount: Decimal
     tip: Decimal
     grand_total: Decimal
     distance_km: float
-    estimated_delivery_minutes: int
+    estimated_delivery_minutes: int = Field(
+        description="The selected option's eta_min_minutes"
+    )
+    delivery_options: list[DeliveryOption] = Field(default_factory=list)
     promo_code: str | None = None
     # Populated when a code was sent but not applied. Silently dropping an
     # invalid promo is how support tickets are made.

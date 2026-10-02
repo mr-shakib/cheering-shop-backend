@@ -10,13 +10,15 @@ Nothing here mutates. The rules match the vendor insights module:
 * **Commission is the per-order snapshot** (D6), never the live rate.
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.clock import local_day, local_midnight, local_today
+from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.money import to_major
 from app.models.enums import OrderStatus, RestaurantStatus, UserRole, VendorApplicationStatus
@@ -49,8 +51,12 @@ from app.services.admin.common import (
 from app.services.admin.orders import recent_orders
 
 _DELIVERED = OrderStatus.DELIVERED.value
-_DELIVERED_DAY = cast(func.timezone("UTC", Order.delivered_at), Date)
-_DELIVERED_MONTH = cast(func.date_trunc("month", func.timezone("UTC", Order.delivered_at)), Date)
+# Local (BUSINESS_TIMEZONE) days and months, so an order delivered at 1 AM in
+# Dhaka counts towards that day rather than the UTC day before it.
+_DELIVERED_DAY = local_day(Order.delivered_at)
+_DELIVERED_MONTH = cast(
+    func.date_trunc("month", func.timezone(settings.BUSINESS_TIMEZONE, Order.delivered_at)), Date
+)
 
 RANGES = {"7d": 7, "30d": 30, "12m": 12}
 
@@ -65,7 +71,7 @@ def _kpi(value: int, previous: int, *, money: bool) -> Kpi:
 
 
 def _midnight(day: date) -> datetime:
-    return datetime.combine(day, time.min, tzinfo=UTC)
+    return local_midnight(day)
 
 
 async def _gmv_between(db: AsyncSession, start: datetime, end: datetime) -> int:
@@ -92,11 +98,11 @@ async def _placed_between(db: AsyncSession, start: datetime, end: datetime) -> i
 
 
 async def dashboard(db: AsyncSession, recent_n: int = 8) -> AdminDashboard:
-    """Today against yesterday, both whole UTC days. Yesterday is complete and
+    """Today against yesterday, both whole local days. Yesterday is complete and
     today is not, so a morning view reads low — the cards say "vs yesterday",
     not "on pace"."""
     now = datetime.now(UTC)
-    today = _midnight(now.date())
+    today = _midnight(local_today())
     yesterday = today - timedelta(days=1)
 
     live_rows = (
@@ -206,7 +212,7 @@ async def revenue_series(db: AsyncSession, range_: str) -> RevenueSeries:
     """
     if range_ not in RANGES:
         raise ValidationError("range must be one of: 7d, 30d, 12m")
-    today = datetime.now(UTC).date()
+    today = local_today()
 
     if range_ == "12m":
         first = date(today.year, today.month, 1)
@@ -260,7 +266,7 @@ async def _money_between(db: AsyncSession, start: datetime, end: datetime) -> di
             select(
                 func.coalesce(func.sum(Order.grand_total), 0),
                 func.coalesce(func.sum(Order.commission_amount), 0),
-                func.coalesce(func.sum(Order.delivery_fee), 0),
+                func.coalesce(func.sum(Order.delivery_fee + Order.priority_fee), 0),
                 func.coalesce(func.sum(Order.platform_fee), 0),
             ).where(
                 Order.status == _DELIVERED, Order.delivered_at >= start, Order.delivered_at < end

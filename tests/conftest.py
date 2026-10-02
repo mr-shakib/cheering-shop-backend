@@ -142,6 +142,46 @@ async def admin_token():
 
 
 @pytest.fixture
+async def fresh_settings():
+    """The settings row is shared by the whole suite: put it back to all
+    server defaults before and after."""
+    from sqlalchemy import update
+
+    from app.core.database import SessionLocal
+    from app.models.platform import PlatformSettings
+
+    async def _reset():
+        async with SessionLocal() as s:
+            await s.execute(
+                update(PlatformSettings)
+                .where(PlatformSettings.id == 1)
+                .values(
+                    app_name=None,
+                    support_email=None,
+                    support_phone=None,
+                    delivery_base_fee=None,
+                    delivery_per_km_fee=None,
+                    delivery_min_fee=None,
+                    priority_delivery_fee=None,
+                    restaurant_commission_rate=None,
+                    grocery_commission_rate=None,
+                    pharmacy_commission_rate=None,
+                    rain_surcharge=0,
+                    rain_surcharge_active=False,
+                    heatwave_fee=0,
+                    heatwave_fee_active=False,
+                    high_demand_fee=0,
+                    high_demand_fee_active=False,
+                )
+            )
+            await s.commit()
+
+    await _reset()
+    yield
+    await _reset()
+
+
+@pytest.fixture
 async def kitchen(vendor):
     """An OPEN restaurant with a real menu: two dishes, variants and add-ons.
 

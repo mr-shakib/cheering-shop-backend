@@ -24,6 +24,12 @@ from dataclasses import dataclass, field
 from app.core.config import settings
 from app.core.money import percentage_of, to_minor
 
+# The two delivery choices at checkout. Priority costs `DeliveryFees.priority`
+# more, all of which goes to the rider, and is quoted a shorter ETA.
+STANDARD = "STANDARD"
+PRIORITY = "PRIORITY"
+DELIVERY_TYPES = (STANDARD, PRIORITY)
+
 # Earth radius in km. Haversine is accurate to ~0.5% at delivery distances,
 # which is far below the granularity of a per-km fee tier.
 _EARTH_RADIUS_KM = 6371.0088
@@ -79,12 +85,16 @@ class QuoteLine:
 
 @dataclass(frozen=True)
 class Quote:
-    """The complete bill. Every field is paisa."""
+    """The complete bill. Every field is paisa.
+
+    There is no tax or packaging line: both were dropped from the bill. The
+    order columns stay (orders placed before then were charged them) and new
+    orders write 0 to both.
+    """
 
     item_total: int
     delivery_fee: int
-    packaging_fee: int
-    tax_amount: int
+    priority_fee: int
     platform_fee: int
     discount: int
     tip: int
@@ -92,6 +102,7 @@ class Quote:
     commission_amount: int
     distance_km: float
     lines: list[QuoteLine]
+    delivery_type: str = STANDARD
 
     def as_taka(self) -> dict:
         """Wire representation. The spec's example is whole taka, not paisa."""
@@ -100,8 +111,8 @@ class Quote:
         return {
             "item_total": to_major(self.item_total),
             "delivery_fee": to_major(self.delivery_fee),
-            "packaging_fee": to_major(self.packaging_fee),
-            "tax_amount": to_major(self.tax_amount),
+            "delivery_type": self.delivery_type,
+            "priority_fee": to_major(self.priority_fee),
             "platform_fee": to_major(self.platform_fee),
             "discount": to_major(self.discount),
             "tip": to_major(self.tip),
@@ -126,19 +137,22 @@ class DeliveryFees:
     per_km: int
     minimum: int = 0
     surcharge: int = 0
+    priority: int = 0  # the extra for priority delivery
 
     @classmethod
     def from_config(cls) -> DeliveryFees:
         return cls(
             base=to_minor(settings.DELIVERY_FEE_BASE),
             per_km=to_minor(settings.DELIVERY_FEE_PER_KM),
+            priority=to_minor(settings.PRIORITY_DELIVERY_FEE),
         )
 
 
 def delivery_fee_minor(
     distance_km: float, item_total: int, fees: DeliveryFees | None = None
 ) -> int:
-    """Flat base covering the first kilometre, then per started km after it.
+    """Flat base covering the first kilometre, then the per-km rate for the
+    rest, by the metre: 1.54 km is the base plus 0.54 × per_km (৳10 + ৳4.32).
 
     Platform-wide. `restaurants.delivery_fee_base` used to feed this and no
     longer does: what a customer pays to be brought food should not depend on
@@ -160,11 +174,12 @@ def delivery_fee_minor(
     threshold = settings.FREE_DELIVERY_THRESHOLD
     if threshold and item_total >= to_minor(threshold):
         return 0
-    chargeable_km = max(0.0, distance_km - settings.DELIVERY_FREE_KM)
-    # Ceiling, not round: a 1.2 km overage is two started kilometres of rider
-    # time, and rounding it down means the platform absorbs the difference on
-    # every single order.
-    distance_fee = fees.base + fees.per_km * math.ceil(chargeable_km)
+    # Whole metres, then the rate for exactly that many: per_km is paisa per
+    # 1000 m, rounded half up to the paisa. Charging every started kilometre
+    # instead billed 1.01 km as 2 km, and the customer saw the price jump by a
+    # full ৳8 for ten metres.
+    chargeable_m = max(0, round((distance_km - settings.DELIVERY_FREE_KM) * 1000))
+    distance_fee = fees.base + (fees.per_km * chargeable_m + 500) // 1000
     return max(distance_fee, fees.minimum) + fees.surcharge
 
 
@@ -181,7 +196,7 @@ def delivery_reach_km(budget: int, fees: DeliveryFees) -> float | None:
         return -1.0
     if fees.per_km == 0:
         return None
-    return settings.DELIVERY_FREE_KM + (headroom - fees.base) // fees.per_km
+    return settings.DELIVERY_FREE_KM + (headroom - fees.base) / fees.per_km
 
 
 def quote(
@@ -192,17 +207,17 @@ def quote(
     discount: int = 0,
     tip: int = 0,
     delivery: DeliveryFees | None = None,
+    delivery_type: str = STANDARD,
 ) -> Quote:
     """Build the bill. Pure arithmetic — no database, no clock, no config reads
     beyond the platform rates.
 
     Order of operations matters and is deliberate:
 
-    * **Tax applies to food only**, not to delivery, packaging, the platform fee
-      or the tip. Taxing our own service fee and then the tax on it is how
-      bills become indefensible.
-    * **Discount comes off last**, after tax, so a promo never silently reduces
-      the tax we remit.
+    * **Priority is not delivery.** The free-delivery threshold waives the
+      delivery fee, never the priority fee: priority is an upgrade the
+      customer picked, and it is the rider's pay for taking the order first.
+    * **Discount comes off last**, so it is clamped against the whole bill.
     * **Commission is on `item_total` before discount.** A platform-funded promo
       must not quietly cut the restaurant's earnings — the vendor sold the food
       at its listed price and is owed for it. If a vendor-funded promo type ever
@@ -211,23 +226,25 @@ def quote(
       product or its category) is charged at it; the rest at the restaurant's
       `commission_rate`. See `services.commission`.
     """
+    if delivery_type not in DELIVERY_TYPES:
+        raise ValueError(f"unknown delivery type {delivery_type!r}")
+    delivery = delivery or DeliveryFees.from_config()
     item_total = sum(line.line_total for line in lines)
     delivery_fee = delivery_fee_minor(distance_km, item_total, delivery)
-    packaging = to_minor(settings.PACKAGING_FEE_PER_ORDER) if lines else 0
-    tax = percentage_of(item_total, settings.TAX_BASIS_POINTS)
+    priority_fee = delivery.priority if delivery_type == PRIORITY else 0
     platform = percentage_of(item_total, settings.PLATFORM_FEE_BASIS_POINTS)
 
     # A discount larger than the bill would make grand_total negative, which
     # ck_orders_money_nonneg refuses. Clamping here means an over-generous promo
     # is a free order, never a payout to the customer.
-    subtotal = item_total + delivery_fee + packaging + tax + platform + tip
+    subtotal = item_total + delivery_fee + priority_fee + platform + tip
     discount = max(0, min(discount, subtotal))
 
     return Quote(
         item_total=item_total,
         delivery_fee=delivery_fee,
-        packaging_fee=packaging,
-        tax_amount=tax,
+        priority_fee=priority_fee,
+        delivery_type=delivery_type,
         platform_fee=platform,
         discount=discount,
         tip=tip,

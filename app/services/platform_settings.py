@@ -9,7 +9,8 @@ by clearing it.
 What reads it:
 
 * **Checkout** — `delivery_fees()` feeds `pricing.quote`: base fee, per-km
-  fee, a minimum, and any dynamic surcharge that is switched on.
+  fee, a minimum, any dynamic surcharge that is switched on, and the
+  priority-delivery fee.
 * **Vendor creation** — `default_commission_rate()` is the rate a new
   restaurant starts on, by business type.
 """
@@ -43,6 +44,7 @@ _NULLABLE_FIELDS = {
     "delivery_base_fee": ("delivery_base_fee", True),
     "delivery_per_km_fee": ("delivery_per_km_fee", True),
     "delivery_min_fee": ("delivery_min_fee", True),
+    "priority_delivery_fee": ("priority_delivery_fee", True),
     "restaurant_commission_rate": ("restaurant_commission_rate", False),
     "grocery_commission_rate": ("grocery_commission_rate", False),
     "pharmacy_commission_rate": ("pharmacy_commission_rate", False),
@@ -78,6 +80,9 @@ def fees_from(row: PlatformSettings) -> DeliveryFees:
         per_km=row.delivery_per_km_fee if row.delivery_per_km_fee is not None else config.per_km,
         minimum=row.delivery_min_fee or 0,
         surcharge=surcharge,
+        priority=row.priority_delivery_fee
+        if row.priority_delivery_fee is not None
+        else config.priority,
     )
 
 
@@ -112,6 +117,7 @@ def to_out(row: PlatformSettings) -> PlatformSettingsOut:
         delivery_per_km_fee=to_major(fees.per_km),
         delivery_min_fee=to_major(fees.minimum),
         delivery_free_km=settings.DELIVERY_FREE_KM,
+        priority_delivery_fee=to_major(fees.priority),
         restaurant_commission_rate=_rate(row.restaurant_commission_rate),
         grocery_commission_rate=_rate(row.grocery_commission_rate),
         pharmacy_commission_rate=_rate(row.pharmacy_commission_rate),

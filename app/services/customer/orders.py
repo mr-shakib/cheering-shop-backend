@@ -36,6 +36,7 @@ from app.models.rider import RiderProfile
 from app.models.user import User
 from app.schemas.customer import (
     CheckoutSummary,
+    DeliveryOption,
     OrderDetail,
     OrderItemAddOnOut,
     OrderItemOut,
@@ -49,7 +50,7 @@ from app.schemas.requests import OrderCreateRequest
 from app.services import platform_settings
 from app.services.customer import cart as cart_service
 from app.services.customer import promos as promo_service
-from app.services.pricing import haversine_km, quote
+from app.services.pricing import PRIORITY, STANDARD, Quote, haversine_km, quote
 
 # Statuses a customer may still cancel from. Spec §9: only PENDING — once the
 # kitchen has accepted, food is being cooked and cancellation is a phone call.
@@ -88,6 +89,7 @@ async def _prepare(
     address_id: str,
     promo_code: str | None,
     tip: Decimal | float | int,
+    delivery_type: str = STANDARD,
 ):
     """Everything checkout and placement both need, computed once.
 
@@ -129,8 +131,44 @@ async def _prepare(
         discount=promo.discount,
         tip=to_minor(tip),
         delivery=await platform_settings.delivery_fees(db),
+        delivery_type=delivery_type,
     )
     return cart, restaurant, address, bill, promo
+
+
+def _eta_minutes(restaurant: Restaurant, distance_km: float, delivery_type: str) -> int:
+    """The earliest the food should arrive: kitchen time plus about three
+    minutes a kilometre. Priority is quoted PRIORITY_DELIVERY_MINUTES_SAVED
+    sooner, because a rider takes it first, but never sooner than the kitchen
+    can cook it."""
+    standard = restaurant.avg_prep_time_mins + max(5, round(distance_km * 3))
+    if delivery_type != PRIORITY:
+        return standard
+    return max(
+        restaurant.avg_prep_time_mins, standard - settings.PRIORITY_DELIVERY_MINUTES_SAVED
+    )
+
+
+def _delivery_options(
+    restaurant: Restaurant, bill: Quote, priority_fee: int
+) -> list[DeliveryOption]:
+    """The Delivery tab: both choices with their price and time window, so the
+    radio rows render from the same call that prices the selected one."""
+    window = settings.DELIVERY_ETA_WINDOW_MINUTES
+    options = []
+    for kind, label, extra in ((STANDARD, "Standard", 0), (PRIORITY, "Priority", priority_fee)):
+        eta = _eta_minutes(restaurant, bill.distance_km, kind)
+        options.append(
+            DeliveryOption(
+                type=kind,
+                label=label,
+                extra_fee=to_major(extra),
+                eta_min_minutes=eta,
+                eta_max_minutes=eta + window,
+                is_selected=bill.delivery_type == kind,
+            )
+        )
+    return options
 
 
 async def checkout_summary(
@@ -139,6 +177,7 @@ async def checkout_summary(
     address_id: str,
     promo_code: str | None = None,
     tip: float = 0,
+    delivery_type: str = STANDARD,
 ) -> CheckoutSummary:
     """Spec #28. The bill, before anything is committed.
 
@@ -146,11 +185,14 @@ async def checkout_summary(
     `promo_error` explaining what happened. Dropping the code silently is how a
     customer ends up staring at an unchanged total with no idea why.
     """
-    _, restaurant, _, bill, promo = await _prepare(db, user_id, address_id, promo_code, tip)
-    eta = restaurant.avg_prep_time_mins + max(5, round(bill.distance_km * 3))
+    _, restaurant, _, bill, promo = await _prepare(
+        db, user_id, address_id, promo_code, tip, delivery_type
+    )
+    priority_fee = (await platform_settings.delivery_fees(db)).priority
     return CheckoutSummary(
         **bill.as_taka(),
-        estimated_delivery_minutes=eta,
+        estimated_delivery_minutes=_eta_minutes(restaurant, bill.distance_km, delivery_type),
+        delivery_options=_delivery_options(restaurant, bill, priority_fee),
         promo_code=promo.code,
         promo_error=promo.error,
     )
@@ -167,8 +209,13 @@ async def place_order(
     them the undiscounted price would be indefensible. At summary time it is a
     message; at placement it is a 400.
     """
+    if body.delivery_type == PRIORITY and body.scheduled_for is not None:
+        raise ValidationError(
+            "Priority delivery is for orders sent now",
+            details=["Choose Standard for a scheduled order"],
+        )
     cart, restaurant, address, bill, promo = await _prepare(
-        db, user_id, body.address_id, body.promo_code, body.tip
+        db, user_id, body.address_id, body.promo_code, body.tip, body.delivery_type
     )
     if body.promo_code and promo.error:
         raise ValidationError(promo.error)
@@ -186,7 +233,7 @@ async def place_order(
 
     scheduled_for = _validate_schedule(body)
     now = datetime.now(UTC)
-    eta_minutes = restaurant.avg_prep_time_mins + max(5, round(bill.distance_km * 3))
+    eta_minutes = _eta_minutes(restaurant, bill.distance_km, bill.delivery_type)
 
     order = Order(
         customer_id=user_id,
@@ -194,10 +241,10 @@ async def place_order(
         status=OrderStatus.PENDING.value,
         item_total=bill.item_total,
         delivery_fee=bill.delivery_fee,
+        delivery_type=bill.delivery_type,
+        priority_fee=bill.priority_fee,
         discount=bill.discount,
         tip=bill.tip,
-        packaging_fee=bill.packaging_fee,
-        tax_amount=bill.tax_amount,
         platform_fee=bill.platform_fee,
         grand_total=bill.grand_total,
         commission_amount=bill.commission_amount,
@@ -337,6 +384,7 @@ def _to_summary(order: Order, restaurant: Restaurant | None, *, reviewed: bool) 
         placed_at=order.placed_at,
         delivered_at=order.delivered_at,
         scheduled_for=order.scheduled_for,
+        delivery_type=order.delivery_type,
         can_review=str(order.status) in _REVIEWABLE and not reviewed,
         can_cancel=str(order.status) in _CANCELLABLE,
     )
@@ -438,8 +486,7 @@ async def order_detail(db: AsyncSession, user_id: uuid.UUID, order_id: str) -> O
         ],
         item_total=to_major(order.item_total),
         delivery_fee=to_major(order.delivery_fee),
-        packaging_fee=to_major(order.packaging_fee),
-        tax_amount=to_major(order.tax_amount),
+        priority_fee=to_major(order.priority_fee),
         platform_fee=to_major(order.platform_fee),
         discount=to_major(order.discount),
         tip=to_major(order.tip),

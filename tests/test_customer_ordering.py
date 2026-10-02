@@ -241,14 +241,15 @@ async def test_checkout_bill_adds_up_exactly(client, kitchen, shopper):
 
     item_total = dec("item_total")
     assert item_total == Decimal("660.00")
-    assert dec("tax_amount") == (item_total * 5 / 100).quantize(Decimal("0.01"))
+    # VAT and packaging are no longer charged, and no longer on the bill.
+    assert "tax_amount" not in bill and "packaging_fee" not in bill
     assert dec("platform_fee") == (item_total * 2 / 100).quantize(Decimal("0.01"))
     assert dec("tip") == Decimal("20.00")
+    assert bill["delivery_type"] == "STANDARD" and dec("priority_fee") == 0
     expected = (
         item_total
         + dec("delivery_fee")
-        + dec("packaging_fee")
-        + dec("tax_amount")
+        + dec("priority_fee")
         + dec("platform_fee")
         + dec("tip")
         - dec("discount")
@@ -697,9 +698,10 @@ async def test_tracking_is_honest_about_having_no_rider_position(client, kitchen
     assert data["restaurant_latitude"] and data["delivery_latitude"]
 
 
-async def test_delivery_is_a_flat_base_plus_started_kilometres(client, kitchen, shopper):
-    """৳10 covers the first km, then ৳8 per started km. The kitchen fixture is
-    ~1.6 km from the shopper's address, so that is one chargeable km."""
+async def test_delivery_is_a_flat_base_plus_the_rest_by_the_metre(client, kitchen, shopper):
+    """৳10 covers the first km, then ৳8 a km for the rest, by the metre. The
+    kitchen fixture is 1.601 km from the shopper's address: 601 m chargeable,
+    ৳4.81, so ৳14.81 — not ৳18 for a whole second kilometre, and not ৳10."""
     from app.core.config import settings
 
     await _add_burger(client, kitchen, shopper, quantity=1)
@@ -712,10 +714,28 @@ async def test_delivery_is_a_flat_base_plus_started_kilometres(client, kitchen, 
     bill = r.json()["data"]
 
     distance = bill["distance_km"]
-    assert 1.0 < distance < 2.0, f"fixture geometry moved: {distance} km"
+    assert distance == 1.6, f"fixture geometry moved: {distance} km"
+    assert (settings.DELIVERY_FEE_BASE, settings.DELIVERY_FEE_PER_KM) == (10, 8)
+    assert bill["delivery_fee"] == 14.81
 
-    expected = settings.DELIVERY_FEE_BASE + settings.DELIVERY_FEE_PER_KM
-    assert bill["delivery_fee"] == expected == 18
+
+def test_the_delivery_fee_is_charged_by_the_metre():
+    """The user's example: 1.54 km is ৳10 + 0.54 × ৳8 = ৳14.32. The first km
+    is the base alone, and the fee moves smoothly, not in ৳8 steps."""
+    from app.services.pricing import DeliveryFees, delivery_fee_minor
+
+    fees = DeliveryFees(base=1000, per_km=800)
+    assert delivery_fee_minor(0.0, 0, fees) == 1000
+    assert delivery_fee_minor(1.0, 0, fees) == 1000
+    assert delivery_fee_minor(1.54, 0, fees) == 1432
+    assert delivery_fee_minor(1.01, 0, fees) == 1008
+    assert delivery_fee_minor(2.0, 0, fees) == 1800
+    assert delivery_fee_minor(13.54, 0, fees) == 1000 + 10032
+    # Half a paisa rounds up: 1 m at ৳8/km is 0.8 paisa.
+    assert delivery_fee_minor(1.001, 0, fees) == 1001
+    # The minimum and surcharges still apply on top of the metre rate.
+    assert delivery_fee_minor(1.54, 0, DeliveryFees(1000, 800, minimum=2000)) == 2000
+    assert delivery_fee_minor(1.54, 0, DeliveryFees(1000, 800, surcharge=500)) == 1932
 
 
 async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitchen, shopper):
@@ -733,8 +753,8 @@ async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitch
     assert r.json()["data"]["delivery_fee"] >= settings.DELIVERY_FEE_BASE
 
 
-# The kitchen fixture sits at (23.7936, 90.4064). ~3.5 km due north of it is
-# 2.5 chargeable km — three started — well clear of a tier boundary.
+# The kitchen fixture sits at (23.7936, 90.4064). 3.4915 km due north of it is
+# 2492 chargeable metres: ৳10 + 2.492 × ৳8 = ৳29.94.
 _FAR = {"lat": 23.8250, "lng": 90.4064}
 
 
@@ -759,12 +779,14 @@ async def test_cards_quote_the_delivery_fee_for_their_distance(client, kitchen):
     assert at_door["delivery_fee"] == base
 
     far = _card(await client.get(f"{V1}/restaurants", params=_FAR), kitchen)
-    assert 3.0 < far["distance_km"] < 4.0, f"fixture geometry moved: {far['distance_km']} km"
-    assert far["delivery_fee"] == base + 3 * per_km == 34
+    assert far["distance_km"] == 3.49, f"fixture geometry moved: {far['distance_km']} km"
+    assert (base, per_km) == (10, 8)
+    assert far["delivery_fee"] == 29.94
 
+    # The detail screen, and checkout, measure the same distance the card did.
     detail = await client.get(f"{V1}/restaurants/{kitchen.restaurant.id}", params=_FAR)
     assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["delivery_fee"] == 34
+    assert detail.json()["data"]["delivery_fee"] == 29.94
 
 
 async def test_max_delivery_fee_is_a_distance_ceiling(client, kitchen):
@@ -772,8 +794,8 @@ async def test_max_delivery_fee_is_a_distance_ceiling(client, kitchen):
     ids = lambda r: [c["id"] for c in r.json()["data"]]  # noqa: E731
     mine = str(kitchen.restaurant.id)
 
-    assert mine in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 34}))
-    assert mine not in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 33}))
+    assert mine in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 30}))
+    assert mine not in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 29}))
     # Unlocated, every card shows the base, so only a ceiling under it bites.
     assert mine in ids(await client.get(listing, params={"max_delivery_fee": 10}))
     assert mine not in ids(await client.get(listing, params={"max_delivery_fee": 9}))

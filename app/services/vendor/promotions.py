@@ -21,9 +21,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import structlog
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import local_day, local_midnight, local_today
 from app.core.errors import NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
 from app.models.enums import DiscountType
@@ -195,9 +196,9 @@ async def get_detail(db: AsyncSession, restaurant: Restaurant, promo_id) -> Prom
     promo = await _get_owned(db, restaurant, promo_id)
     stats = await _stats(db, [promo.id])
 
-    today = datetime.now(UTC).date()
-    window_start = datetime.combine(today - timedelta(days=6), datetime.min.time(), tzinfo=UTC)
-    day_col = cast(func.timezone("UTC", PromoRedemption.created_at), Date)
+    today = local_today()
+    window_start = local_midnight(today - timedelta(days=6))
+    day_col = local_day(PromoRedemption.created_at)
     daily_result = await db.execute(
         select(day_col, func.count(PromoRedemption.id))
         .where(

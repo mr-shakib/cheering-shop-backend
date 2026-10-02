@@ -38,6 +38,9 @@ class VendorOrderSummary(BaseModel):
     status: str
     payment_method: str
     payment_status: str
+    delivery_type: str = Field(
+        default="STANDARD", description="PRIORITY: the customer paid for faster delivery"
+    )
     item_count: int
     item_total: Decimal
     grand_total: Decimal

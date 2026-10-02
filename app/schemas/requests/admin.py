@@ -115,6 +115,7 @@ class PlatformSettingsUpdateRequest(BaseModel):
     delivery_base_fee: TakaAmount | None = None
     delivery_per_km_fee: TakaAmount | None = None
     delivery_min_fee: TakaAmount | None = None
+    priority_delivery_fee: TakaAmount | None = None
     restaurant_commission_rate: CommissionRate | None = None
     grocery_commission_rate: CommissionRate | None = None
     pharmacy_commission_rate: CommissionRate | None = None

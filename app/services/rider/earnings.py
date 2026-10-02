@@ -1,13 +1,15 @@
 """What a rider has earned, and their withdrawals.
 
-**What a rider earns.** Each order they deliver pays them its `delivery_fee`
-and its `tip`, in full; administrators can add incentives on top. There is no
+**What a rider earns.** Each order they deliver pays them its `delivery_fee`,
+its `priority_fee` (priority orders only) and its `tip`, in full;
+administrators can add incentives on top. The priority fee is counted as
+delivery earning. There is no
 separate rider tariff: the delivery fee is what the customer pays to have the
 food brought, and the rider is who brings it.
 
 **The balance is a query, not a column** — exactly the vendor rule:
 
-    available = Σ (delivery_fee + tip) over DELIVERED orders they carried
+    available = Σ (delivery_fee + priority_fee + tip) over DELIVERED orders they carried
               + Σ incentives
               − Σ payouts not FAILED
 
@@ -18,12 +20,13 @@ reopened to PROCESSING leaves the balance where it was.
 
 import secrets
 import uuid
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import structlog
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import local_day, local_midnight, local_today
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
@@ -38,18 +41,17 @@ from app.schemas.rider import RiderEarnings, RiderEarningsDay, RiderEarningsTota
 log = structlog.get_logger()
 
 _DELIVERED = OrderStatus.DELIVERED.value
-_DAY = cast(func.timezone("UTC", Order.delivered_at), Date)
-_INCENTIVE_DAY = cast(func.timezone("UTC", RiderIncentive.created_at), Date)
-
-
-def _midnight(day: date) -> datetime:
-    return datetime.combine(day, time.min, tzinfo=UTC)
+# Local (BUSINESS_TIMEZONE) days: "today" starts at midnight in Dhaka.
+_DAY = local_day(Order.delivered_at)
+_INCENTIVE_DAY = local_day(RiderIncentive.created_at)
+_midnight = local_midnight
 
 
 async def _order_money(
     db: AsyncSession, rider_id: uuid.UUID, since: datetime | None = None
 ) -> tuple[int, int, int]:
-    """(orders, delivery fees, tips) in paisa over delivered orders."""
+    """(orders, delivery fees + priority fees, tips) in paisa over delivered
+    orders."""
     conditions = [Order.rider_id == rider_id, Order.status == _DELIVERED]
     if since is not None:
         conditions.append(Order.delivered_at >= since)
@@ -57,7 +59,7 @@ async def _order_money(
         await db.execute(
             select(
                 func.count(),
-                func.coalesce(func.sum(Order.delivery_fee), 0),
+                func.coalesce(func.sum(Order.delivery_fee + Order.priority_fee), 0),
                 func.coalesce(func.sum(Order.tip), 0),
             ).where(*conditions)
         )
@@ -97,7 +99,7 @@ async def summary(db: AsyncSession, rider_id: uuid.UUID) -> RiderEarnings:
     total = fees + tips + incentives
     completed, processing = await _payout_sums(db, rider_id)
 
-    today = datetime.now(UTC).date()
+    today = local_today()
     return RiderEarnings(
         rider_id=str(rider_id),
         today=to_major(await _earned_since(db, rider_id, _midnight(today))),
@@ -121,12 +123,12 @@ async def summary(db: AsyncSession, rider_id: uuid.UUID) -> RiderEarnings:
 async def daily(
     db: AsyncSession, rider_id: uuid.UUID, limit: int, offset: int
 ) -> tuple[list[RiderEarningsDay], int]:
-    """One row per UTC day with any earnings, newest first."""
+    """One row per local day with any earnings, newest first."""
     orders = await db.execute(
         select(
             _DAY,
             func.count(),
-            func.coalesce(func.sum(Order.delivery_fee), 0),
+            func.coalesce(func.sum(Order.delivery_fee + Order.priority_fee), 0),
             func.coalesce(func.sum(Order.tip), 0),
         )
         .where(Order.rider_id == rider_id, Order.status == _DELIVERED)

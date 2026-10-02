@@ -62,6 +62,11 @@ class StoreStatusResult(BaseModel):
     status: str
     is_accepting_orders: bool
     message: str
+    next_scheduled_change_at: datetime | None = Field(
+        default=None,
+        description="When the business hours next open or close the store, which "
+        "overrides this toggle. Null when no hours are set.",
+    )
 
 
 class DayHoursOut(BaseModel):
@@ -73,12 +78,20 @@ class DayHoursOut(BaseModel):
 class BusinessHoursOut(BaseModel):
     """GET/PUT /vendor/hours.
 
-    Informational: customers see these, but nothing opens or closes the store
-    automatically — `store_status` remains the only real switch, which is why
-    it is echoed here.
+    Once saved, the hours open and close the store: at each opening time
+    `store_status` becomes OPEN and at each closing time CLOSED. The vendor's
+    toggle still works in between and holds until the next of those times.
     """
 
     restaurant_id: str
     is_configured: bool = Field(description="False until the vendor first saves hours")
+    timezone: str = Field(description='The clock the times are in, e.g. "Asia/Dhaka"')
     days: dict[str, DayHoursOut] = Field(description="mon..sun, always all seven")
     store_status: str
+    is_open_by_hours: bool | None = Field(
+        default=None, description="What the hours say right now; null until configured"
+    )
+    next_change_at: datetime | None = Field(
+        default=None,
+        description="When the hours next open or close the store; null if never",
+    )

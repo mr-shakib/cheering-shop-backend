@@ -112,6 +112,14 @@ checkout charges (see §4). Without `lat`/`lng` it is the base fee — the least
 address pays. Checkout re-quotes from the delivery address, and only there does
 a free-delivery threshold apply.
 
+**Send `lat`/`lng` to `GET /restaurants/{id}` too.** The Restaurant Details
+screen otherwise gets `distance_km: null` and the base fee (৳10), whatever the
+distance. That is the one place a 1.54 km restaurant still showed ৳10.
+
+`is_open` follows the restaurant's business hours (Dhaka time): it turns true
+at the opening time and false at the closing time, and the vendor can still
+open or close early in between.
+
 A **closed** restaurant still appears unless you filter it out. Grey it — do not
 hide it. Hiding makes customers think the restaurant left the platform.
 
@@ -206,23 +214,50 @@ design has one.
 
 ## 4. Checkout and placing the order
 
-`GET /checkout/summary?address_id=…&promo_code=…&tip=20` returns the full bill:
+`GET /checkout/summary?address_id=…&promo_code=…&tip=20&delivery_type=PRIORITY`
+returns the full bill:
 
 | Field | Notes |
 |---|---|
 | `item_total` | sum of the lines |
-| `delivery_fee` | ৳10 base covering the first km, then ৳8 per **started** km. Identical from every restaurant |
-| `packaging_fee` | flat, per order |
-| `tax_amount` | on food only — never on delivery, fees or tip |
+| `delivery_fee` | ৳10 base covering the first km, then ৳8 a km **by the metre**. Identical from every restaurant |
+| `delivery_type` | `STANDARD` or `PRIORITY`, as asked for. Default `STANDARD` |
+| `priority_fee` | ৳20 when `delivery_type` is `PRIORITY`, else 0. It all goes to the rider |
 | `platform_fee` | service fee |
-| `discount` | applied **after** tax, so a promo never reduces tax remitted |
-
-Delivery worked through, since rounding surprises people: **1.0 km → ৳10**,
-**1.2 km → ৳18** (one started km beyond the free one), **3.0 km → ৳26**,
-**5.0 km → ৳42**. Started kilometres, not rounded ones — 1.2 km of overage is
-two kilometres of a rider's time.
+| `discount` | applied last, and never more than the bill |
 | `tip` | as sent |
 | `grand_total` | the sum of the above, minus discount |
+| `estimated_delivery_minutes` | the selected option's `eta_min_minutes` |
+| `delivery_options` | the Delivery tab's two rows, see below |
+
+There is **no tax and no packaging fee**. `tax_amount` and `packaging_fee` are
+gone from this response and from `GET /orders/{id}`; remove those lines from
+the bill screen.
+
+Delivery worked through: **1.0 km → ৳10**, **1.54 km → ৳14.32**
+(৳10 + 0.54 × ৳8), **3.0 km → ৳26**, **5.25 km → ৳44**. Every metre past the
+first kilometre counts, so the fee rises smoothly instead of jumping ৳8 at each
+kilometre. Fees can have paisa (`14.32`); show two decimals, or round for
+display only.
+
+**The Delivery tab (Standard / Priority).** `delivery_options` always lists
+both, whichever one this bill was priced with:
+
+```json
+"delivery_options": [
+  {"type": "STANDARD", "label": "Standard", "extra_fee": 0,
+   "eta_min_minutes": 30, "eta_max_minutes": 40, "is_selected": true},
+  {"type": "PRIORITY", "label": "Priority", "extra_fee": 20,
+   "eta_min_minutes": 20, "eta_max_minutes": 30, "is_selected": false}
+]
+```
+
+Draw each row as `label`, "`eta_min_minutes`–`eta_max_minutes` min" and, when
+`extra_fee` is above 0, a "+`extra_fee`" chip. When the customer picks a row,
+call the summary again with that `type` as `delivery_type` to get the new
+total, and send the same `delivery_type` to `POST /orders`. Priority orders go
+to the top of every rider's list and pay the rider the extra, which is what
+makes them faster. The admin can change the ৳20 in Settings.
 
 A **bad promo code does not fail this call.** The bill returns with
 `promo_error` explaining why nothing was applied — show that string. At
@@ -230,7 +265,9 @@ A **bad promo code does not fail this call.** The bill returns with
 is committing to a total.
 
 `POST /orders` takes `payment_method`, `address_id`, and optionally
-`promo_code`, `tip`, `special_instructions`, `scheduled_for`.
+`promo_code`, `tip`, `special_instructions`, `scheduled_for` and
+`delivery_type` (`STANDARD` or `PRIORITY`). Priority with `scheduled_for` is a
+**400**: a booked slot already has its time.
 
 **Send an `Idempotency-Key` header.** A retry with the same key replays the
 original response instead of placing a second order — which is exactly what
@@ -247,6 +284,9 @@ The cart is cleared in the same transaction as the order is created.
 `GET /restaurants/{id}/schedule` returns date tabs and 10-minute windows,
 generated from the restaurant's business hours. Slots inside the lead time come
 back with `is_available: false` rather than being omitted — render them greyed.
+Everything is Dhaka time: "Today" is today in Dhaka, `label` reads
+"12:00 PM - 12:10 PM", and `starts_at` carries the offset
+(`2026-10-04T12:00:00+06:00`).
 
 Pass the chosen slot's `starts_at` as `scheduled_for` on `POST /orders`. It is
 re-validated server-side against the same lead time, so a stale sheet is a 400

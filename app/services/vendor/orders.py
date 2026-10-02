@@ -114,6 +114,7 @@ def to_summary(order: Order, item_count: int = 0) -> VendorOrderSummary:
         status=str(order.status),
         payment_method=str(order.payment_method),
         payment_status=str(order.payment_status),
+        delivery_type=order.delivery_type,
         item_count=item_count,
         item_total=to_major(order.item_total),
         grand_total=to_major(order.grand_total),

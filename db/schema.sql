@@ -275,9 +275,13 @@ CREATE TABLE restaurants (
     avg_prep_time_mins  smallint    NOT NULL DEFAULT 20,
     commission_rate     numeric(5,4) NOT NULL DEFAULT 0.0000,  -- 0.1500 == 15%, for /vendor/analytics
 
-    -- {mon..sun: {is_open, opens_at "HH:MM", closes_at "HH:MM"}}. Shown to
-    -- customers; nothing flips `status` from it (no scheduler exists).
+    -- {mon..sun: {is_open, opens_at "HH:MM", closes_at "HH:MM"}}, local time
+    -- (Asia/Dhaka). Once set, the worker opens and closes the store by it.
     business_hours      jsonb,
+    -- What the hours said (open?) when they last set `status`; NULL until
+    -- then. `status` changes only when this flips, so the vendor's toggle
+    -- holds until the next opening or closing time.
+    scheduled_open      boolean,
 
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
@@ -726,9 +730,11 @@ CREATE TABLE orders (
     delivery_fee       bigint       NOT NULL DEFAULT 0,
     discount           bigint       NOT NULL DEFAULT 0,
     tip                bigint       NOT NULL DEFAULT 0,
-    -- Decision D6: present from day one, defaulting to 0, so v1 behaviour is
-    -- identical to the spec while VAT / bKash processing fees can be switched
-    -- on without altering a CHECK constraint on a populated orders table.
+    -- Priority delivery's extra, paid to the rider. 0 unless PRIORITY.
+    priority_fee       bigint       NOT NULL DEFAULT 0,
+    -- Decision D6: present from day one, defaulting to 0. No longer charged
+    -- (the bill dropped VAT and packaging); orders placed before that keep
+    -- theirs, which is why the columns and the CHECK still include them.
     packaging_fee      bigint       NOT NULL DEFAULT 0,
     tax_amount         bigint       NOT NULL DEFAULT 0,
     platform_fee       bigint       NOT NULL DEFAULT 0,
@@ -774,6 +780,8 @@ CREATE TABLE orders (
                           ) STORED,
     delivery_contact_phone varchar(20),
     special_instructions   varchar(500),
+    -- The Delivery choice at checkout. PRIORITY is offered to riders first.
+    delivery_type          varchar(10) NOT NULL DEFAULT 'STANDARD',
 
     -- Lifecycle timestamps, one per §8 transition.
     placed_at            timestamptz NOT NULL DEFAULT now(),
@@ -810,11 +818,14 @@ CREATE TABLE orders (
         item_total >= 0 AND delivery_fee >= 0 AND discount >= 0
         AND tip >= 0 AND packaging_fee >= 0 AND tax_amount >= 0
         AND platform_fee >= 0 AND commission_amount >= 0 AND grand_total >= 0
+        AND priority_fee >= 0
     ),
     CONSTRAINT ck_orders_total_math CHECK (
-        grand_total = item_total + delivery_fee + packaging_fee
+        grand_total = item_total + delivery_fee + priority_fee + packaging_fee
                     + tax_amount + platform_fee + tip - discount
     ),
+    CONSTRAINT ck_orders_delivery_type CHECK (delivery_type IN ('STANDARD', 'PRIORITY')),
+    CONSTRAINT ck_orders_priority_fee CHECK (delivery_type = 'PRIORITY' OR priority_fee = 0),
     -- A vendor cannot be charged more commission than the food was worth.
     CONSTRAINT ck_orders_commission CHECK (commission_amount <= item_total),
     CONSTRAINT ck_orders_cancelled CHECK (
@@ -1014,6 +1025,7 @@ CREATE TABLE platform_settings (
     delivery_base_fee           bigint,
     delivery_per_km_fee         bigint,
     delivery_min_fee            bigint,
+    priority_delivery_fee       bigint,
     restaurant_commission_rate  numeric(5,4),
     grocery_commission_rate     numeric(5,4),
     pharmacy_commission_rate    numeric(5,4),
@@ -1030,7 +1042,8 @@ CREATE TABLE platform_settings (
         REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT ck_platform_settings_money CHECK (
         coalesce(delivery_base_fee, 0) >= 0 AND coalesce(delivery_per_km_fee, 0) >= 0
-        AND coalesce(delivery_min_fee, 0) >= 0 AND rain_surcharge >= 0
+        AND coalesce(delivery_min_fee, 0) >= 0
+        AND coalesce(priority_delivery_fee, 0) >= 0 AND rain_surcharge >= 0
         AND heatwave_fee >= 0 AND high_demand_fee >= 0
     ),
     CONSTRAINT ck_platform_settings_rates CHECK (

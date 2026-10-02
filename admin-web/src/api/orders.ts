@@ -16,6 +16,7 @@ export interface AdminOrderRow {
   business_type: string | null;
   rider_id: string | null;
   rider_name: string | null;
+  delivery_type: "STANDARD" | "PRIORITY";
   grand_total: number;
   commission_amount: number;
   placed_at: string;
@@ -72,6 +73,7 @@ export interface AdminOrderDetail extends AdminOrderRow {
   money: {
     item_total: number;
     delivery_fee: number;
+    priority_fee: number;
     packaging_fee: number;
     tax_amount: number;
     platform_fee: number;

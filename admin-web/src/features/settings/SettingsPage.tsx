@@ -36,6 +36,7 @@ interface Form {
   delivery_base_fee: string;
   delivery_per_km_fee: string;
   delivery_min_fee: string;
+  priority_delivery_fee: string;
   restaurant_commission_rate: string;
   grocery_commission_rate: string;
   pharmacy_commission_rate: string;
@@ -51,6 +52,7 @@ const formOf = (s: PlatformSettings): Form => ({
   delivery_base_fee: String(s.delivery_base_fee),
   delivery_per_km_fee: String(s.delivery_per_km_fee),
   delivery_min_fee: String(s.delivery_min_fee),
+  priority_delivery_fee: String(s.priority_delivery_fee),
   restaurant_commission_rate: percentFromRate(s.restaurant_commission_rate),
   grocery_commission_rate: percentFromRate(s.grocery_commission_rate),
   pharmacy_commission_rate: percentFromRate(s.pharmacy_commission_rate),
@@ -76,7 +78,7 @@ function diff(f: Form, was: Form, keys: (keyof Form)[]): SettingsPatch {
       const rate = rateFromPercent(f[k] as string);
       if (rate === null) throw new Error("Enter every commission rate.");
       out[k] = rate;
-    } else if (k.startsWith("delivery_")) {
+    } else if (k.startsWith("delivery_") || k === "priority_delivery_fee") {
       out[k] = taka(f[k] as string, "A delivery fee");
     } else {
       out[k] = (f[k] as string).trim() || null;
@@ -338,14 +340,15 @@ export function SettingsPage() {
         </SettingsCard>
         <SettingsCard
           title="Delivery settings"
-          hint={`The base fee covers the first ${s.delivery_free_km} km; each started km after adds the per-km fee. Applies to the next checkout.`}
-          keys={["delivery_base_fee", "delivery_per_km_fee", "delivery_min_fee"]}
+          hint={`The base fee covers the first ${s.delivery_free_km} km; after that the per-km fee is charged by the metre (1.54 km adds 0.54 × the per-km fee). Priority delivery is extra, and all of it goes to the rider. Applies to the next checkout.`}
+          keys={["delivery_base_fee", "delivery_per_km_fee", "delivery_min_fee", "priority_delivery_fee"]}
           form={form}
           initial={initial}
         >
           {field("delivery_base_fee", "Base fee (৳)", { type: "number", min: 0 })}
           {field("delivery_per_km_fee", "Per KM fee (৳)", { type: "number", min: 0 })}
           {field("delivery_min_fee", "Minimum fee (৳)", { type: "number", min: 0 })}
+          {field("priority_delivery_fee", "Priority delivery fee (৳)", { type: "number", min: 0 })}
         </SettingsCard>
         <SettingsCard
           title="Commission settings"

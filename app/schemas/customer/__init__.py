@@ -15,7 +15,13 @@ from app.schemas.customer.account import (
     ScheduleDay,
     ScheduleOptions,
 )
-from app.schemas.customer.cart import CartAddOnOut, CartLineOut, CartOut, CheckoutSummary
+from app.schemas.customer.cart import (
+    CartAddOnOut,
+    CartLineOut,
+    CartOut,
+    CheckoutSummary,
+    DeliveryOption,
+)
 from app.schemas.customer.chat import ChatMessageOut, ChatMessageSent, ChatThread
 from app.schemas.customer.discovery import (
     AddOnOut,
@@ -58,6 +64,7 @@ __all__ = [
     "ChatMessageSent",
     "ChatThread",
     "CheckoutSummary",
+    "DeliveryOption",
     "CuisineChip",
     "DeliverySlot",
     "FavoriteToggled",

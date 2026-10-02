@@ -39,6 +39,7 @@ class PlatformSettings(Base):
     delivery_base_fee: Mapped[int | None] = mapped_column(Money)
     delivery_per_km_fee: Mapped[int | None] = mapped_column(Money)
     delivery_min_fee: Mapped[int | None] = mapped_column(Money)
+    priority_delivery_fee: Mapped[int | None] = mapped_column(Money)
     restaurant_commission_rate: Mapped[float | None] = mapped_column(Numeric(5, 4))
     grocery_commission_rate: Mapped[float | None] = mapped_column(Numeric(5, 4))
     pharmacy_commission_rate: Mapped[float | None] = mapped_column(Numeric(5, 4))
@@ -66,7 +67,8 @@ class PlatformSettings(Base):
         CheckConstraint("id = 1", name="ck_platform_settings_singleton"),
         CheckConstraint(
             "coalesce(delivery_base_fee, 0) >= 0 AND coalesce(delivery_per_km_fee, 0) >= 0 "
-            "AND coalesce(delivery_min_fee, 0) >= 0 AND rain_surcharge >= 0 "
+            "AND coalesce(delivery_min_fee, 0) >= 0 "
+            "AND coalesce(priority_delivery_fee, 0) >= 0 AND rain_surcharge >= 0 "
             "AND heatwave_fee >= 0 AND high_demand_fee >= 0",
             name="ck_platform_settings_money",
         ),

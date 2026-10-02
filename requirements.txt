@@ -117,6 +117,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
+tzdata==2026.4
+    # via cr-shop-backend (pyproject.toml)
 uvicorn==0.52.3
     # via cr-shop-backend (pyproject.toml)
 uvloop==0.22.1

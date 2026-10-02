@@ -171,8 +171,8 @@ Three rules worth knowing before you build the form:
 
 - **`delivery_fee_base` is read-only.** It comes back on the profile so you can
   show what your customers pay, but sending it is a `400`. Delivery is priced
-  the same from every restaurant — ৳10 covering the first kilometre, then ৳8 per
-  started kilometre — so it is platform policy, not a field on your form.
+  the same from every restaurant — ৳10 covering the first kilometre, then ৳8 a
+  kilometre by the metre — so it is platform policy, not a field on your form.
 - **`latitude` and `longitude` move together.** Sending one alone is a `400`.
   Half an update would place the restaurant at a coordinate it has never
   occupied — and discovery indexes that point.
@@ -209,9 +209,12 @@ PATCH /vendor/store/status
 Setting `OPEN` before approval succeeds and has no effect. Show `message` —
 it names whichever switch is still off.
 
-**There are no scheduled opening hours.** This is a manual toggle and nothing
-closes the store on your behalf. If your app has a "closes at 11pm" setting,
-it is your client that must call this endpoint.
+**With business hours saved (§13), the hours run the store and this toggle
+overrides them until their next change.** Closing at 3 PM keeps the store
+closed until the next opening time; opening late keeps it open until the next
+closing time. `next_scheduled_change_at` says when that is, and `message` ends
+with it ("…Your business hours will open it at 12:00 tomorrow"). Without
+business hours, this toggle is the only switch.
 
 ---
 
@@ -645,7 +648,9 @@ Two things to explain in your UI, because vendors ask:
   commission is the amount snapshotted on each order when it was placed, not
   today's rate — so renegotiating your rate never restates last month.
 
-Days are grouped in UTC.
+Days are Dhaka days (midnight to midnight, Asia/Dhaka), here and on the
+dashboard, the report CSV and promotion charts. The CSV's `delivered_at` is
+Dhaka time with its `+06:00` offset.
 
 `GET /vendor/reviews` returns what customers wrote, newest first. Only the
 restaurant rating and comment are exposed; the rider rating is about the
@@ -897,13 +902,25 @@ PUT /vendor/hours
 }
 ```
 
-Times are 24-hour `"HH:MM"`. An open day needs both times; `closes_at` earlier
-than `opens_at` means trading past midnight and is accepted. `GET` returns
-`is_configured: false` plus a default template until the first save.
+Times are 24-hour `"HH:MM"`, **Dhaka time**. An open day needs both times;
+`closes_at` earlier than `opens_at` means trading past midnight and is
+accepted (`"18:00"`–`"02:00"`, or `"00:00"` for "until midnight"). `GET`
+returns `is_configured: false` plus a default template until the first save.
 
-**These hours are informational.** Customers will see them, but nothing opens
-or closes the store from them — `PATCH /vendor/store/status` remains the only
-real switch. Saving Sunday as closed does not close the store on Sunday.
+**The hours open and close the store.** Saving applies them at once: inside
+your hours the store opens right away, outside them it closes. From then on
+the store opens at each `opens_at` and closes at each `closes_at`, within a
+minute. A day saved as closed stays closed. `PATCH /vendor/store/status` still
+works in between, until the next opening or closing time.
+
+The response tells the screen where things stand:
+
+| Field | Meaning |
+|---|---|
+| `timezone` | `"Asia/Dhaka"` — the clock the times are in |
+| `store_status` | `OPEN` / `CLOSED` right now |
+| `is_open_by_hours` | what the hours alone say right now; `null` until saved |
+| `next_change_at` | when the hours next open or close the store; `null` if never |
 
 ---
 
@@ -1005,9 +1022,9 @@ Be aware of these when planning screens:
    keep the code display separable from the input.
    `POST /vendor/orders/{id}/handoff` returns `409 "No rider is available to
    take this order"` only when no verified rider is on shift.
-3. **No scheduled opening hours.** `status` is a manual toggle, and the
-   business hours saved via `PUT /vendor/hours` (§13) are informational — a
-   vendor who forgets to close stays open. Consider a client-side reminder.
+3. **Hours without business hours.** A store that has never saved business
+   hours (§13) has only the manual toggle, and a vendor who forgets to close
+   stays open. Saving hours fixes that.
 4. **Refunds and payouts are recorded, not executed.** Rejecting a paid order
    sets `payment_status` to `REFUNDED`, and `POST /vendor/payouts` records a
    PROCESSING withdrawal — no payment gateway is connected, so in both cases a

@@ -101,7 +101,8 @@ class FinanceSummary(BaseModel):
     )
     commission_revenue: Kpi
     delivery_revenue: Kpi = Field(
-        description="Delivery fees collected — passed on to the riders who delivered"
+        description="Delivery and priority fees collected — passed on to the riders "
+        "who delivered"
     )
     revenue_by_service: list[ServiceShare]
 

@@ -16,6 +16,7 @@ export interface PlatformSettings {
   delivery_per_km_fee: number;
   delivery_min_fee: number;
   delivery_free_km: number;
+  priority_delivery_fee: number;
   restaurant_commission_rate: number;
   grocery_commission_rate: number;
   pharmacy_commission_rate: number;
@@ -35,6 +36,7 @@ export type SettingsPatch = Partial<{
   delivery_base_fee: number | null;
   delivery_per_km_fee: number | null;
   delivery_min_fee: number | null;
+  priority_delivery_fee: number | null;
   restaurant_commission_rate: number | null;
   grocery_commission_rate: number | null;
   pharmacy_commission_rate: number | null;

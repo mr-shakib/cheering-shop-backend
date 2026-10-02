@@ -5,7 +5,7 @@ import csv
 import io
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi.responses import Response
@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.clock import local_midnight
 from app.core.errors import ValidationError
 from app.models.vendor_application import VendorApplication
 
@@ -56,15 +57,17 @@ def validate_business_type(raw: str | None) -> str | None:
 def day_window(
     date_from: date | None, date_to: date | None
 ) -> tuple[datetime | None, datetime | None]:
-    """Inclusive calendar days → a half-open UTC [start, end) range.
+    """Inclusive local calendar days → a half-open [start, end) range of
+    instants. Days are BUSINESS_TIMEZONE days: "1 October" is midnight to
+    midnight in Dhaka, not in UTC.
 
     Half-open so an order placed at 23:59:59.9 on the last day is counted, which
     a closed `<= 23:59:59` bound would drop.
     """
     if date_from and date_to and date_from > date_to:
         raise ValidationError("date_from must not be after date_to")
-    start = datetime.combine(date_from, time.min, tzinfo=UTC) if date_from else None
-    end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=UTC) if date_to else None
+    start = local_midnight(date_from) if date_from else None
+    end = local_midnight(date_to + timedelta(days=1)) if date_to else None
     return start, end
 
 

@@ -22,45 +22,6 @@ def _as(user) -> dict:
     return {"Authorization": f"Bearer {create_access_token(str(user.id), str(user.role))}"}
 
 
-@pytest.fixture
-async def fresh_settings():
-    """The settings row is shared by the whole suite: put it back to all
-    server defaults before and after."""
-    from sqlalchemy import update
-
-    from app.core.database import SessionLocal
-    from app.models.platform import PlatformSettings
-
-    async def _reset():
-        async with SessionLocal() as s:
-            await s.execute(
-                update(PlatformSettings)
-                .where(PlatformSettings.id == 1)
-                .values(
-                    app_name=None,
-                    support_email=None,
-                    support_phone=None,
-                    delivery_base_fee=None,
-                    delivery_per_km_fee=None,
-                    delivery_min_fee=None,
-                    restaurant_commission_rate=None,
-                    grocery_commission_rate=None,
-                    pharmacy_commission_rate=None,
-                    rain_surcharge=0,
-                    rain_surcharge_active=False,
-                    heatwave_fee=0,
-                    heatwave_fee_active=False,
-                    high_demand_fee=0,
-                    high_demand_fee_active=False,
-                )
-            )
-            await s.commit()
-
-    await _reset()
-    yield
-    await _reset()
-
-
 @pytest.fixture(autouse=True)
 async def clear_rider_geo():
     from app.core.redis import RIDER_GEO_KEY, get_redis
@@ -172,7 +133,7 @@ async def test_delivery_settings_price_the_next_checkout(
 
 async def test_delivery_settings_price_the_restaurant_cards(client, admin, kitchen, fresh_settings):
     """Cards quote from the Settings screen too, not only the server config.
-    ~3.5 km north of the kitchen is three started kilometres."""
+    3.4915 km north of the kitchen is 2492 chargeable metres."""
     r = await client.patch(
         f"{V1}/admin/settings",
         json={"delivery_base_fee": 50, "delivery_per_km_fee": 20},
@@ -183,7 +144,7 @@ async def test_delivery_settings_price_the_restaurant_cards(client, admin, kitch
     r = await client.get(f"{V1}/restaurants", params={"lat": 23.8250, "lng": 90.4064})
     assert r.status_code == 200, r.text
     card = next(c for c in r.json()["data"] if c["id"] == str(kitchen.restaurant.id))
-    assert card["delivery_fee"] == 50 + 3 * 20
+    assert card["delivery_fee"] == 50 + 49.84
 
 
 async def test_per_type_commission_is_the_new_vendor_default(client, admin, fresh_settings):
@@ -377,7 +338,10 @@ async def test_rider_earnings_withdrawal_and_mark_unpaid(
     assert wallet["available_balance"] == 260.0
 
     days = (await client.get(f"{V1}/rider/earnings/days", headers=me)).json()["data"]
-    assert days[0]["date"] == str(datetime.now(UTC).date())
+    # Days are Dhaka days: an order delivered at 8 PM UTC is tomorrow there.
+    from app.core.clock import local_today
+
+    assert days[0]["date"] == str(local_today())
     assert (days[0]["orders"], days[0]["total"]) == (2, 260.0)
 
     payout = {

@@ -255,9 +255,13 @@ one, all `NOT NULL DEFAULT 0`, so v1 behaviour is identical to the spec — the 
 (1059 + 40 = 1099) still validates. The contract widened to:
 
 ```
-grand_total = item_total + delivery_fee + packaging_fee
+grand_total = item_total + delivery_fee + priority_fee + packaging_fee
             + tax_amount + platform_fee + tip - discount
 ```
+
+Migration 0013 added `priority_fee` (Priority delivery's extra, paid to the rider; 0
+unless `delivery_type = 'PRIORITY'`). Tax and packaging are no longer charged: new
+orders write 0 to both, and the columns stay because older orders carry them.
 
 `commission_amount` is a **snapshot**, for the same reason line-item prices are:
 `restaurants.commission_rate` is mutable, and raising a vendor from 15% to 18% must not

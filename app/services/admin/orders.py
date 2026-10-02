@@ -93,6 +93,7 @@ def _to_row(
         business_type=business_type,
         rider_id=str(order.rider_id) if order.rider_id else None,
         rider_name=rider_name,
+        delivery_type=order.delivery_type,
         grand_total=to_major(order.grand_total),
         commission_amount=to_major(order.commission_amount),
         placed_at=order.placed_at,
@@ -290,6 +291,7 @@ async def _detail(db: AsyncSession, order: Order) -> AdminOrderDetail:
         money=AdminOrderMoney(
             item_total=to_major(order.item_total),
             delivery_fee=to_major(order.delivery_fee),
+            priority_fee=to_major(order.priority_fee),
             packaging_fee=to_major(order.packaging_fee),
             tax_amount=to_major(order.tax_amount),
             platform_fee=to_major(order.platform_fee),

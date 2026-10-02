@@ -56,6 +56,9 @@ class RiderJobSummary(BaseModel):
     item_count: int
     grand_total: Decimal
     payment_method: str
+    delivery_type: str = Field(
+        default="STANDARD", description="PRIORITY: the customer paid to have it first"
+    )
     collect_on_delivery: Decimal = Field(
         description="Cash to take at the door — grand_total for COD, zero otherwise"
     )
@@ -130,7 +133,9 @@ class LocationAccepted(BaseModel):
 class RiderEarningsTotals(BaseModel):
     """Lifetime earnings by source, whole taka."""
 
-    delivery_earning: Decimal = Field(description="Delivery fees of orders you delivered")
+    delivery_earning: Decimal = Field(
+        description="Delivery fees, plus priority fees, of orders you delivered"
+    )
     tips: Decimal
     incentives: Decimal = Field(description="Bonuses granted by the platform")
     total: Decimal
@@ -187,7 +192,9 @@ class RiderOffer(RiderJobSummary):
     Sent to every available rider at once; the first to accept gets it.
     """
 
-    earning: Decimal = Field(description="What delivering it pays you: delivery fee + tip")
+    earning: Decimal = Field(
+        description="What delivering it pays you: delivery fee + priority fee + tip"
+    )
     distance_to_restaurant_km: float | None = Field(
         default=None, description="From your live position; null if we have none"
     )

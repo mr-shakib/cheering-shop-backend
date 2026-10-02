@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"  # spec §2: versioned via URL path
     PROJECT_NAME: str = "CR Shop API"
+    # The wall clock the business runs on. Store hours, "today" on every
+    # dashboard and the delivery-slot picker are read in this zone; the server
+    # itself runs in UTC, six hours behind Dhaka. See app/core/clock.py.
+    BUSINESS_TIMEZONE: str = "Asia/Dhaka"
     # None = derive from ENVIRONMENT (see docs_enabled). Set true/false to force.
     ENABLE_DOCS: bool | None = None
     # NoDecode: without it, pydantic-settings tries json.loads() on the raw
@@ -102,8 +106,9 @@ class Settings(BaseSettings):
     # --- Order pricing (spec §5 checkout summary) --------------------------
     # Every line of the bill is platform policy except commission_rate, which
     # is a per-restaurant column. Basis points keep the whole computation in
-    # integers — see core/money.percentage_of — so a 5% VAT on an odd subtotal
-    # never produces a fractional paisa.
+    # integers — see core/money.percentage_of — so a 2% fee on an odd subtotal
+    # never produces a fractional paisa. There is no VAT or packaging line:
+    # both were dropped from the bill (orders placed before that keep theirs).
     # What a newly created restaurant starts on, in basis points (1500 == 15%).
     # The column default is 0, which silently means "this vendor pays us
     # nothing" — a restaurant created before an admin gets round to pricing it
@@ -111,18 +116,25 @@ class Settings(BaseSettings):
     # those are unrecoverable. Set it at creation instead. Per-restaurant
     # renegotiation is PATCH /admin/restaurants/{id}/commission.
     DEFAULT_COMMISSION_BASIS_POINTS: int = 1500
-    TAX_BASIS_POINTS: int = 500  # 5% VAT on the food, not on delivery or tip
     PLATFORM_FEE_BASIS_POINTS: int = 200  # 2% service fee
-    PACKAGING_FEE_PER_ORDER: int = 10  # whole taka, flat
-    # Delivery: a flat base that covers the first kilometre, then per started
-    # kilometre after it. Platform-wide and not negotiable per restaurant —
-    # `restaurants.delivery_fee_base` is no longer read (see pricing.py). What a
-    # customer pays to be brought food should not depend on which kitchen cooked
-    # it, and a column every vendor could edit made the fee a competitive lever
-    # rather than a cost.
+    # Delivery: a flat base that covers the first kilometre, then the per-km
+    # rate for the distance after it, charged by the metre (1.54 km pays for
+    # 0.54 km, not for a whole second one). Platform-wide and not negotiable
+    # per restaurant — `restaurants.delivery_fee_base` is no longer read (see
+    # pricing.py). What a customer pays to be brought food should not depend on
+    # which kitchen cooked it, and a column every vendor could edit made the
+    # fee a competitive lever rather than a cost.
     DELIVERY_FEE_BASE: int = 10  # whole taka, covers the first DELIVERY_FREE_KM
-    DELIVERY_FEE_PER_KM: int = 8  # whole taka, per started km beyond that
+    DELIVERY_FEE_PER_KM: int = 8  # whole taka per km beyond that, pro rata
     DELIVERY_FREE_KM: float = 1.0  # covered by the base fee
+    # Priority delivery (the Standard / Priority choice at checkout): a flat
+    # extra the rider earns on top of the delivery fee, which is what gets a
+    # priority order picked up first. The admin Settings screen can override
+    # the fee.
+    PRIORITY_DELIVERY_FEE: int = 20  # whole taka
+    PRIORITY_DELIVERY_MINUTES_SAVED: int = 10  # quoted ETA, Standard minus Priority
+    # Checkout quotes a window ("30–40 min"), not a single minute.
+    DELIVERY_ETA_WINDOW_MINUTES: int = 10
     # Above this order value delivery is on us. 0 disables the promotion.
     FREE_DELIVERY_THRESHOLD: int = 0  # whole taka
     # Refuse to quote a delivery this far out rather than charging for a trip

@@ -76,6 +76,7 @@ def _to_summary(order: Order, restaurant: Restaurant | None, item_count: int) ->
         item_count=item_count,
         grand_total=to_major(order.grand_total),
         payment_method=str(order.payment_method),
+        delivery_type=order.delivery_type,
         collect_on_delivery=_collect_on_delivery(order),
         placed_at=order.placed_at,
         ready_at=order.ready_at,

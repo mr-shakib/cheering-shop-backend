@@ -16,7 +16,8 @@ Every endpoint below needs an `ADMIN` access token. Any other role gets `403`.
   in URLs.
 - **Lists** take `limit` (default 20, max 100) and `offset`. `meta` carries
   `total`, `page` and `has_more`, which is everything *Page 1 of 10* needs.
-- **Dates** in filters are calendar days (`2026-08-15`), inclusive, in UTC.
+- **Dates** in filters are calendar days (`2026-08-15`), inclusive, in Dhaka
+  time (Asia/Dhaka), as are "today" and every daily or monthly chart.
 - **Export.** The Orders, Customers and Active Vendors lists accept
   `format=csv` with the same filters. The response is a file download of up to
   5000 rows.
@@ -72,7 +73,7 @@ The first admin account is created on the server with
 `GET /admin/dashboard` returns the whole screen except the chart:
 
 - `revenue_today`, `orders_today`: each has `{value, previous, change_pct}`.
-  They compare **today with yesterday**, both as whole UTC days. `change_pct` is
+  They compare **today with yesterday**, both as whole Dhaka days. `change_pct` is
   `null` when yesterday was zero, so show no arrow in that case. Revenue counts
   delivered orders only.
 - `active_riders` (riders on shift) and `online_vendors` (verified and OPEN).
@@ -354,7 +355,8 @@ level affects new orders only.
 ## 8. Riders
 
 **What a rider earns.** Each order a rider delivers pays them its
-`delivery_fee` and `tip` in full. Admins can add incentives on top. A rider's
+`delivery_fee`, `priority_fee` (priority orders) and `tip` in full. Admins can
+add incentives on top. A rider's
 balance works like a vendor's: everything earned, minus withdrawals that are
 paid or on their way. A failed withdrawal goes back to the balance.
 
@@ -636,14 +638,20 @@ the server default. Fields still on the default are listed in
 | Card | Fields |
 |---|---|
 | General | `app_name`, `support_email`, `support_phone` |
-| Delivery settings | `delivery_base_fee` (covers the first `delivery_free_km`), `delivery_per_km_fee`, `delivery_min_fee` — whole taka |
+| Delivery settings | `delivery_base_fee` (covers the first `delivery_free_km`), `delivery_per_km_fee` (charged by the metre after that), `delivery_min_fee`, `priority_delivery_fee` (what Priority adds at checkout, default ৳20) — whole taka |
 | Commission settings | `restaurant_commission_rate` (Food), `grocery_commission_rate` (Shop), `pharmacy_commission_rate` (Medicine) — fractions, `0.18` = 18% |
 | Dynamic pricing | `rain_surcharge`, `heatwave_fee`, `high_demand_fee`, each `{"amount", "active"}` |
 
 - **Delivery fees and active surcharges** apply to the next checkout. The fee is
-  base + per-km, raised to the minimum if below it, plus every **active**
-  surcharge. The screen's amounts do nothing until `active` is true, so add a
-  switch next to each.
+  base + per-km × the distance past `delivery_free_km` (to the metre: 1.54 km
+  is base + 0.54 × per-km), raised to the minimum if below it, plus every
+  **active** surcharge. The screen's amounts do nothing until `active` is true,
+  so add a switch next to each.
+- **The priority delivery fee** is added only to orders where the customer
+  picks Priority, and goes to the rider in full. Orders carry `delivery_type`
+  (`STANDARD` / `PRIORITY`) in lists and the drawer, and `money.priority_fee`.
+  `money.tax_amount` and `money.packaging_fee` are 0 on new orders: neither is
+  charged any more. They stay in the drawer for older orders that had them.
 - **The commission rates** are what a *new* vendor of that type starts on.
   Existing vendors keep their rate; change one with
   `PATCH /admin/restaurants/{id}/commission` (§7).

@@ -15,6 +15,7 @@ before anyone has checked them means the first customer experience is a gamble.
 
 import re
 import unicodedata
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
@@ -22,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import LOCAL_TZ
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
@@ -40,7 +42,7 @@ from app.schemas.vendor import (
     RestaurantProfile,
     StoreStatusResult,
 )
-from app.services import platform_settings
+from app.services import business_hours, platform_settings
 
 log = structlog.get_logger()
 
@@ -289,13 +291,18 @@ async def set_store_status(
     `is_accepting_orders` stays false, and the message explains which of the
     three switches is still off.
 
-    There are no scheduled opening hours. `status` is a manual toggle and
-    nothing sweeps it — a vendor who forgets to close stays open. Automatic
-    hours need a table this schema does not have.
+    With business hours saved, the toggle holds until the hours next open or
+    close the store, and the response says when that is. Without them it is
+    the only switch.
     """
     restaurant.status = status
     await db.flush()
 
+    change_at = (
+        business_hours.next_change(restaurant.business_hours, datetime.now(UTC))
+        if restaurant.business_hours
+        else None
+    )
     accepting = is_accepting_orders(restaurant)
     if accepting:
         message = "Your store is open and accepting orders"
@@ -308,6 +315,12 @@ async def set_store_status(
         )
     else:
         message = "Saved, but this restaurant has been deactivated by an administrator"
+    if change_at is not None and status in ("OPEN", "CLOSED"):
+        verb = "close" if status == "OPEN" else "open"
+        message += (
+            f". Your business hours will {verb} it at "
+            f"{_wall_clock(change_at)}"
+        )
 
     log.info(
         "store_status_changed",
@@ -320,7 +333,16 @@ async def set_store_status(
         status=str(restaurant.status),
         is_accepting_orders=accepting,
         message=message,
+        next_scheduled_change_at=change_at,
     )
+
+
+def _wall_clock(moment: datetime) -> str:
+    """"22:00 today", "12:00 tomorrow", "12:00 on Monday" in local time."""
+    local = moment.astimezone(LOCAL_TZ)
+    days = (local.date() - datetime.now(LOCAL_TZ).date()).days
+    when = {0: "today", 1: "tomorrow"}.get(days, f"on {local:%A}")
+    return f"{local:%H:%M} {when}"
 
 
 async def update_profile(
@@ -388,7 +410,7 @@ async def update_profile(
 # Business hours
 # ---------------------------------------------------------------------------
 
-DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAY_KEYS = business_hours.DAY_KEYS
 
 # What GET returns before the vendor ever saves — the Business Hour screen
 # needs seven rows to render, not an empty object.
@@ -398,19 +420,23 @@ _DEFAULT_DAY = {"is_open": True, "opens_at": "10:00", "closes_at": "22:00"}
 def hours_out(restaurant: Restaurant) -> BusinessHoursOut:
     """Stored hours, or the default template when none were ever saved.
 
-    `store_status` rides along because these hours are **informational**:
-    nothing flips the OPEN/CLOSED toggle from them (there is no scheduler),
-    and a screen showing "Mon 10–22" next to a closed store should say so.
+    The template is only something to edit: until the vendor saves, no hours
+    apply and `is_open_by_hours` is null.
     """
     stored = restaurant.business_hours or {}
     days = {
         day: DayHoursOut(**stored.get(day, _DEFAULT_DAY)) for day in DAY_KEYS
     }
+    now = datetime.now(UTC)
+    configured = bool(restaurant.business_hours)
     return BusinessHoursOut(
         restaurant_id=str(restaurant.id),
-        is_configured=bool(restaurant.business_hours),
+        is_configured=configured,
+        timezone=settings.BUSINESS_TIMEZONE,
         days=days,
         store_status=str(restaurant.status),
+        is_open_by_hours=business_hours.is_open_at(stored, now) if configured else None,
+        next_change_at=business_hours.next_change(stored, now) if configured else None,
     )
 
 
@@ -422,7 +448,11 @@ async def set_hours(
     A day marked open must carry both times; a closed day's times are
     discarded rather than stored, so reopening a day starts from the defaults
     instead of resurrecting stale hours. `closes_at` before `opens_at` means
-    trading past midnight and is legal.
+    trading past midnight and is legal. Times are local (BUSINESS_TIMEZONE).
+
+    Saving applies the hours at once: inside them the store opens now, outside
+    them it closes now. Waiting for the next opening time would leave a vendor
+    who sets up at 2 PM looking closed until tomorrow.
     """
     hours: dict = {}
     for day in DAY_KEYS:
@@ -445,6 +475,11 @@ async def set_hours(
             hours[day] = {"is_open": False, "opens_at": None, "closes_at": None}
 
     restaurant.business_hours = hours
+    business_hours.apply(restaurant, datetime.now(UTC))
     await db.flush()
-    log.info("business_hours_updated", restaurant_id=str(restaurant.id))
+    log.info(
+        "business_hours_updated",
+        restaurant_id=str(restaurant.id),
+        status=str(restaurant.status),
+    )
     return hours_out(restaurant)

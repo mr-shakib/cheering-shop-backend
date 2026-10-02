@@ -28,6 +28,7 @@ class AdminOrderRow(BaseModel):
     )
     rider_id: str | None = None
     rider_name: str | None = None
+    delivery_type: str = Field(default="STANDARD", description="STANDARD or PRIORITY")
     grand_total: Decimal
     commission_amount: Decimal
     placed_at: datetime
@@ -85,8 +86,13 @@ class AdminRiderLocation(BaseModel):
 
 
 class AdminOrderMoney(BaseModel):
+    """The bill as charged. VAT and packaging are no longer charged; they stay
+    here because orders placed before that carried them, and the drawer's
+    lines must add up to their grand_total. 0 on every new order."""
+
     item_total: Decimal
     delivery_fee: Decimal
+    priority_fee: Decimal = Field(description="Paid to the rider; 0 unless PRIORITY")
     packaging_fee: Decimal
     tax_amount: Decimal
     platform_fee: Decimal

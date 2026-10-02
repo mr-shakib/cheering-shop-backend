@@ -68,11 +68,19 @@ def _distance_expr(lat: float | None, lng: float | None):
     `ST_Distance` on `geography` returns metres, so no projection maths is
     needed. Returning NULL rather than 0 for an unlocated caller matters: 0
     would sort every restaurant to the top of a "nearest first" list.
+
+    On the sphere (`use_spheroid = false`), not the spheroid: that is the same
+    great-circle distance checkout computes with `pricing.haversine_km`, to the
+    millimetre. The delivery fee is charged by the metre, and on the spheroid
+    a card 3.5 km away read 14 m shorter than checkout did, so the card quoted
+    a different price than the bill.
     """
     if lat is None or lng is None:
         return cast(null(), Float)
     origin = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
-    return func.ST_Distance(Restaurant.location, func.cast(origin, Restaurant.location.type))
+    return func.ST_Distance(
+        Restaurant.location, func.cast(origin, Restaurant.location.type), False
+    )
 
 
 def _to_card(

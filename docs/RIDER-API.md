@@ -98,22 +98,22 @@ wss://…/api/v1/ws/rider/offers?token=<access token>
 
 | Frame `type` | Meaning |
 |---|---|
-| `offer.new` | A restaurant accepted an order. Carries `order_id`, `order_number`, `restaurant_name`, the restaurant's coordinates and `earning`. |
+| `offer.new` | A restaurant accepted an order. Carries `order_id`, `order_number`, `restaurant_name`, the restaurant's coordinates, `earning` and `delivery_type`. |
 | `offer.ready` | The food is ready and nobody has taken it yet. |
 | `offer.taken` | Someone accepted it (`rider_id`). Remove the card. |
 
-Every rider on shift also gets a push notification ("New delivery request")
-if their device is registered with `POST /users/me/devices`, so the app can
-be in the background.
+Every rider on shift also gets a push notification ("New delivery request",
+or "Priority · New delivery request") if their device is registered with
+`POST /users/me/devices`, so the app can be in the background.
 
-**See what is waiting.** `GET /rider/offers` lists every open offer. Call it
-when the socket opens and after a reconnect. Each offer has the job card's
-fields (both addresses and coordinates, item count, `collect_on_delivery`)
-plus:
+**See what is waiting.** `GET /rider/offers` lists every open offer,
+**priority orders first**, then nearest. Call it when the socket opens and
+after a reconnect. Each offer has the job card's fields (both addresses and
+coordinates, item count, `collect_on_delivery`, `delivery_type`) plus:
 
 | Field | Meaning |
 |---|---|
-| `earning` | What delivering it pays you: its delivery fee + tip |
+| `earning` | What delivering it pays you: its delivery fee + priority fee + tip |
 | `distance_to_restaurant_km` | From your live position; null if you are not reporting one |
 | `trip_distance_km` | Restaurant to the customer |
 | `offered_at` | When the restaurant accepted it |
@@ -300,13 +300,16 @@ keep it. One application per email can be pending at a time (`409`).
 
 ## 6b. Wallet
 
-You earn each delivered order's **delivery fee and tip in full**, plus any
-incentive the platform grants.
+You earn each delivered order's **delivery fee, priority fee and tip in
+full**, plus any incentive the platform grants. A `PRIORITY` order (the
+customer paid ৳20 extra for faster delivery) pays you that ৳20 on top; badge
+those cards, since the customer was promised a shorter wait.
 
-`GET /rider/earnings` returns `today`, `this_week` (since Monday, UTC),
-`this_month`, `totals` (`delivery_earning`, `tips`, `incentives`, `total`),
-and `available_balance`: everything earned, minus withdrawals paid or on their
-way. `GET /rider/earnings/days` lists each day with earnings, newest first.
+`GET /rider/earnings` returns `today`, `this_week` (since Monday),
+`this_month`, `totals` (`delivery_earning`, which includes priority fees,
+`tips`, `incentives`, `total`), and `available_balance`: everything earned,
+minus withdrawals paid or on their way. `GET /rider/earnings/days` lists each
+day with earnings, newest first. Days, weeks and months are Dhaka time.
 
 **Withdraw:**
 

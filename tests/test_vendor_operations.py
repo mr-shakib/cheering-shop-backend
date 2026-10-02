@@ -450,8 +450,10 @@ async def test_report_csv_downloads_delivered_orders(client, vendor, order_custo
     assert "attachment" in r.headers["content-disposition"]
 
     lines = r.text.strip().splitlines()
-    assert lines[0].startswith("order_number,delivered_at_utc")
+    assert lines[0].startswith("order_number,delivered_at,")
     assert len(lines) == 2
+    # Dhaka time, with its offset, so the vendor reads their own clock.
+    assert "+06:00," in lines[1]
     assert ",800.00," in lines[1] and ",680.00" in lines[1]
 
 

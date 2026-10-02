@@ -59,6 +59,10 @@ class Order(Base, UUIDPrimaryKey):
     delivery_fee: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
     discount: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
     tip: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
+    # The rider's extra for a PRIORITY order (migration 0013). 0 on STANDARD.
+    priority_fee: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
+    # No longer charged: the bill dropped VAT and packaging. New orders write
+    # 0; orders placed before that keep what they were charged.
     packaging_fee: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
     tax_amount: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
     platform_fee: Mapped[int] = mapped_column(Money, nullable=False, server_default=text("0"))
@@ -110,6 +114,11 @@ class Order(Base, UUIDPrimaryKey):
     )
     delivery_contact_phone: Mapped[str | None] = mapped_column(String(20))
     special_instructions: Mapped[str | None] = mapped_column(String(500))
+    # STANDARD or PRIORITY — the Delivery choice at checkout. Priority orders
+    # are offered to riders first and pay them `priority_fee` on top.
+    delivery_type: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'STANDARD'")
+    )
 
     # --- Lifecycle (spec §8) ---------------------------------------------
     placed_at: Mapped[datetime] = mapped_column(
@@ -168,15 +177,22 @@ class Order(Base, UUIDPrimaryKey):
         CheckConstraint(
             "item_total >= 0 AND delivery_fee >= 0 AND discount >= 0 "
             "AND tip >= 0 AND packaging_fee >= 0 AND tax_amount >= 0 "
-            "AND platform_fee >= 0 AND commission_amount >= 0 AND grand_total >= 0",
+            "AND platform_fee >= 0 AND commission_amount >= 0 AND grand_total >= 0 "
+            "AND priority_fee >= 0",
             name="ck_orders_money_nonneg",
         ),
         # The arithmetic contract of GET /checkout/summary. A mispriced order
         # cannot be persisted at all.
         CheckConstraint(
-            "grand_total = item_total + delivery_fee + packaging_fee "
+            "grand_total = item_total + delivery_fee + priority_fee + packaging_fee "
             "+ tax_amount + platform_fee + tip - discount",
             name="ck_orders_total_math",
+        ),
+        CheckConstraint(
+            "delivery_type IN ('STANDARD', 'PRIORITY')", name="ck_orders_delivery_type"
+        ),
+        CheckConstraint(
+            "delivery_type = 'PRIORITY' OR priority_fee = 0", name="ck_orders_priority_fee"
         ),
         CheckConstraint("commission_amount <= item_total", name="ck_orders_commission"),
         CheckConstraint(

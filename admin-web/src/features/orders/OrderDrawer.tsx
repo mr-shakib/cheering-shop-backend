@@ -180,6 +180,7 @@ function OrderBody({ order }: { order: AdminOrderDetail }) {
         <div className="mt-3 space-y-1.5 border-t border-line pt-3">
           <MoneyRow label="Items" value={money(m.item_total)} />
           <MoneyRow label="Delivery fee" value={money(m.delivery_fee)} />
+          {m.priority_fee > 0 && <MoneyRow label="Priority delivery" value={money(m.priority_fee)} />}
           {m.packaging_fee > 0 && <MoneyRow label="Packaging" value={money(m.packaging_fee)} />}
           {m.platform_fee > 0 && <MoneyRow label="Platform fee" value={money(m.platform_fee)} />}
           {m.tax_amount > 0 && <MoneyRow label="Tax" value={money(m.tax_amount)} />}
@@ -322,6 +323,7 @@ export function OrderDrawer({ orderId, onClose }: { orderId: string | null; onCl
             <StatusBadge {...orderStatus(o.status)} />
             <span>Placed {dateTimeLong(o.placed_at)}</span>
             {o.scheduled_for && <Badge tone="blue">Scheduled {dateTimeLong(o.scheduled_for)}</Badge>}
+            {o.delivery_type === "PRIORITY" && <Badge tone="orange">Priority</Badge>}
           </div>
           <OrderBody order={o} />
         </>

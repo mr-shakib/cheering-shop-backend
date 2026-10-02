@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.clock import LOCAL_TZ
+
 pytestmark = pytest.mark.usefixtures("db_available")
 
 V1 = "/api/v1"
@@ -1089,7 +1091,8 @@ async def test_analytics_counts_delivered_orders_only(client, vendor, order_cust
     assert data["totals"]["gross_sales"] == 1000
     assert data["totals"]["commission"] == 150
     assert data["totals"]["net_payout"] == 850
-    assert data["daily"][0]["date"] == now.date().isoformat()
+    # A Dhaka day, which is not the UTC day between 6 PM and midnight UTC.
+    assert data["daily"][0]["date"] == now.astimezone(LOCAL_TZ).date().isoformat()
     assert data["top_items"][0]["name"] == "Chicken Biryani"
     # Cancellations and in-flight orders stay visible here.
     assert data["status_breakdown"]["PENDING"] == 1
@@ -1110,8 +1113,9 @@ async def test_analytics_window_excludes_older_orders(client, vendor, order_cust
     r = await client.get(f"{V1}/vendor/analytics", headers=vendor.headers)
     assert r.json()["data"]["totals"]["orders"] == 0
 
+    day = old.astimezone(LOCAL_TZ).date()
     r = await client.get(
-        f"{V1}/vendor/analytics?date_from={old.date()}&date_to={old.date()}",
+        f"{V1}/vendor/analytics?date_from={day}&date_to={day}",
         headers=vendor.headers,
     )
     assert r.json()["data"]["totals"]["orders"] == 1

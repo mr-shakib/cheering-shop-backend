@@ -78,10 +78,16 @@ class Restaurant(Base, UUIDPrimaryKey, TimestampMixin):
     )
 
     # {mon..sun: {is_open, opens_at "HH:MM", closes_at "HH:MM"}} — the Business
-    # Hour screen. Informational: shown to customers, but nothing flips
-    # `status` from it (no scheduler exists), so the manual toggle stays the
-    # only thing that actually opens or closes the store.
+    # Hour screen, in local time (settings.BUSINESS_TIMEZONE). Once set, the
+    # hours open and close the store: services.business_hours flips `status`
+    # at each opening and closing time. The vendor's toggle still works in
+    # between and holds until the next scheduled change.
     business_hours: Mapped[dict | None] = mapped_column(JSONB)
+    # What the hours said (True = open) when they last set `status`; NULL
+    # until they first do. Changing `status` only when this flips is what lets
+    # the vendor's own toggle stand until the next opening or closing time,
+    # and lets a missed minute catch up on the next one.
+    scheduled_open: Mapped[bool | None] = mapped_column(Boolean)
 
     owner: Mapped["User"] = relationship(back_populates="restaurant", lazy="raise")  # noqa: F821
     categories: Mapped[list["MenuCategory"]] = relationship(  # noqa: F821

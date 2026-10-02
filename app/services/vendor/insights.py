@@ -12,9 +12,10 @@ every function here is a reporting query over rows the lifecycle module wrote.
 from datetime import UTC, date, datetime, timedelta
 
 import structlog
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import LOCAL_TZ, local_day, local_midnight, local_today
 from app.core.errors import ValidationError
 from app.core.money import to_major
 from app.models.enums import ActorType, OrderStatus
@@ -44,10 +45,10 @@ log = structlog.get_logger()
 # Analytics
 # ---------------------------------------------------------------------------
 
-# Grouping happens in UTC explicitly. Letting it fall through to the session
-# timezone would make the same order land on different days depending on which
-# connection served the request.
-_DELIVERED_DAY = cast(func.timezone("UTC", Order.delivered_at), Date)
+# Days are local (BUSINESS_TIMEZONE), named explicitly. UTC days start at 6 AM
+# in Dhaka, and the session timezone would put the same order on different days
+# depending on which connection served the request.
+_DELIVERED_DAY = local_day(Order.delivered_at)
 
 
 async def analytics(
@@ -71,7 +72,7 @@ async def analytics(
     `restaurants.commission_rate` (decision D6): the rate is mutable, so reading
     it live would silently restate historical earnings the day it changed.
     """
-    today = datetime.now(UTC).date()
+    today = local_today()
     date_to = date_to or today
     date_from = date_from or (date_to - timedelta(days=29))
     if date_from > date_to:
@@ -79,8 +80,8 @@ async def analytics(
 
     # Half-open [start, end): the closed upper bound would otherwise drop
     # everything delivered after midnight on the final day.
-    start = datetime.combine(date_from, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(date_to + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+    start = local_midnight(date_from)
+    end = local_midnight(date_to + timedelta(days=1))
 
     delivered = [
         Order.restaurant_id == restaurant.id,
@@ -295,10 +296,11 @@ async def dashboard(db: AsyncSession, restaurant: Restaurant) -> VendorDashboard
 
     Assembled from the same queries the dedicated endpoints use, so the
     numbers here can never disagree with the screens behind them. Days are
-    UTC, matching analytics.
+    local, matching analytics.
     """
     now = datetime.now(UTC)
-    today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC)
+    today = local_today()
+    today_start = local_midnight(today)
 
     # One grouped count behind all three chips. It counts the same QUEUE_TABS
     # groups the queue itself filters on, so New(5) is precisely what
@@ -352,7 +354,7 @@ async def dashboard(db: AsyncSession, restaurant: Restaurant) -> VendorDashboard
             orders=by_day.get(d, (0, 0))[0],
             earnings=to_major(by_day.get(d, (0, 0))[1]),
         )
-        for d in (now.date() - timedelta(days=offset) for offset in range(6, -1, -1))
+        for d in (today - timedelta(days=offset) for offset in range(6, -1, -1))
     ]
 
     recent_result = await db.execute(
@@ -463,14 +465,14 @@ async def report_csv(
     import csv as csv_module
     import io
 
-    today = datetime.now(UTC).date()
+    today = local_today()
     date_to = date_to or today
     date_from = date_from or (date_to - timedelta(days=29))
     if date_from > date_to:
         raise ValidationError("date_from must not be after date_to")
 
-    start = datetime.combine(date_from, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(date_to + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+    start = local_midnight(date_from)
+    end = local_midnight(date_to + timedelta(days=1))
 
     result = await db.execute(
         select(Order)
@@ -488,7 +490,7 @@ async def report_csv(
     writer.writerow(
         [
             "order_number",
-            "delivered_at_utc",
+            "delivered_at",
             "payment_method",
             "item_total",
             "delivery_fee",
@@ -504,7 +506,7 @@ async def report_csv(
         writer.writerow(
             [
                 order.order_number,
-                delivered.astimezone(UTC).isoformat() if delivered else "",
+                delivered.astimezone(LOCAL_TZ).isoformat() if delivered else "",
                 str(order.payment_method),
                 to_major(order.item_total),
                 to_major(order.delivery_fee),

@@ -16,6 +16,8 @@ being an offer.
   race themselves past `MAX_CONCURRENT_JOBS` either.
 * **Nobody accepts.** The order waits, visible to operators as awaiting a
   rider; `POST /admin/orders/{id}/assign-rider` still assigns one by hand.
+* **Priority orders come first.** The customer paid extra for them, the rider
+  earns that extra, and they head the list and say so in the push.
 """
 
 import uuid
@@ -37,7 +39,7 @@ from app.models.rider import RiderProfile
 from app.models.user import User, UserDevice
 from app.schemas.rider import RiderJobDetail, RiderOffer, RiderPosition
 from app.services import push_service, realtime
-from app.services.pricing import haversine_km
+from app.services.pricing import PRIORITY, haversine_km
 from app.services.rider.dispatch import count_in_flight
 from app.services.rider.jobs import job_detail, to_summary
 from app.services.rider.tracking import is_fresh
@@ -58,6 +60,12 @@ def _open(order_id: uuid.UUID | None = None) -> list[ColumnElement[bool]]:
     return conditions
 
 
+def rider_earning(order: Order) -> int:
+    """What carrying this order pays, in paisa: the delivery fee, the
+    priority fee and the tip, all in full."""
+    return order.delivery_fee + order.priority_fee + order.tip
+
+
 async def _require_available(db: AsyncSession, rider: User, *, lock: bool = False) -> RiderProfile:
     query = select(RiderProfile).where(RiderProfile.user_id == rider.id)
     if lock:
@@ -73,8 +81,9 @@ async def _require_available(db: AsyncSession, rider: User, *, lock: bool = Fals
 
 
 async def list_offers(db: AsyncSession, rider: User) -> list[RiderOffer]:
-    """Every open offer. Nearest restaurant first when we know where you are,
-    otherwise the ones waiting longest first."""
+    """Every open offer, priority orders first. Within each, nearest
+    restaurant first when we know where you are, otherwise the ones waiting
+    longest first."""
     await _require_available(db, rider)
     load = await count_in_flight(db, rider.id)
 
@@ -83,7 +92,11 @@ async def list_offers(db: AsyncSession, rider: User) -> list[RiderOffer]:
             select(Order, Restaurant)
             .join(Restaurant, Restaurant.id == Order.restaurant_id)
             .where(*_open())
-            .order_by(Order.accepted_at.asc().nulls_last(), Order.placed_at.asc())
+            .order_by(
+                (Order.delivery_type == PRIORITY).desc(),
+                Order.accepted_at.asc().nulls_last(),
+                Order.placed_at.asc(),
+            )
             .limit(_MAX_OFFERS)
         )
     ).all()
@@ -106,7 +119,7 @@ async def list_offers(db: AsyncSession, rider: User) -> list[RiderOffer]:
         offers.append(
             RiderOffer(
                 **summary.model_dump(),
-                earning=to_major(order.delivery_fee + order.tip),
+                earning=to_major(rider_earning(order)),
                 distance_to_restaurant_km=round(
                     haversine_km(
                         here.latitude, here.longitude, restaurant.latitude, restaurant.longitude
@@ -129,7 +142,9 @@ async def list_offers(db: AsyncSession, rider: User) -> list[RiderOffer]:
             )
         )
     if here:
-        offers.sort(key=lambda o: o.distance_to_restaurant_km or 0.0)
+        offers.sort(
+            key=lambda o: (o.delivery_type != PRIORITY, o.distance_to_restaurant_km or 0.0)
+        )
     return offers
 
 
@@ -178,7 +193,8 @@ async def announce(db: AsyncSession, order_id: uuid.UUID, *, reason: str = "new"
         if row is None:
             return 0
         order, restaurant = row
-        earning = to_major(order.delivery_fee + order.tip)
+        earning = to_major(rider_earning(order))
+        priority = order.delivery_type == PRIORITY
         await realtime.publish(
             realtime.rider_offers_channel(),
             {
@@ -189,6 +205,7 @@ async def announce(db: AsyncSession, order_id: uuid.UUID, *, reason: str = "new"
                 "restaurant_latitude": restaurant.latitude,
                 "restaurant_longitude": restaurant.longitude,
                 "earning": earning,
+                "delivery_type": order.delivery_type,
             },
         )
         tokens = list(
@@ -207,6 +224,8 @@ async def announce(db: AsyncSession, order_id: uuid.UUID, *, reason: str = "new"
             ).all()
         )
         title = "New delivery request" if reason == "new" else "Food is ready — still needs a rider"
+        if priority:
+            title = f"Priority · {title}"
         pushed = await push_service.send(
             db,
             tokens,

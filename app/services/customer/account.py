@@ -9,11 +9,12 @@ index to prevent it.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import LOCAL_TZ, local_now
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.models.address import Address
@@ -27,6 +28,7 @@ from app.schemas.customer import (
     ScheduleOptions,
 )
 from app.schemas.requests import AddressCreateRequest
+from app.services.business_hours import DAY_KEYS
 
 
 def _as_uuid(value: str, what: str) -> uuid.UUID:
@@ -212,8 +214,6 @@ async def toggle_favorite(
 
 # --- Scheduled delivery ----------------------------------------------------
 
-_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-
 
 def _slot_label(start: datetime, end: datetime) -> str:
     """"2:40 PM - 2:50 PM" — the format on the Schedule Order sheet."""
@@ -235,6 +235,11 @@ async def schedule_options(db: AsyncSession, restaurant_id: str) -> ScheduleOpti
     Capacity is deliberately NOT modelled. Every open slot is bookable, because
     nothing anywhere tracks kitchen throughput; inventing a cap here would be a
     number with no basis. When throughput data exists, this is where it goes.
+
+    Everything is on the restaurant's wall clock (BUSINESS_TIMEZONE): "Today"
+    is today in Dhaka, a vendor's 12:00 is noon there, and each slot carries
+    the +06:00 offset. Hours that run past midnight (18:00–02:00) continue
+    into the next calendar day.
     """
     rid = _as_uuid(restaurant_id, "restaurant_id")
     restaurant = await db.get(Restaurant, rid)
@@ -242,22 +247,24 @@ async def schedule_options(db: AsyncSession, restaurant_id: str) -> ScheduleOpti
         raise NotFoundError("Restaurant not found")
 
     hours = restaurant.business_hours or {}
-    now = datetime.now(UTC)
+    now = local_now()
     earliest = now + timedelta(minutes=settings.SCHEDULE_MIN_LEAD_MINUTES)
     width = timedelta(minutes=settings.SCHEDULE_SLOT_MINUTES)
 
     days: list[ScheduleDay] = []
     for offset in range(settings.SCHEDULE_MAX_DAYS_AHEAD):
         day = now.date() + timedelta(days=offset)
-        config = hours.get(_WEEKDAYS[day.weekday()]) or {}
+        config = hours.get(DAY_KEYS[day.weekday()]) or {}
         label = {0: "Today", 1: "Tomorrow"}.get(offset, day.strftime("%a"))
 
         slots: list[DeliverySlot] = []
         if config.get("is_open", True):
             opens = _parse_time(config.get("opens_at"), default="09:00")
             closes = _parse_time(config.get("closes_at"), default="23:00")
-            cursor = datetime.combine(day, opens, tzinfo=UTC)
-            end_of_day = datetime.combine(day, closes, tzinfo=UTC)
+            cursor = datetime.combine(day, opens, tzinfo=LOCAL_TZ)
+            end_of_day = datetime.combine(day, closes, tzinfo=LOCAL_TZ)
+            if end_of_day <= cursor:
+                end_of_day += timedelta(days=1)
             while cursor + width <= end_of_day:
                 slot_end = cursor + width
                 slots.append(

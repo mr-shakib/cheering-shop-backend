@@ -126,8 +126,9 @@ async def set_store_status(body: StoreStatusRequest, restaurant: VendorRestauran
 
     Setting OPEN on an unapproved restaurant is accepted and has no effect;
     `is_accepting_orders` in the response is the honest answer, and the message
-    names whichever switch is still off. There are no scheduled opening hours —
-    this is a manual toggle and nothing closes the store on the vendor's behalf.
+    names whichever switch is still off. With business hours saved, the toggle
+    holds until the hours next open or close the store
+    (`next_scheduled_change_at`); without them it is the only switch.
     """
     result = await vendor_service.set_store_status(db, restaurant, body.status)
     await db.commit()
@@ -822,10 +823,10 @@ async def set_hours(body: BusinessHoursRequest, restaurant: VendorRestaurant, db
     """**[EXTENDED]** — replace the whole week at once (the screen saves all
     seven days).
 
-    **Informational.** Customers see these hours, but nothing opens or closes
-    the store from them — there is no scheduler, and `PATCH /store/status`
-    remains the only real switch. Saving Sunday as closed does not close the
-    store on Sunday.
+    **The hours open and close the store.** Times are local
+    (`timezone`, Asia/Dhaka). Saving applies them at once, and from then on the
+    store opens at each `opens_at` and closes at each `closes_at`.
+    `PATCH /store/status` still works in between, until the next of those times.
     """
     result = await vendor_service.set_hours(db, restaurant, body)
     await db.commit()

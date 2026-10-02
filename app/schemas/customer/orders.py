@@ -60,6 +60,7 @@ class OrderSummary(BaseModel):
     placed_at: datetime
     delivered_at: datetime | None = None
     scheduled_for: datetime | None = None
+    delivery_type: str = Field(default="STANDARD", description="STANDARD or PRIORITY")
     # Drives the "Rate this order" affordance without a second request.
     can_review: bool = False
     can_cancel: bool = False
@@ -71,8 +72,7 @@ class OrderDetail(OrderSummary):
     items: list[OrderItemOut] = Field(default_factory=list)
     item_total: Decimal
     delivery_fee: Decimal
-    packaging_fee: Decimal
-    tax_amount: Decimal
+    priority_fee: Decimal = Field(description="0 unless delivery_type is PRIORITY")
     platform_fee: Decimal
     discount: Decimal
     tip: Decimal

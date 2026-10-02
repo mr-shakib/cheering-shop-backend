@@ -1,6 +1,6 @@
 """Cart & Checkout — spec endpoints #26–28."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 
@@ -74,16 +74,22 @@ async def checkout_summary(
     address_id: Annotated[str, Query()],
     promo_code: str | None = None,
     tip: Annotated[float, Query(ge=0)] = 0,
+    delivery_type: Literal["STANDARD", "PRIORITY"] = "STANDARD",
 ):
     """Spec #28. The backend is the single source of truth for pricing.
 
-    Validates availability, then computes item_total, delivery_fee, packaging,
-    tax, platform fee, discount and tip. The same arithmetic is re-run and
-    persisted at POST /orders, where a CHECK constraint refuses any total that
-    does not add up.
+    Validates availability, then computes item_total, delivery_fee, the
+    priority fee (when `delivery_type=PRIORITY`), platform fee, discount and
+    tip. The same arithmetic is re-run and persisted at POST /orders, where a
+    CHECK constraint refuses any total that does not add up.
+
+    `delivery_options` lists Standard and Priority with their extra fee and
+    time window, whichever one was priced, for the Delivery tab.
 
     An invalid promo code does not fail the call: the bill still returns with
     `promo_error` explaining why nothing was applied.
     """
-    summary = await order_service.checkout_summary(db, user.id, address_id, promo_code, tip)
+    summary = await order_service.checkout_summary(
+        db, user.id, address_id, promo_code, tip, delivery_type
+    )
     return ok(summary.model_dump())
