@@ -340,7 +340,7 @@ export function SettingsPage() {
         </SettingsCard>
         <SettingsCard
           title="Delivery settings"
-          hint={`The base fee covers the first ${s.delivery_free_km} km; after that the per-km fee is charged by the metre (1.54 km adds 0.54 × the per-km fee). Priority delivery is extra, and all of it goes to the rider. Applies to the next checkout.`}
+          hint="Every order pays the base fee, even at 0 km, plus the per-km fee for the whole distance, charged by the metre (1.43 km adds 1.43 × the per-km fee). Priority delivery is extra, and all of it goes to the rider. Applies to the next checkout."
           keys={["delivery_base_fee", "delivery_per_km_fee", "delivery_min_fee", "priority_delivery_fee"]}
           form={form}
           initial={initial}

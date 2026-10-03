@@ -116,7 +116,6 @@ def to_out(row: PlatformSettings) -> PlatformSettingsOut:
         delivery_base_fee=to_major(fees.base),
         delivery_per_km_fee=to_major(fees.per_km),
         delivery_min_fee=to_major(fees.minimum),
-        delivery_free_km=settings.DELIVERY_FREE_KM,
         priority_delivery_fee=to_major(fees.priority),
         restaurant_commission_rate=_rate(row.restaurant_commission_rate),
         grocery_commission_rate=_rate(row.grocery_commission_rate),

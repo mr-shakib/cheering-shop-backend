@@ -47,7 +47,7 @@ from app.schemas.customer import (
     RiderBrief,
 )
 from app.schemas.requests import OrderCreateRequest
-from app.services import platform_settings
+from app.services import business_hours, platform_settings
 from app.services.customer import cart as cart_service
 from app.services.customer import promos as promo_service
 from app.services.pricing import PRIORITY, STANDARD, Quote, haversine_km, quote
@@ -220,8 +220,15 @@ async def place_order(
     if body.promo_code and promo.error:
         raise ValidationError(promo.error)
 
-    if str(restaurant.status) != RestaurantStatus.OPEN:
-        raise ConflictError(f"{restaurant.name} is closed right now")
+    # A scheduled order may be placed while the store is closed (tonight, for
+    # tomorrow's lunch): it waits in PENDING with no countdown, and
+    # _validate_schedule has checked the slot falls inside the hours.
+    scheduled_for = _validate_schedule(body, restaurant)
+    if scheduled_for is None and str(restaurant.status) != RestaurantStatus.OPEN:
+        raise ConflictError(
+            f"{restaurant.name} is closed right now",
+            details=["Schedule the order for when they are open"],
+        )
     unavailable = [line.name for line in bill.lines if line.quantity <= 0]
     if unavailable:
         raise ConflictError("Some items are no longer available", details=unavailable)
@@ -231,7 +238,6 @@ async def place_order(
             details=[f"Your items come to {to_major(bill.item_total)} taka"],
         )
 
-    scheduled_for = _validate_schedule(body)
     now = datetime.now(UTC)
     eta_minutes = _eta_minutes(restaurant, bill.distance_km, bill.delivery_type)
 
@@ -337,12 +343,13 @@ async def place_order(
     )
 
 
-def _validate_schedule(body: OrderCreateRequest) -> datetime | None:
+def _validate_schedule(body: OrderCreateRequest, restaurant: Restaurant) -> datetime | None:
     """Scheduled delivery, from the Schedule Order sheet.
 
-    Validated against the same lead time the slot generator uses, because a
-    client can post any timestamp it likes regardless of which slots were
-    offered.
+    Validated against the same lead time and business hours the slot
+    generator uses, because a client can post any timestamp it likes
+    regardless of which slots were offered. The hours matter now that a closed
+    store takes scheduled orders: without them, 3 AM would be bookable.
     """
     scheduled_for = getattr(body, "scheduled_for", None)
     if scheduled_for is None:
@@ -358,6 +365,15 @@ def _validate_schedule(body: OrderCreateRequest) -> datetime | None:
     if scheduled_for > now + timedelta(days=settings.SCHEDULE_MAX_DAYS_AHEAD):
         raise ValidationError(
             f"Orders can be scheduled up to {settings.SCHEDULE_MAX_DAYS_AHEAD} days ahead"
+        )
+    # No hours saved means the picker offers its default day, and the toggle
+    # is the only switch, so there is nothing to check against.
+    if restaurant.business_hours and not business_hours.is_open_at(
+        restaurant.business_hours, scheduled_for
+    ):
+        raise ValidationError(
+            f"{restaurant.name} is not open at that time",
+            details=["Pick one of the times on the schedule"],
         )
     return scheduled_for
 

@@ -117,16 +117,15 @@ class Settings(BaseSettings):
     # renegotiation is PATCH /admin/restaurants/{id}/commission.
     DEFAULT_COMMISSION_BASIS_POINTS: int = 1500
     PLATFORM_FEE_BASIS_POINTS: int = 200  # 2% service fee
-    # Delivery: a flat base that covers the first kilometre, then the per-km
-    # rate for the distance after it, charged by the metre (1.54 km pays for
-    # 0.54 km, not for a whole second one). Platform-wide and not negotiable
+    # Delivery: a flat base on every order, even one zero metres away, plus
+    # the per-km rate for the whole distance, charged by the metre: 1.43 km is
+    # ৳10 + 1.43 × ৳8 = ৳21.44. Platform-wide and not negotiable
     # per restaurant — `restaurants.delivery_fee_base` is no longer read (see
     # pricing.py). What a customer pays to be brought food should not depend on
     # which kitchen cooked it, and a column every vendor could edit made the
     # fee a competitive lever rather than a cost.
-    DELIVERY_FEE_BASE: int = 10  # whole taka, covers the first DELIVERY_FREE_KM
-    DELIVERY_FEE_PER_KM: int = 8  # whole taka per km beyond that, pro rata
-    DELIVERY_FREE_KM: float = 1.0  # covered by the base fee
+    DELIVERY_FEE_BASE: int = 10  # whole taka, charged at any distance
+    DELIVERY_FEE_PER_KM: int = 8  # whole taka per km from the door, pro rata
     # Priority delivery (the Standard / Priority choice at checkout): a flat
     # extra the rider earns on top of the delivery fee, which is what gets a
     # priority order picked up first. The admin Settings screen can override

@@ -151,8 +151,9 @@ class DeliveryFees:
 def delivery_fee_minor(
     distance_km: float, item_total: int, fees: DeliveryFees | None = None
 ) -> int:
-    """Flat base covering the first kilometre, then the per-km rate for the
-    rest, by the metre: 1.54 km is the base plus 0.54 × per_km (৳10 + ৳4.32).
+    """A flat base on every order, plus the per-km rate for the whole
+    distance, by the metre: 1.43 km is the base plus 1.43 × per_km
+    (৳10 + ৳11.44), and an order from next door still pays the base.
 
     Platform-wide. `restaurants.delivery_fee_base` used to feed this and no
     longer does: what a customer pays to be brought food should not depend on
@@ -178,8 +179,8 @@ def delivery_fee_minor(
     # 1000 m, rounded half up to the paisa. Charging every started kilometre
     # instead billed 1.01 km as 2 km, and the customer saw the price jump by a
     # full ৳8 for ten metres.
-    chargeable_m = max(0, round((distance_km - settings.DELIVERY_FREE_KM) * 1000))
-    distance_fee = fees.base + (fees.per_km * chargeable_m + 500) // 1000
+    metres = max(0, round(distance_km * 1000))
+    distance_fee = fees.base + (fees.per_km * metres + 500) // 1000
     return max(distance_fee, fees.minimum) + fees.surcharge
 
 
@@ -196,7 +197,7 @@ def delivery_reach_km(budget: int, fees: DeliveryFees) -> float | None:
         return -1.0
     if fees.per_km == 0:
         return None
-    return settings.DELIVERY_FREE_KM + (headroom - fees.base) / fees.per_km
+    return (headroom - fees.base) / fees.per_km
 
 
 def quote(

@@ -379,6 +379,69 @@ async def test_order_from_a_closed_kitchen_is_refused(client, kitchen, shopper):
     assert r.status_code == 409, r.text
 
 
+async def _close_with_lunch_hours(kitchen):
+    """Closed now, open 12:00–13:00 Dhaka every day."""
+    from sqlalchemy import update
+
+    from app.core.database import SessionLocal
+    from app.models.restaurant import Restaurant
+
+    lunch = {"is_open": True, "opens_at": "12:00", "closes_at": "13:00"}
+    days = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    async with SessionLocal() as s:
+        await s.execute(
+            update(Restaurant)
+            .where(Restaurant.id == kitchen.restaurant.id)
+            .values(status="CLOSED", business_hours={d: lunch for d in days})
+        )
+        await s.commit()
+
+
+def _tomorrow_dhaka(hour: int, minute: int = 0) -> str:
+    from app.core.clock import LOCAL_TZ, local_now
+
+    day = local_now().date() + timedelta(days=1)
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=LOCAL_TZ).isoformat()
+
+
+async def test_a_closed_kitchen_takes_a_scheduled_order(client, kitchen, shopper):
+    """Closed now is no reason to refuse tomorrow's lunch. The cart fills and
+    the order is placed while the store is shut."""
+    await _close_with_lunch_hours(kitchen)
+    assert (await _add_burger(client, kitchen, shopper, quantity=1)).status_code in (200, 201)
+
+    r = await client.post(
+        f"{V1}/orders",
+        json={
+            "payment_method": "COD",
+            "address_id": shopper.address_id,
+            "scheduled_for": _tomorrow_dhaka(12, 30),
+        },
+        headers=shopper.headers,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["data"]["scheduled_for"] is not None
+
+
+async def test_a_scheduled_order_must_fall_inside_the_hours(client, kitchen, shopper):
+    """The picker only offers open times; a hand-made 3 AM is refused rather
+    than booked into a kitchen nobody is in."""
+    await _close_with_lunch_hours(kitchen)
+    await _add_burger(client, kitchen, shopper, quantity=1)
+
+    r = await client.post(
+        f"{V1}/orders",
+        json={
+            "payment_method": "COD",
+            "address_id": shopper.address_id,
+            "scheduled_for": _tomorrow_dhaka(3),
+        },
+        headers=shopper.headers,
+    )
+    assert r.status_code == 400, r.text
+    assert "not open at that time" in r.json()["error"]["message"]
+
+
 async def test_cancel_works_while_pending_and_not_after(client, kitchen, shopper):
     from sqlalchemy import update
 
@@ -698,10 +761,12 @@ async def test_tracking_is_honest_about_having_no_rider_position(client, kitchen
     assert data["restaurant_latitude"] and data["delivery_latitude"]
 
 
-async def test_delivery_is_a_flat_base_plus_the_rest_by_the_metre(client, kitchen, shopper):
-    """৳10 covers the first km, then ৳8 a km for the rest, by the metre. The
-    kitchen fixture is 1.601 km from the shopper's address: 601 m chargeable,
-    ৳4.81, so ৳14.81 — not ৳18 for a whole second kilometre, and not ৳10."""
+async def test_delivery_is_a_flat_base_plus_the_whole_distance_by_the_metre(
+    client, kitchen, shopper
+):
+    """৳10 on every order, plus ৳8 a km for the whole distance, by the metre.
+    The kitchen fixture is 1.601 km from the shopper's address: ৳12.81 of
+    distance, so ৳22.81."""
     from app.core.config import settings
 
     await _add_burger(client, kitchen, shopper, quantity=1)
@@ -716,26 +781,27 @@ async def test_delivery_is_a_flat_base_plus_the_rest_by_the_metre(client, kitche
     distance = bill["distance_km"]
     assert distance == 1.6, f"fixture geometry moved: {distance} km"
     assert (settings.DELIVERY_FEE_BASE, settings.DELIVERY_FEE_PER_KM) == (10, 8)
-    assert bill["delivery_fee"] == 14.81
+    assert bill["delivery_fee"] == 22.81
 
 
 def test_the_delivery_fee_is_charged_by_the_metre():
-    """The user's example: 1.54 km is ৳10 + 0.54 × ৳8 = ৳14.32. The first km
-    is the base alone, and the fee moves smoothly, not in ৳8 steps."""
+    """The user's example: 1.43 km is ৳10 + 1.43 × ৳8 = ৳21.44. The base is
+    paid even at 0 km, the per-km rate runs from the door, and the fee moves
+    smoothly, not in ৳8 steps."""
     from app.services.pricing import DeliveryFees, delivery_fee_minor
 
     fees = DeliveryFees(base=1000, per_km=800)
     assert delivery_fee_minor(0.0, 0, fees) == 1000
-    assert delivery_fee_minor(1.0, 0, fees) == 1000
-    assert delivery_fee_minor(1.54, 0, fees) == 1432
-    assert delivery_fee_minor(1.01, 0, fees) == 1008
-    assert delivery_fee_minor(2.0, 0, fees) == 1800
-    assert delivery_fee_minor(13.54, 0, fees) == 1000 + 10032
+    assert delivery_fee_minor(1.43, 0, fees) == 2144
+    assert delivery_fee_minor(1.0, 0, fees) == 1800
+    assert delivery_fee_minor(1.01, 0, fees) == 1808
+    assert delivery_fee_minor(2.0, 0, fees) == 2600
+    assert delivery_fee_minor(13.54, 0, fees) == 1000 + 10832
     # Half a paisa rounds up: 1 m at ৳8/km is 0.8 paisa.
-    assert delivery_fee_minor(1.001, 0, fees) == 1001
+    assert delivery_fee_minor(0.001, 0, fees) == 1001
     # The minimum and surcharges still apply on top of the metre rate.
-    assert delivery_fee_minor(1.54, 0, DeliveryFees(1000, 800, minimum=2000)) == 2000
-    assert delivery_fee_minor(1.54, 0, DeliveryFees(1000, 800, surcharge=500)) == 1932
+    assert delivery_fee_minor(1.43, 0, DeliveryFees(1000, 800, minimum=3000)) == 3000
+    assert delivery_fee_minor(1.43, 0, DeliveryFees(1000, 800, surcharge=500)) == 2644
 
 
 async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitchen, shopper):
@@ -754,7 +820,7 @@ async def test_the_restaurants_own_fee_column_is_no_longer_charged(client, kitch
 
 
 # The kitchen fixture sits at (23.7936, 90.4064). 3.4915 km due north of it is
-# 2492 chargeable metres: ৳10 + 2.492 × ৳8 = ৳29.94.
+# 3492 metres: ৳10 + 3.492 × ৳8 = ৳37.94.
 _FAR = {"lat": 23.8250, "lng": 90.4064}
 
 
@@ -781,12 +847,12 @@ async def test_cards_quote_the_delivery_fee_for_their_distance(client, kitchen):
     far = _card(await client.get(f"{V1}/restaurants", params=_FAR), kitchen)
     assert far["distance_km"] == 3.49, f"fixture geometry moved: {far['distance_km']} km"
     assert (base, per_km) == (10, 8)
-    assert far["delivery_fee"] == 29.94
+    assert far["delivery_fee"] == 37.94
 
     # The detail screen, and checkout, measure the same distance the card did.
     detail = await client.get(f"{V1}/restaurants/{kitchen.restaurant.id}", params=_FAR)
     assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["delivery_fee"] == 29.94
+    assert detail.json()["data"]["delivery_fee"] == 37.94
 
 
 async def test_max_delivery_fee_is_a_distance_ceiling(client, kitchen):
@@ -794,8 +860,8 @@ async def test_max_delivery_fee_is_a_distance_ceiling(client, kitchen):
     ids = lambda r: [c["id"] for c in r.json()["data"]]  # noqa: E731
     mine = str(kitchen.restaurant.id)
 
-    assert mine in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 30}))
-    assert mine not in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 29}))
+    assert mine in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 38}))
+    assert mine not in ids(await client.get(listing, params={**_FAR, "max_delivery_fee": 37}))
     # Unlocated, every card shows the base, so only a ceiling under it bites.
     assert mine in ids(await client.get(listing, params={"max_delivery_fee": 10}))
     assert mine not in ids(await client.get(listing, params={"max_delivery_fee": 9}))

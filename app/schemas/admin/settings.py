@@ -18,12 +18,11 @@ class PlatformSettingsOut(BaseModel):
     app_name: str
     support_email: str | None = None
     support_phone: str | None = None
-    delivery_base_fee: Decimal = Field(description="Covers the first `delivery_free_km`")
+    delivery_base_fee: Decimal = Field(description="Charged on every order, even at 0 km")
     delivery_per_km_fee: Decimal = Field(
-        description="Per km after that, charged by the metre (0.54 km pays 0.54 of it)"
+        description="Per km of the whole distance, charged by the metre (1.43 km pays 1.43 of it)"
     )
     delivery_min_fee: Decimal = Field(description="The fee never goes below this")
-    delivery_free_km: float = Field(description="Server configuration; not editable here")
     priority_delivery_fee: Decimal = Field(
         description="What Priority adds at checkout. Paid to the rider in full."
     )

@@ -133,7 +133,7 @@ async def test_delivery_settings_price_the_next_checkout(
 
 async def test_delivery_settings_price_the_restaurant_cards(client, admin, kitchen, fresh_settings):
     """Cards quote from the Settings screen too, not only the server config.
-    3.4915 km north of the kitchen is 2492 chargeable metres."""
+    3.4915 km north of the kitchen is 3492 metres, all of them charged."""
     r = await client.patch(
         f"{V1}/admin/settings",
         json={"delivery_base_fee": 50, "delivery_per_km_fee": 20},
@@ -144,7 +144,7 @@ async def test_delivery_settings_price_the_restaurant_cards(client, admin, kitch
     r = await client.get(f"{V1}/restaurants", params={"lat": 23.8250, "lng": 90.4064})
     assert r.status_code == 200, r.text
     card = next(c for c in r.json()["data"] if c["id"] == str(kitchen.restaurant.id))
-    assert card["delivery_fee"] == 50 + 49.84
+    assert card["delivery_fee"] == 50 + 69.84
 
 
 async def test_per_type_commission_is_the_new_vendor_default(client, admin, fresh_settings):

@@ -171,8 +171,8 @@ Three rules worth knowing before you build the form:
 
 - **`delivery_fee_base` is read-only.** It comes back on the profile so you can
   show what your customers pay, but sending it is a `400`. Delivery is priced
-  the same from every restaurant — ৳10 covering the first kilometre, then ৳8 a
-  kilometre by the metre — so it is platform policy, not a field on your form.
+  the same from every restaurant — ৳10 on every order, plus ৳8 a kilometre for
+  the whole distance, by the metre — so it is platform policy, not a field on your form.
 - **`latitude` and `longitude` move together.** Sending one alone is a `400`.
   Half an update would place the restaurant at a coordinate it has never
   occupied — and discovery indexes that point.

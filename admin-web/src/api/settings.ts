@@ -15,7 +15,6 @@ export interface PlatformSettings {
   delivery_base_fee: number;
   delivery_per_km_fee: number;
   delivery_min_fee: number;
-  delivery_free_km: number;
   priority_delivery_fee: number;
   restaurant_commission_rate: number;
   grocery_commission_rate: number;

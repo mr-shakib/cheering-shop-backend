@@ -638,13 +638,13 @@ the server default. Fields still on the default are listed in
 | Card | Fields |
 |---|---|
 | General | `app_name`, `support_email`, `support_phone` |
-| Delivery settings | `delivery_base_fee` (covers the first `delivery_free_km`), `delivery_per_km_fee` (charged by the metre after that), `delivery_min_fee`, `priority_delivery_fee` (what Priority adds at checkout, default ৳20) — whole taka |
+| Delivery settings | `delivery_base_fee` (charged on every order, even at 0 km), `delivery_per_km_fee` (charged by the metre for the whole distance), `delivery_min_fee`, `priority_delivery_fee` (what Priority adds at checkout, default ৳20) — whole taka |
 | Commission settings | `restaurant_commission_rate` (Food), `grocery_commission_rate` (Shop), `pharmacy_commission_rate` (Medicine) — fractions, `0.18` = 18% |
 | Dynamic pricing | `rain_surcharge`, `heatwave_fee`, `high_demand_fee`, each `{"amount", "active"}` |
 
 - **Delivery fees and active surcharges** apply to the next checkout. The fee is
-  base + per-km × the distance past `delivery_free_km` (to the metre: 1.54 km
-  is base + 0.54 × per-km), raised to the minimum if below it, plus every
+  base + per-km × the whole distance (to the metre: 1.43 km is
+  base + 1.43 × per-km), raised to the minimum if below it, plus every
   **active** surcharge. The screen's amounts do nothing until `active` is true,
   so add a switch next to each.
 - **The priority delivery fee** is added only to orders where the customer

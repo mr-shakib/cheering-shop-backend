@@ -114,14 +114,16 @@ a free-delivery threshold apply.
 
 **Send `lat`/`lng` to `GET /restaurants/{id}` too.** The Restaurant Details
 screen otherwise gets `distance_km: null` and the base fee (৳10), whatever the
-distance. That is the one place a 1.54 km restaurant still showed ৳10.
+distance. That is the one place a 1.43 km restaurant still showed ৳10.
 
 `is_open` follows the restaurant's business hours (Dhaka time): it turns true
 at the opening time and false at the closing time, and the vendor can still
 open or close early in between.
 
 A **closed** restaurant still appears unless you filter it out. Grey it — do not
-hide it. Hiding makes customers think the restaurant left the platform.
+hide it. Hiding makes customers think the restaurant left the platform. A
+closed restaurant can still be ordered from **for later**: let the customer fill
+the cart and offer Schedule instead of Place Order (see §5).
 
 ### Banners
 
@@ -220,7 +222,7 @@ returns the full bill:
 | Field | Notes |
 |---|---|
 | `item_total` | sum of the lines |
-| `delivery_fee` | ৳10 base covering the first km, then ৳8 a km **by the metre**. Identical from every restaurant |
+| `delivery_fee` | ৳10 base on every order (even at 0 km), plus ৳8 a km for the whole distance, **by the metre**. Identical from every restaurant |
 | `delivery_type` | `STANDARD` or `PRIORITY`, as asked for. Default `STANDARD` |
 | `priority_fee` | ৳20 when `delivery_type` is `PRIORITY`, else 0. It all goes to the rider |
 | `platform_fee` | service fee |
@@ -234,10 +236,10 @@ There is **no tax and no packaging fee**. `tax_amount` and `packaging_fee` are
 gone from this response and from `GET /orders/{id}`; remove those lines from
 the bill screen.
 
-Delivery worked through: **1.0 km → ৳10**, **1.54 km → ৳14.32**
-(৳10 + 0.54 × ৳8), **3.0 km → ৳26**, **5.25 km → ৳44**. Every metre past the
-first kilometre counts, so the fee rises smoothly instead of jumping ৳8 at each
-kilometre. Fees can have paisa (`14.32`); show two decimals, or round for
+Delivery worked through: **0 km → ৳10**, **1.0 km → ৳18**, **1.43 km → ৳21.44**
+(৳10 + 1.43 × ৳8), **3.0 km → ৳34**, **5.25 km → ৳52**. The base is paid at
+any distance and every metre from the restaurant's door counts, so the fee
+rises smoothly instead of jumping ৳8 at each kilometre. Fees can have paisa (`14.32`); show two decimals, or round for
 display only.
 
 **The Delivery tab (Standard / Priority).** `delivery_options` always lists
@@ -289,8 +291,15 @@ Everything is Dhaka time: "Today" is today in Dhaka, `label` reads
 (`2026-10-04T12:00:00+06:00`).
 
 Pass the chosen slot's `starts_at` as `scheduled_for` on `POST /orders`. It is
-re-validated server-side against the same lead time, so a stale sheet is a 400
-rather than an order the kitchen cannot make.
+re-validated server-side against the same lead time and the restaurant's
+business hours, so a stale sheet is a 400 rather than an order the kitchen
+cannot make.
+
+**Scheduling works while the restaurant is closed.** Only an order for now is
+refused at a closed restaurant (409, "… is closed right now"); with
+`scheduled_for` set, the order goes through as long as the slot is inside the
+opening hours. When the cart's `restaurant_is_open` is false, hide Place Order
+for now and open the Schedule Order sheet instead.
 
 A scheduled order has **no 60-second vendor countdown**: the timer starts when
 the kitchen is asked, not when the customer books.
