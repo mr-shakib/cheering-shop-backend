@@ -29,4 +29,5 @@ ui
 deploy/.env.production
 dokploy.env
 client_secret_*.json
+*-firebase-adminsdk-*.json
 backups

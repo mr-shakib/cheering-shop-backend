@@ -5,12 +5,12 @@ Spec endpoints #34–35, plus the Message screen, which the spec never covered.
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 
 from app.api.deps import CurrentUser, CustomerUser, DbSession
 from app.core.responses import ok
 from app.schemas.requests import ChatMessageRequest, ReviewCreateRequest
-from app.services import chat_service, realtime, review_service
+from app.services import chat_service, order_push, realtime, review_service
 
 router = APIRouter(prefix="/orders", tags=["Communications"])
 
@@ -68,7 +68,11 @@ async def get_messages(order_id: uuid.UUID, user: CurrentUser, db: DbSession):
     "/{order_id}/messages", status_code=status.HTTP_201_CREATED, summary="Send a message [EXTENDED]"
 )
 async def send_message(
-    order_id: uuid.UUID, body: ChatMessageRequest, user: CurrentUser, db: DbSession
+    order_id: uuid.UUID,
+    body: ChatMessageRequest,
+    user: CurrentUser,
+    db: DbSession,
+    background: BackgroundTasks,
 ):
     """**[EXTENDED]** — post one message.
 
@@ -84,4 +88,5 @@ async def send_message(
         realtime.order_channel(str(order_id)),
         {"type": "chat.message", "message": sent.message.model_dump()},
     )
+    background.add_task(order_push.chat_message, str(order_id), str(user.id), sent.message.body)
     return ok(sent.model_dump())

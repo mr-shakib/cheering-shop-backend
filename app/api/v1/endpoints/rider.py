@@ -15,12 +15,13 @@ Riders are enrolled by an administrator (`POST /admin/riders`) and sign in at
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, BackgroundTasks, Query, status
 
 from app.api.deps import DbSession, Paginated, RiderUser
 from app.core.responses import ok, paginated
 from app.schemas.requests import PayoutCreateRequest, RiderLocationRequest, RiderShiftRequest
 from app.services import (
+    order_push,
     realtime,
     rider_earnings_service,
     rider_jobs_service,
@@ -71,7 +72,9 @@ async def job_detail(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
 
 
 @router.post("/orders/{order_id}/deliver", summary="Mark delivered [EXTENDED]")
-async def deliver(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
+async def deliver(
+    order_id: uuid.UUID, rider: RiderUser, db: DbSession, background: BackgroundTasks
+):
     """PICKED_UP -> DELIVERED. **No body** — the path parameter is the order.
 
     Only the assigned rider may call this, and only on an order they are
@@ -87,6 +90,7 @@ async def deliver(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
     await realtime.publish_order_status(
         result.order_id, result.restaurant_id, result.status, delivered_at=result.delivered_at
     )
+    background.add_task(order_push.order_status, result.order_id, result.status)
     return ok(result.model_dump())
 
 

@@ -511,6 +511,11 @@ tablet learns about an order when it is placed rather than when it next polls.
 That matters: the accept window is 60 seconds, and half of it can be gone before
 a poll fires.
 
+For when the app is closed or the screen is off, register the device with
+`POST /users/me/devices` ([APP-SHARED-API.md](APP-SHARED-API.md) §2). Each new
+order then also arrives as a push ("New order #1042", with sound), as does a
+customer's cancellation and a chat message on one of your orders.
+
 The restaurant is resolved from your token, never from a parameter — no vendor
 can subscribe to a competitor's feed by editing a query string. Browsers cannot
 set an `Authorization` header on a WebSocket handshake, so the token goes in the
@@ -1029,16 +1034,14 @@ Be aware of these when planning screens:
    sets `payment_status` to `REFUNDED`, and `POST /vendor/payouts` records a
    PROCESSING withdrawal — no payment gateway is connected, so in both cases a
    person moves the actual money and then confirms it.
-5. **No push notification registration.** `POST /users/me/devices` is not built,
-   so a backgrounded tablet learns nothing until it polls.
-6. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
+5. **Uploads need configuration.** `POST /uploads/presigned-url` returns `503`
    wherever the Cloudflare R2 variables are unset, which today includes local
    development. `GET /health/ready` reports storage status without you having
    to attempt an upload.
-7. **One restaurant per vendor.** The API is shaped for multi-outlet support —
+6. **One restaurant per vendor.** The API is shaped for multi-outlet support —
    hence `restaurant_id` on every response — but the schema currently enforces
    exactly one, and there is no endpoint to create a second.
-8. **Promotion analytics are thin.** Redemptions are counted at checkout, but
+7. **Promotion analytics are thin.** Redemptions are counted at checkout, but
    there is no per-customer breakdown or cohort view. Launching, pausing and
    reporting all work; `redemptions` and `budget_spent` stay zero until
    checkout ships, and the budget-cap cutoff is enforced there.

@@ -25,3 +25,6 @@ client_secret_*.json
 # The admin console build (admin-web/ -> `make admin-build`); the Docker image
 # builds its own copy.
 app/static/admin/
+
+# Firebase service-account keys (contain a private key) — never commit.
+*-firebase-adminsdk-*.json

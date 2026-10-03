@@ -23,6 +23,7 @@ from app.core.middleware import (
 from app.core.redis import check_redis, close_redis
 from app.core.responses import ok
 from app.services.email_service import check_email_config
+from app.services.push_service import check_push_config
 from app.services.storage_service import check_storage_config
 
 log = structlog.get_logger()
@@ -155,6 +156,7 @@ async def readiness() -> JSONResponse:
     # Same reasoning for object storage: an unprovisioned bucket means uploads
     # 503, not that the node should stop serving traffic.
     checks["storage"] = check_storage_config()
+    checks["push"] = check_push_config()
 
     return JSONResponse(
         status_code=200 if healthy else 503,

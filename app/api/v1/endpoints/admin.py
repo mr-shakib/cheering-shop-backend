@@ -15,7 +15,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, BackgroundTasks, Query, status
 
 from app.api.deps import AdminUser, DbSession, Paginated
 from app.core.responses import ok, paginated
@@ -38,6 +38,7 @@ from app.services import (
     admin_vendor_service,
     category_service,
     dispatch_service,
+    order_push,
     realtime,
     rider_jobs_service,
     rider_offer_service,
@@ -492,7 +493,9 @@ async def assign_rider(
 
 
 @router.post("/orders/{order_id}/deliver", summary="Confirm a delivery [EXTENDED]")
-async def force_deliver(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
+async def force_deliver(
+    order_id: uuid.UUID, admin: AdminUser, db: DbSession, background: BackgroundTasks
+):
     """The fallback for when the rider cannot mark it themselves — a dead phone,
     an uninstalled app, a dispute resolved in the customer's favour.
 
@@ -507,4 +510,5 @@ async def force_deliver(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
     await realtime.publish_order_status(
         result.order_id, result.restaurant_id, result.status, delivered_at=result.delivered_at
     )
+    background.add_task(order_push.order_status, result.order_id, result.status)
     return ok(result.model_dump())

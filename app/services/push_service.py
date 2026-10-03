@@ -14,6 +14,8 @@ rotated) is deactivated so it is not tried again.
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import time
 from dataclasses import dataclass
@@ -48,7 +50,34 @@ def enabled() -> bool:
 
 
 def _account() -> dict:
-    return json.loads(settings.FCM_SERVICE_ACCOUNT_JSON)
+    """The key file's JSON, inline or base64-encoded. Base64 is there for env
+    editors that mangle the quotes and `\\n`s in a pasted private key."""
+    raw = settings.FCM_SERVICE_ACCOUNT_JSON.strip()
+    if not raw.startswith("{"):
+        try:
+            raw = base64.b64decode(raw, validate=True).decode()
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise ValueError("FCM_SERVICE_ACCOUNT_JSON is neither JSON nor base64") from exc
+    return json.loads(raw)
+
+
+def check_push_config() -> dict:
+    """Readiness detail, mirroring `check_storage_config`. Reported but not
+    gating: orders work without push, they just do not buzz a phone. Parses the
+    key, so a value mangled on its way into the container shows here rather
+    than as a silent `push_auth_failed` on the first order."""
+    if not enabled():
+        if settings.ENVIRONMENT in {"local", "test"}:
+            return {"status": "disabled", "detail": "FCM_SERVICE_ACCOUNT_JSON unset (fine locally)"}
+        return {"status": "error", "detail": "FCM_SERVICE_ACCOUNT_JSON unset"}
+    try:
+        account = _account()
+        missing = [k for k in ("project_id", "client_email", "private_key") if not account.get(k)]
+    except ValueError as exc:  # json.JSONDecodeError is a ValueError
+        return {"status": "error", "detail": f"FCM_SERVICE_ACCOUNT_JSON unreadable: {exc}"}
+    if missing:
+        return {"status": "error", "detail": f"key is missing {', '.join(missing)}"}
+    return {"status": "ok", "provider": "fcm", "project": account["project_id"]}
 
 
 async def _access_token(client: httpx.AsyncClient) -> str:
@@ -104,6 +133,11 @@ async def send(
                     "token": token,
                     "notification": {"title": title, "body": body},
                     "data": data or {},
+                    # Sound on both platforms. iOS is silent without it, and a
+                    # vendor phone that lights up without a sound in the lunch
+                    # rush is a missed order.
+                    "android": {"priority": "HIGH", "notification": {"sound": "default"}},
+                    "apns": {"payload": {"aps": {"sound": "default"}}},
                 }
             }
             async with gate:
@@ -119,7 +153,13 @@ async def send(
                 sent += 1
                 return
             failed += 1
-            if r.status_code == 404 or "UNREGISTERED" in r.text:
+            # UNREGISTERED: uninstalled or rotated. "Not a valid … token": it
+            # never was one. Either way, trying it again cannot succeed.
+            if (
+                r.status_code == 404
+                or "UNREGISTERED" in r.text
+                or "not a valid FCM registration token" in r.text
+            ):
                 dead.append(token)
 
         await asyncio.gather(*(one(t) for t in tokens))

@@ -104,7 +104,10 @@ wss://…/api/v1/ws/rider/offers?token=<access token>
 
 Every rider on shift also gets a push notification ("New delivery request",
 or "Priority · New delivery request") if their device is registered with
-`POST /users/me/devices`, so the app can be in the background.
+`POST /users/me/devices`, so the app can be in the background. Once you have
+taken an order you are also pushed when the food is ready ("Order #1042 is
+ready"), if support cancels it ("Don't pick it up"), and for chat messages on
+it. See [APP-SHARED-API.md](APP-SHARED-API.md) §2 for the payloads.
 
 **See what is waiting.** `GET /rider/offers` lists every open offer,
 **priority orders first**, then nearest. Call it when the socket opens and

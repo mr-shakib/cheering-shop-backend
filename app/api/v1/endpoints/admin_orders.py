@@ -9,12 +9,12 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, BackgroundTasks, Query
 
 from app.api.deps import AdminUser, DbSession, Paginated
 from app.core.responses import ok, paginated
 from app.schemas.requests import AdminOrderCancelRequest, AdminOrderRefundRequest
-from app.services import admin_order_service, realtime
+from app.services import admin_order_service, order_push, realtime
 from app.services.admin.common import EXPORT_MAX_ROWS, csv_response
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -81,7 +81,11 @@ async def get_order(order_id: uuid.UUID, admin: AdminUser, db: DbSession):
 
 @router.post("/orders/{order_id}/cancel", summary="Cancel an order [EXTENDED]")
 async def cancel_order(
-    order_id: uuid.UUID, body: AdminOrderCancelRequest, admin: AdminUser, db: DbSession
+    order_id: uuid.UUID,
+    body: AdminOrderCancelRequest,
+    admin: AdminUser,
+    db: DbSession,
+    background: BackgroundTasks,
 ):
     """**[EXTENDED]** — PENDING, PREPARING or READY only: once a rider has the
     food it can only be delivered. A paid order is refunded in the same step.
@@ -91,6 +95,7 @@ async def cancel_order(
     await realtime.publish_order_status(
         detail.id, detail.restaurant_id, detail.status, cancelled_by="ADMIN"
     )
+    background.add_task(order_push.order_status, detail.id, detail.status)
     return ok(detail.model_dump())
 
 

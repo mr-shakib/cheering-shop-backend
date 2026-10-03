@@ -51,8 +51,9 @@ thread every few seconds while it is on screen.
 
 ## 2. Notifications
 
-**The inbox.** Everything the platform sends lands here, whether or not the
-phone received a push.
+**The inbox.** Every announcement the platform sends lands here, whether or
+not the phone received a push. Order updates and chat messages are pushed but
+do not land here: the order screen and its chat are their record.
 
 | Call | Use |
 |---|---|
@@ -72,8 +73,32 @@ POST /users/me/devices
 is harmless. On sign-out, call `DELETE /users/me/devices/{fcm_token}` so the
 next person on the phone does not get your notifications.
 
-A push carries `data.campaign_id` and `data.type`. Tapping it should open the
-inbox.
+What a tap opens depends on `data.type`. Every value in `data` is a string.
+
+| `data.type` | Sent when | Other `data` | Tap opens |
+|---|---|---|---|
+| `PROMOTION` / `ALERT` / `UPDATE` | an admin announcement | `campaign_id` | the inbox |
+| `order_update` | an order changes status (below) | `order_id`, `order_number`, `status` | that order |
+| `chat_message` | someone else on the order writes in its chat | `order_id`, `order_number` | that order's chat |
+| `delivery_offer` | riders only: an order needs a rider | `order_id` | the offers list |
+
+Who gets an `order_update`:
+
+| `status` | Who | Example |
+|---|---|---|
+| `PENDING` | the restaurant | "New order #1042" (or "New scheduled order #1042", "For Sun 4 Oct, 12:30 PM · ৳450") |
+| `PREPARING` | the customer | "Order accepted" |
+| `READY` | the rider who took it | "Order #1042 is ready" |
+| `PICKED_UP` | the customer | "Your order is on the way" |
+| `DELIVERED` | the customer | "Order delivered" |
+| `CANCELLED` | everyone else still on the order: the restaurant if the customer cancelled, the customer if the restaurant declined, and customer, restaurant and rider if support cancelled | "Order #1042 was declined", with the reason |
+
+A chat push's title is the sender and the order ("Rahim Uddin · Order #1042")
+and its body is the message. Pushes play the default sound on Android and iOS.
+Nobody is pushed about their own action.
+
+A push is a nudge, not the record. On tap, re-fetch the order rather than
+trusting `status` in the payload, which may be a step behind.
 
 ## 3. Community
 

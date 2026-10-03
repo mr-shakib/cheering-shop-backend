@@ -2,12 +2,12 @@
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 
 from app.api.deps import CustomerUser, DbSession, IdempotencyKey, Paginated
 from app.core.responses import ok, paginated
 from app.schemas.requests import OrderCancelRequest, OrderCreateRequest
-from app.services import idempotency, order_service, realtime
+from app.services import idempotency, order_push, order_service, realtime
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -18,6 +18,7 @@ async def create_order(
     user: CustomerUser,
     db: DbSession,
     idempotency_key: IdempotencyKey,
+    background: BackgroundTasks,
 ):
     """Spec #29. Converts the active cart into an order.
 
@@ -52,6 +53,8 @@ async def create_order(
         realtime.vendor_channel(order.restaurant_id),
         {"type": "order.placed", "order": order.model_dump()},
     )
+    # And the vendor's phone, for a tablet that is asleep or backgrounded.
+    background.add_task(order_push.order_status, order.id, order.status)
     return response
 
 
@@ -86,7 +89,11 @@ async def get_order(order_id: uuid.UUID, user: CustomerUser, db: DbSession):
 
 @router.post("/{order_id}/cancel", summary="Cancel an order")
 async def cancel_order(
-    order_id: uuid.UUID, body: OrderCancelRequest, user: CustomerUser, db: DbSession
+    order_id: uuid.UUID,
+    body: OrderCancelRequest,
+    user: CustomerUser,
+    db: DbSession,
+    background: BackgroundTasks,
 ):
     """Spec #30. Grace-period cancellation — permitted only while PENDING.
 
@@ -95,4 +102,9 @@ async def cancel_order(
     """
     order = await order_service.cancel_order(db, user.id, str(order_id), body.reason)
     await db.commit()
+    # The kitchen tablet was showing this order as waiting to be accepted.
+    await realtime.publish_order_status(
+        order.id, order.restaurant_id, order.status, cancelled_by="CUSTOMER"
+    )
+    background.add_task(order_push.order_status, order.id, order.status)
     return ok(order.model_dump())

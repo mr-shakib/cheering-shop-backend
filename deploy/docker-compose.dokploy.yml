@@ -126,6 +126,10 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
       GOOGLE_POST_AUTH_REDIRECTS: ${GOOGLE_POST_AUTH_REDIRECTS:-crshop://auth/callback}
+      # Push notifications: the Firebase service-account key file, as one line
+      # of JSON or base64 of the file. Empty disables push. GET /health/ready
+      # shows "push": {"status": "ok"} once it arrives intact.
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
       # Commonly tuned policy knobs, exposed so they can be changed from the
       # Dokploy UI without a code change.
       OTP_TTL_SECONDS: ${OTP_TTL_SECONDS:-300}
@@ -174,6 +178,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-onboarding@resend.dev}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Cheering Shop}
+      # Scheduled notification campaigns are pushed from here.
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
     # Overrides the image ENTRYPOINT so ONLY the api container runs migrations.
     # If both ran `alembic upgrade`, they would race on the version table during
     # every deploy.
@@ -184,11 +190,15 @@ services:
       redis: {condition: service_healthy}
       api: {condition: service_started}
     # No dokploy-network: the worker serves no HTTP and must not be routable.
-    networks: [internal]
+    # `egress` is its way out to Firebase (scheduled campaigns' pushes);
+    # `internal` alone has no route to the internet.
+    networks: [internal, egress]
 
 networks:
   internal:
     internal: true
+  # A plain bridge: outbound internet, nothing routed in.
+  egress: {}
   # Created by Dokploy at install time. `external: true` means "attach to the
   # existing one", not "create it" — if this errors with "network not found",
   # Dokploy is not installed or the network has a different name; check with

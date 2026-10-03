@@ -420,8 +420,5 @@ Auth column: **public** needs no token, **customer** needs a CUSTOMER token,
    new order regardless of `payment_method`. No gateway is connected.
 3. **Masked calling is not configured.** `POST /orders/{id}/call` returns
    `available: false`.
-4. **No push notifications.** `POST /users/me/devices` does not exist, so the
-   app learns about status changes by polling or by holding the vendor
-   WebSocket.
-5. **Slot capacity is not modelled.** Every open window is bookable, because
+4. **Slot capacity is not modelled.** Every open window is bookable, because
    nothing tracks kitchen throughput. A busy restaurant can be over-booked.

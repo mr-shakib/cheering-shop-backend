@@ -26,7 +26,7 @@ import uuid
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 
 from app.api.deps import DbSession, Paginated, VendorRestaurant, VendorUser
 from app.core.responses import ok, paginated
@@ -54,6 +54,7 @@ from app.schemas.requests import (
 )
 from app.services import (
     menu_service,
+    order_push,
     realtime,
     reels,
     rider_offer_service,
@@ -68,8 +69,9 @@ from app.services import (
 router = APIRouter(prefix="/vendor", tags=["Vendor"])
 
 
-async def _announce(summary, restaurant) -> None:
-    """Push a lifecycle change to the vendor tablet and the customer's map.
+async def _announce(summary, restaurant, background: BackgroundTasks) -> None:
+    """Push a lifecycle change to the vendor tablet and the customer's map,
+    and queue the phone notification for whoever it concerns.
 
     Called after the commit in every handler that moves an order, so the two
     screens advance together — a status that reached one and not the other is
@@ -80,6 +82,7 @@ async def _announce(summary, restaurant) -> None:
     await realtime.publish_order_status(
         summary.id, str(restaurant.id), summary.status, order_number=summary.order_number
     )
+    background.add_task(order_push.order_status, summary.id, summary.status)
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +494,11 @@ async def get_vendor_order(order_id: uuid.UUID, restaurant: VendorRestaurant, db
 
 @router.post("/orders/{order_id}/accept", summary="Accept an order")
 async def accept_order(
-    order_id: uuid.UUID, restaurant: VendorRestaurant, db: DbSession, user: VendorUser
+    order_id: uuid.UUID,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+    user: VendorUser,
+    background: BackgroundTasks,
 ):
     """Spec #39. PENDING -> PREPARING, and cancels the auto-decline.
 
@@ -502,7 +509,7 @@ async def accept_order(
     """
     summary = await vendor_order_service.accept_order(db, restaurant, order_id, user)
     await db.commit()
-    await _announce(summary, restaurant)
+    await _announce(summary, restaurant, background)
     # Offer it to every available rider; the first to accept carries it.
     await rider_offer_service.announce(db, order_id, reason="new")
     return ok(summary.model_dump())
@@ -515,6 +522,7 @@ async def reject_order(
     restaurant: VendorRestaurant,
     db: DbSession,
     user: VendorUser,
+    background: BackgroundTasks,
 ):
     """Spec #40. Cancels the order and marks it for refund.
 
@@ -530,13 +538,17 @@ async def reject_order(
     """
     summary = await vendor_order_service.reject_order(db, restaurant, order_id, user, body.reason)
     await db.commit()
-    await _announce(summary, restaurant)
+    await _announce(summary, restaurant, background)
     return ok(summary.model_dump())
 
 
 @router.post("/orders/{order_id}/ready", summary="Mark order ready")
 async def mark_ready(
-    order_id: uuid.UUID, restaurant: VendorRestaurant, db: DbSession, user: VendorUser
+    order_id: uuid.UUID,
+    restaurant: VendorRestaurant,
+    db: DbSession,
+    user: VendorUser,
+    background: BackgroundTasks,
 ):
     """Spec #41. PREPARING -> READY.
 
@@ -551,7 +563,7 @@ async def mark_ready(
     """
     summary, pin = await vendor_order_service.mark_ready(db, restaurant, order_id, user)
     await db.commit()
-    await _announce(summary, restaurant)
+    await _announce(summary, restaurant, background)
     # Still nobody? Remind every available rider — the food is waiting now.
     await rider_offer_service.announce(db, order_id, reason="ready")
     payload = summary.model_dump()
@@ -566,6 +578,7 @@ async def handoff_order(
     restaurant: VendorRestaurant,
     db: DbSession,
     user: VendorUser,
+    background: BackgroundTasks,
 ):
     """Spec #42. READY -> PICKED_UP. Returns 400 on an invalid PIN.
 
@@ -586,6 +599,7 @@ async def handoff_order(
     await realtime.publish_order_status(
         result.order_id, str(restaurant.id), result.status, picked_up_at=result.picked_up_at
     )
+    background.add_task(order_push.order_status, result.order_id, result.status)
     return ok(result.model_dump())
 
 
