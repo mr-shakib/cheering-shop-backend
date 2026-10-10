@@ -727,6 +727,35 @@ async def vendor_earnings(restaurant: VendorRestaurant, db: DbSession):
     return ok(result.model_dump())
 
 
+@router.get("/earnings/transactions", summary="Every earning, one per order [EXTENDED]")
+async def vendor_earning_transactions(
+    restaurant: VendorRestaurant,
+    db: DbSession,
+    page: Paginated,
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    """**[EXTENDED]** — the full earnings history behind the Earnings screen:
+    one credit per DELIVERED order, newest first, with its gross, commission
+    and net. All time unless a window is given (Dhaka days, inclusive)."""
+    credits, total = await vendor_finance_service.transactions(
+        db, restaurant, page.limit, page.offset, date_from, date_to
+    )
+    return paginated(
+        [c.model_dump() for c in credits], total=total, limit=page.limit, offset=page.offset
+    )
+
+
+@router.get("/earnings/days", summary="Earnings per day [EXTENDED]")
+async def vendor_earning_days(restaurant: VendorRestaurant, db: DbSession, page: Paginated):
+    """**[EXTENDED]** — one row per Dhaka day with a delivered order, newest
+    first: orders, gross sales, commission and earnings."""
+    days, total = await vendor_finance_service.daily(db, restaurant, page.limit, page.offset)
+    return paginated(
+        [d.model_dump() for d in days], total=total, limit=page.limit, offset=page.offset
+    )
+
+
 @router.get("/payouts", summary="Payout history [EXTENDED]")
 async def list_payouts(restaurant: VendorRestaurant, db: DbSession, page: Paginated):
     """**[EXTENDED]** — every withdrawal, newest first, with its status."""

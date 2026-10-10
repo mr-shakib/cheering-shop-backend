@@ -161,7 +161,7 @@ behaviour, but it does mean role changes need a deliberate migration path.
 | `ix_menu_categories_category` | B-tree | category chip counts and `GET /restaurants?category=` |
 | `ix_orders_vendor_queue` | `(restaurant_id, status, placed_at DESC)` | `GET /vendor/orders` |
 | `ix_orders_customer_history` | `(customer_id, placed_at DESC)` | `GET /orders?sort=-created_at` |
-| `ix_orders_auto_decline` | partial `WHERE status='PENDING'` | the 60s auto-decline sweeper — index stays tiny because only unaccepted orders qualify |
+| `ix_orders_auto_decline` | partial `WHERE status='PENDING'` | the auto-decline sweeper (15 min window) — index stays tiny because only unaccepted orders qualify |
 | `ix_orders_analytics` | partial `WHERE status='DELIVERED'` | `GET /vendor/analytics` date ranges |
 | `ix_rider_pings_time` | **BRIN** | append-only GPS history; kilobytes where a B-tree would cost gigabytes |
 | `uq_addresses_one_default` | partial unique | one default address per user, race-proof |

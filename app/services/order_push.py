@@ -94,6 +94,21 @@ async def _cancelled(db: AsyncSession, order: Order, restaurant: Restaurant) -> 
                 _with_reason("The customer cancelled it", reason),
             )
         ]
+    if order.cancelled_by == ActorType.SYSTEM.value:
+        # The accept window ran out (services.vendor.orders.auto_decline_due).
+        # No rider is involved: riders are offered an order only once accepted.
+        return [
+            Push(
+                order.customer_id,
+                f"Order #{n} was declined",
+                f"{restaurant.name} didn't accept your order in time.",
+            ),
+            Push(
+                restaurant.owner_id,
+                f"Order #{n} expired",
+                "It wasn't accepted in time, so it was cancelled.",
+            ),
+        ]
     customer = Push(
         order.customer_id,
         f"Order #{n} was declined" if by == ActorType.VENDOR.value else f"Order #{n} was cancelled",

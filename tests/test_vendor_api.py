@@ -873,6 +873,58 @@ async def test_accept_clears_the_auto_decline_timer(client, vendor, order_custom
     assert data["seconds_to_auto_decline"] is None
 
 
+async def test_queue_rows_say_who_ordered_where_it_goes_and_who_carries_it(
+    client, vendor, order_customer, rider
+):
+    """The card is drawn from the row: no detail call for the name, address
+    or rider."""
+    waiting = await _seed_order(vendor.restaurant.id, order_customer.id, with_items=True)
+    carried = await _seed_order(
+        vendor.restaurant.id, order_customer.id, status="PREPARING", rider_id=rider.id
+    )
+
+    r = await client.get(f"{V1}/vendor/orders?status=ACTIVE", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    rows = {row["id"]: row for row in r.json()["data"]}
+
+    row = rows[str(waiting.id)]
+    assert row["customer_name"] == "Rahim Uddin"
+    assert row["customer_phone"] == "+8801712345678"
+    assert row["delivery_address_text"] == "House 4, Road 2, Gulshan, Dhaka"
+    assert row["rider"] is None
+    assert row["item_count"] == 1
+
+    assert rows[str(carried.id)]["rider"]["id"] == str(rider.id)
+    assert rows[str(carried.id)]["rider"]["full_name"] == "Rider One"
+
+
+async def test_ready_returns_the_rider_who_took_the_order(client, vendor, order_customer, rider):
+    order = await _seed_order(
+        vendor.restaurant.id,
+        order_customer.id,
+        status="PREPARING",
+        rider_id=rider.id,
+        with_items=True,
+    )
+    r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["rider"]["id"] == str(rider.id)
+    assert data["rider"]["full_name"] == "Rider One"
+    assert data["customer_name"] == "Rahim Uddin"
+    assert data["item_count"] == 1
+
+    r = await client.get(f"{V1}/vendor/orders/{order.id}", headers=vendor.headers)
+    assert r.json()["data"]["rider"]["id"] == str(rider.id)
+
+
+async def test_ready_without_a_rider_says_so(client, vendor, order_customer):
+    order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PREPARING")
+    r = await client.post(f"{V1}/vendor/orders/{order.id}/ready", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["rider"] is None
+
+
 async def test_illegal_transitions_are_refused(client, vendor, order_customer):
     order = await _seed_order(vendor.restaurant.id, order_customer.id, status="PENDING")
 

@@ -97,8 +97,26 @@ async def auto_decline_stale_orders(ctx: dict) -> int:
     than one deferred job per order: the sweep is cheaper and self-healing — a
     job lost to a worker crash would strand an order in PENDING forever, whereas
     a missed sweep simply catches up on the next tick.
+
+    The tablet and the customer's screen hear about it after the commit, the
+    same way a vendor's rejection is announced.
     """
-    raise NotImplementedError("Implemented with the Orders module")
+    from app.services import order_push, realtime
+    from app.services.vendor import orders as vendor_orders
+
+    async with SessionLocal() as session:
+        declined = await vendor_orders.auto_decline_due(session, datetime.now(UTC))
+        await session.commit()
+
+    for order in declined:
+        await realtime.publish_order_status(
+            str(order.id),
+            str(order.restaurant_id),
+            order.status,
+            order_number=order.order_number,
+        )
+        await order_push.order_status(str(order.id), order.status)
+    return len(declined)
 
 
 async def flush_rider_trail(ctx: dict) -> int:
@@ -168,6 +186,9 @@ class WorkerSettings:
         cron(prune_expired_refresh_tokens, hour=3, minute=20),
         cron(expire_idempotency_keys, hour=3, minute=30),
         cron(send_due_notifications, second=5),  # every minute
+        # Twice a minute: a declined order leaves the tablet within 30 s of
+        # its countdown reaching zero.
+        cron(auto_decline_stale_orders, second={20, 50}),
         # On the minute, so a store opening at 12:00 opens at 12:00:00.
         cron(apply_business_hours, second=0, run_at_startup=True),
     ]

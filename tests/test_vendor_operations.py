@@ -161,6 +161,87 @@ async def test_balance_is_earnings_minus_payouts(client, vendor, order_customer,
     assert r.json()["data"]["processing_payouts"] == 1000.0
 
 
+async def test_earnings_carry_period_and_lifetime_totals(client, vendor, order_customer, rider):
+    await _seed_delivered(vendor, order_customer, rider, 200_000, 30_000)  # +1700
+    await _seed_order(
+        vendor.restaurant.id,
+        order_customer.id,
+        status="DELIVERED",
+        item_total=100_000,
+        commission=15_000,
+        delivered_at=datetime.now(UTC) - timedelta(days=40),
+        rider_id=rider.id,
+    )  # +850, before this month
+
+    r = await client.get(f"{V1}/vendor/earnings", headers=vendor.headers)
+    data = r.json()["data"]
+    assert data["today"] == 1700.0
+    assert data["this_week"] == 1700.0
+    assert data["this_month"] == 1700.0
+    assert data["delivered_orders"] == 2
+    assert data["gross_sales"] == 3000.0
+    assert data["total_commission"] == 450.0
+    assert data["lifetime_earnings"] == 2550.0
+    credit = data["recent_transactions"][0]
+    assert credit["gross_sales"] == 2000.0
+    assert credit["commission"] == 300.0
+    assert credit["amount"] == 1700.0
+
+
+async def test_the_full_earnings_history_pages_and_filters(
+    client, vendor, order_customer, rider
+):
+    from app.core.clock import local_today
+
+    for _ in range(3):
+        await _seed_delivered(vendor, order_customer, rider, 100_000, 15_000)
+    old = await _seed_order(
+        vendor.restaurant.id,
+        order_customer.id,
+        status="DELIVERED",
+        item_total=50_000,
+        commission=5_000,
+        delivered_at=datetime.now(UTC) - timedelta(days=40),
+        rider_id=rider.id,
+    )
+    # Cancelled and in-flight orders earn nothing.
+    await _seed_order(vendor.restaurant.id, order_customer.id, status="PREPARING")
+
+    r = await client.get(
+        f"{V1}/vendor/earnings/transactions?limit=2&offset=0", headers=vendor.headers
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["meta"]["total"] == 4
+    assert body["meta"]["has_more"] is True
+    assert len(body["data"]) == 2
+
+    r = await client.get(
+        f"{V1}/vendor/earnings/transactions?limit=10&offset=2", headers=vendor.headers
+    )
+    assert r.json()["data"][-1]["order_id"] == str(old.id)  # newest first, oldest last
+
+    today = local_today().isoformat()
+    r = await client.get(
+        f"{V1}/vendor/earnings/transactions?date_from={today}", headers=vendor.headers
+    )
+    assert r.json()["meta"]["total"] == 3
+
+    r = await client.get(
+        f"{V1}/vendor/earnings/transactions?date_from={today}&date_to=2020-01-01",
+        headers=vendor.headers,
+    )
+    assert r.status_code == 400, r.text
+
+    r = await client.get(f"{V1}/vendor/earnings/days", headers=vendor.headers)
+    assert r.status_code == 200, r.text
+    days = r.json()["data"]
+    assert r.json()["meta"]["total"] == 2
+    assert days[0]["date"] == today
+    assert (days[0]["orders"], days[0]["gross_sales"], days[0]["earnings"]) == (3, 3000.0, 2550.0)
+    assert days[1]["earnings"] == 450.0
+
+
 async def test_payout_cannot_exceed_balance_or_minimum(client, vendor, order_customer, rider):
     await _seed_delivered(vendor, order_customer, rider, 50_000, 10_000)  # balance 400
 

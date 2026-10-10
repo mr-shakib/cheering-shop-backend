@@ -154,7 +154,7 @@ class Settings(BaseSettings):
     CHAT_OPEN_AFTER_DELIVERY_HOURS: int = 24
 
     # --- Business rules (spec §9, §4) --------------------------------------
-    VENDOR_AUTO_DECLINE_SECONDS: int = 60  # the timeout the task queue enforces
+    VENDOR_AUTO_DECLINE_SECONDS: int = 900  # 15 minutes; the worker sweep enforces it
     ORDER_CANCEL_GRACE_SECONDS: int = 60  # cancel allowed only while PENDING
     RIDER_PIN_LENGTH: int = 4
     # How far GET /restaurants and the Nearby carousel look when the app sends

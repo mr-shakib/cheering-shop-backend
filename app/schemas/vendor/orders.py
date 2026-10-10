@@ -27,10 +27,24 @@ class VendorOrderItemOut(BaseModel):
     add_ons: list[VendorOrderItemAddOnOut] = Field(default_factory=list)
 
 
+class VendorOrderRider(BaseModel):
+    """The rider carrying the order — who to expect at the counter, and how to
+    reach them. Null on the order until a rider accepts it."""
+
+    id: str
+    full_name: str | None = None
+    phone: str | None = None
+    avatar_url: str | None = None
+    vehicle_type: str | None = None
+    rating_avg: float | None = None
+
+
 class VendorOrderSummary(BaseModel):
     """One row of the queue. Deliberately does NOT carry line items — the
     queue is polled and pushed frequently, and the detail view exists for
-    the moment a vendor actually starts cooking."""
+    the moment a vendor actually starts cooking. Who ordered, where it goes
+    and who is carrying it are on every row, so a card can be drawn without
+    opening the order."""
 
     id: str
     restaurant_id: str
@@ -61,18 +75,21 @@ class VendorOrderSummary(BaseModel):
     seconds_to_auto_decline: int | None = Field(
         default=None, description="Countdown for the vendor tablet; null once accepted"
     )
-
-
-class VendorOrderDetail(VendorOrderSummary):
-    """What the kitchen actually needs: the lines, the notes, the address."""
-
-    items: list[VendorOrderItemOut] = Field(default_factory=list)
     customer_name: str | None = None
     customer_phone: str | None = Field(
         default=None,
         description="The order's delivery contact, not the account's number",
     )
     delivery_address_text: str
+    rider: VendorOrderRider | None = Field(
+        default=None, description="Null until a rider accepts the order"
+    )
+
+
+class VendorOrderDetail(VendorOrderSummary):
+    """What the kitchen actually needs: the lines and the notes."""
+
+    items: list[VendorOrderItemOut] = Field(default_factory=list)
     special_instructions: str | None = None
     cancellation_reason: str | None = None
     cancelled_by: str | None = None

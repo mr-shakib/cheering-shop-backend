@@ -248,3 +248,72 @@ def test_scheduled_times_read_on_the_dhaka_clock():
     # 06:30 UTC is 12:30 PM in Dhaka.
     order = Order(scheduled_for=datetime(2026, 10, 4, 6, 30, tzinfo=UTC))
     assert _when(order) == "Sun 4 Oct, 12:30 PM"
+
+
+async def test_an_unanswered_order_is_declined_and_both_sides_told(
+    client, kitchen, shopper, phones, pushes
+):
+    """The worker's sweep cancels an order left PENDING past its window, and
+    an accept that arrives afterwards is refused rather than reviving it."""
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+
+    from app.core.database import SessionLocal
+    from app.models.order import Order, OrderStatusHistory
+    from app.workers.tasks import auto_decline_stale_orders
+
+    order = await _place(client, kitchen, shopper)
+    oid = uuid.UUID(order["id"])
+    async with SessionLocal() as session:
+        row = await session.get(Order, oid)
+        window = row.auto_decline_at - row.placed_at
+        assert abs(window - timedelta(minutes=15)) < timedelta(seconds=5)
+        await session.execute(
+            update(Order)
+            .where(Order.id == oid)
+            .values(auto_decline_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+    pushes.clear()
+
+    assert await auto_decline_stale_orders({}) >= 1
+
+    async with SessionLocal() as session:
+        row = await session.get(Order, oid)
+        assert row.status == "CANCELLED"
+        assert row.cancelled_by == "SYSTEM"
+        assert row.cancellation_reason == "Not accepted in time"
+        assert row.auto_decline_at is None
+        history = (
+            await session.scalars(
+                select(OrderStatusHistory).where(OrderStatusHistory.order_id == oid)
+            )
+        ).all()
+        assert any(h.to_status == "CANCELLED" and h.actor == "SYSTEM" for h in history)
+
+    n = order["order_number"]
+    (declined,) = _to(pushes, "customer-phone-token")
+    assert declined["title"] == f"Order #{n} was declined"
+    (expired,) = _to(pushes, "vendor-phone-token")
+    assert expired["title"] == f"Order #{n} expired"
+    assert not _to(pushes, "rider-phone-token")
+
+    r = await client.post(f"{V1}/vendor/orders/{oid}/accept", headers=kitchen.headers)
+    assert r.status_code == 409, r.text
+
+
+async def test_the_sweep_leaves_an_order_still_inside_its_window(client, kitchen, shopper):
+    import uuid
+
+    from app.core.database import SessionLocal
+    from app.models.order import Order
+    from app.workers.tasks import auto_decline_stale_orders
+
+    order = await _place(client, kitchen, shopper)
+    await auto_decline_stale_orders({})
+    async with SessionLocal() as session:
+        row = await session.get(Order, uuid.UUID(order["id"]))
+        assert row.status == "PENDING"
+        assert row.auto_decline_at is not None

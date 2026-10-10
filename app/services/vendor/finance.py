@@ -20,12 +20,13 @@ never "sent".
 """
 
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import local_day, local_midnight, local_today
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.money import to_major, to_minor
@@ -35,9 +36,19 @@ from app.models.payout import VendorPayout
 from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.schemas.requests import PayoutCreateRequest
-from app.schemas.vendor import EarningsTransaction, PayoutOut, VendorEarnings
+from app.schemas.vendor import (
+    EarningsTransaction,
+    PayoutOut,
+    VendorEarnings,
+    VendorEarningsDay,
+)
 
 log = structlog.get_logger()
+
+_DELIVERED = OrderStatus.DELIVERED.value
+# Local (BUSINESS_TIMEZONE) days, as on the analytics screen. One expression
+# object, so SELECT, GROUP BY and ORDER BY bind the same timezone parameter.
+_DAY = local_day(Order.delivered_at)
 
 
 async def _generate_reference(db: AsyncSession) -> str:
@@ -55,14 +66,51 @@ async def _generate_reference(db: AsyncSession) -> str:
     raise RuntimeError("could not allocate a payout reference")  # pragma: no cover
 
 
-async def _lifetime_earnings_minor(db: AsyncSession, restaurant: Restaurant) -> int:
-    row = await db.scalar(
-        select(func.coalesce(func.sum(Order.item_total - Order.commission_amount), 0)).where(
-            Order.restaurant_id == restaurant.id,
-            Order.status == OrderStatus.DELIVERED.value,
+def _delivered(restaurant: Restaurant) -> list:
+    """The orders that earn: this restaurant's, DELIVERED. Served by
+    `ix_orders_analytics (restaurant_id, delivered_at) WHERE status = 'DELIVERED'`."""
+    return [Order.restaurant_id == restaurant.id, Order.status == _DELIVERED]
+
+
+async def _totals_minor(
+    db: AsyncSession, restaurant: Restaurant, since: datetime | None = None
+) -> tuple[int, int, int]:
+    """(orders, gross sales, commission) in paisa over delivered orders."""
+    conditions = _delivered(restaurant)
+    if since is not None:
+        conditions.append(Order.delivered_at >= since)
+    row = (
+        await db.execute(
+            select(
+                func.count(),
+                func.coalesce(func.sum(Order.item_total), 0),
+                func.coalesce(func.sum(Order.commission_amount), 0),
+            ).where(*conditions)
         )
+    ).one()
+    return int(row[0]), int(row[1]), int(row[2])
+
+
+async def _earned_since(db: AsyncSession, restaurant: Restaurant, since: datetime) -> int:
+    _, gross, commission = await _totals_minor(db, restaurant, since)
+    return gross - commission
+
+
+async def _lifetime_earnings_minor(db: AsyncSession, restaurant: Restaurant) -> int:
+    _, gross, commission = await _totals_minor(db, restaurant)
+    return gross - commission
+
+
+def _credit(order: Order) -> EarningsTransaction:
+    return EarningsTransaction(
+        order_id=str(order.id),
+        order_number=order.order_number,
+        amount=to_major(order.item_total - order.commission_amount),
+        gross_sales=to_major(order.item_total),
+        commission=to_major(order.commission_amount),
+        payment_method=str(order.payment_method),
+        delivered_at=order.delivered_at,
     )
-    return int(row or 0)
 
 
 async def _payout_sums_minor(db: AsyncSession, restaurant: Restaurant) -> tuple[int, int]:
@@ -85,38 +133,103 @@ async def available_balance_minor(db: AsyncSession, restaurant: Restaurant) -> i
 async def earnings(
     db: AsyncSession, restaurant: Restaurant, recent_n: int = 10
 ) -> VendorEarnings:
-    """GET /vendor/earnings — balance plus the recent per-order credits."""
-    earned = await _lifetime_earnings_minor(db, restaurant)
+    """GET /vendor/earnings — balance, period and lifetime totals, and the
+    recent per-order credits."""
+    orders, gross, commission = await _totals_minor(db, restaurant)
+    earned = gross - commission
     completed, processing = await _payout_sums_minor(db, restaurant)
 
     recent = await db.execute(
         select(Order)
-        .where(
-            Order.restaurant_id == restaurant.id,
-            Order.status == OrderStatus.DELIVERED.value,
-        )
+        .where(*_delivered(restaurant))
         .order_by(Order.delivered_at.desc())
         .limit(recent_n)
     )
-    transactions = [
-        EarningsTransaction(
-            order_id=str(o.id),
-            order_number=o.order_number,
-            amount=to_major(o.item_total - o.commission_amount),
-            delivered_at=o.delivered_at,
-        )
-        for o in recent.scalars().all()
-    ]
+    transactions = [_credit(o) for o in recent.scalars().all()]
 
+    today = local_today()
+    week_start = today - timedelta(days=today.weekday())
     return VendorEarnings(
         restaurant_id=str(restaurant.id),
         available_balance=to_major(earned - completed - processing),
+        today=to_major(await _earned_since(db, restaurant, local_midnight(today))),
+        this_week=to_major(await _earned_since(db, restaurant, local_midnight(week_start))),
+        this_month=to_major(
+            await _earned_since(db, restaurant, local_midnight(today.replace(day=1)))
+        ),
+        delivered_orders=orders,
+        gross_sales=to_major(gross),
+        total_commission=to_major(commission),
         lifetime_earnings=to_major(earned),
         total_withdrawn=to_major(completed),
         processing_payouts=to_major(processing),
         min_payout_amount=to_major(to_minor(settings.PAYOUT_MIN_AMOUNT)),
         recent_transactions=transactions,
     )
+
+
+async def transactions(
+    db: AsyncSession,
+    restaurant: Restaurant,
+    limit: int,
+    offset: int,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> tuple[list[EarningsTransaction], int]:
+    """GET /vendor/earnings/transactions — every credit, newest first.
+
+    No window means all time; either bound alone is allowed. Dates are Dhaka
+    days, inclusive at both ends, as on the analytics screen.
+    """
+    if date_from and date_to and date_from > date_to:
+        raise ValidationError("date_from must not be after date_to")
+    conditions = _delivered(restaurant)
+    if date_from:
+        conditions.append(Order.delivered_at >= local_midnight(date_from))
+    if date_to:
+        conditions.append(Order.delivered_at < local_midnight(date_to + timedelta(days=1)))
+
+    total = await db.scalar(select(func.count()).select_from(Order).where(*conditions))
+    result = await db.execute(
+        select(Order)
+        .where(*conditions)
+        .order_by(Order.delivered_at.desc(), Order.order_number.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return [_credit(o) for o in result.scalars().all()], total or 0
+
+
+async def daily(
+    db: AsyncSession, restaurant: Restaurant, limit: int, offset: int
+) -> tuple[list[VendorEarningsDay], int]:
+    """GET /vendor/earnings/days — one row per Dhaka day with a delivered
+    order, newest first."""
+    conditions = _delivered(restaurant)
+    total = await db.scalar(select(func.count(func.distinct(_DAY))).where(*conditions))
+    rows = await db.execute(
+        select(
+            _DAY,
+            func.count(),
+            func.coalesce(func.sum(Order.item_total), 0),
+            func.coalesce(func.sum(Order.commission_amount), 0),
+        )
+        .where(*conditions)
+        .group_by(_DAY)
+        .order_by(_DAY.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return [
+        VendorEarningsDay(
+            date=day,
+            orders=int(n),
+            gross_sales=to_major(int(gross)),
+            commission=to_major(int(commission)),
+            earnings=to_major(int(gross) - int(commission)),
+        )
+        for day, n, gross, commission in rows.all()
+    ], total or 0
 
 
 async def request_payout(

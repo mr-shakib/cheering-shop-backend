@@ -135,7 +135,7 @@ services:
       OTP_TTL_SECONDS: ${OTP_TTL_SECONDS:-300}
       OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-60}
       LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
-      VENDOR_AUTO_DECLINE_SECONDS: ${VENDOR_AUTO_DECLINE_SECONDS:-60}
+      VENDOR_AUTO_DECLINE_SECONDS: ${VENDOR_AUTO_DECLINE_SECONDS:-900}
     # `expose`, not `ports`: reachable by Traefik on the shared network, never
     # published to the host.
     expose:

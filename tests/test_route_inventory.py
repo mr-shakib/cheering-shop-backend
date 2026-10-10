@@ -389,6 +389,18 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
     ),
     (
         "GET",
+        "/vendor/earnings/transactions",
+        "The full earnings history: every delivered order's credit, paginated. "
+        "/vendor/earnings carries only the latest ten.",
+    ),
+    (
+        "GET",
+        "/vendor/earnings/days",
+        "Earnings per Dhaka day, all time — the analytics series stops at a "
+        "window, the earnings table does not.",
+    ),
+    (
+        "GET",
         "/vendor/payouts",
         "Payout History. Every withdrawal with its status and receipt "
         "reference.",

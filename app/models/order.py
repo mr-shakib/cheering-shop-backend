@@ -129,7 +129,7 @@ class Order(Base, UUIDPrimaryKey):
     # rather than defaulting to placed_at, so "was this scheduled?" stays a
     # question the column can answer.
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # The 60s vendor timeout the arq worker sweeps (spec §9). NULL for a
+    # The vendor accept timeout (15 min) the arq worker sweeps (spec §9). NULL for a
     # scheduled order: the countdown starts when the kitchen is asked, not
     # when the customer books.
     auto_decline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

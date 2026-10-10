@@ -1,6 +1,6 @@
 """Earnings and payouts — the Withdraw screens."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -12,6 +12,9 @@ class EarningsTransaction(BaseModel):
     order_id: str
     order_number: int
     amount: Decimal = Field(description="item_total - commission for that order")
+    gross_sales: Decimal = Field(description="The order's item_total")
+    commission: Decimal = Field(description="The commission snapshotted on the order")
+    payment_method: str
     delivered_at: datetime
 
 
@@ -26,11 +29,30 @@ class VendorEarnings(BaseModel):
 
     restaurant_id: str
     available_balance: Decimal
-    lifetime_earnings: Decimal
+    today: Decimal = Field(description="Earned on orders delivered today, Dhaka time")
+    this_week: Decimal = Field(description="Since Monday 00:00, Dhaka time")
+    this_month: Decimal = Field(description="Since the 1st, 00:00 Dhaka time")
+    delivered_orders: int = Field(description="Lifetime count of DELIVERED orders")
+    gross_sales: Decimal = Field(description="Lifetime item totals of delivered orders")
+    total_commission: Decimal = Field(description="Lifetime commission on those orders")
+    lifetime_earnings: Decimal = Field(description="gross_sales - total_commission")
     total_withdrawn: Decimal = Field(description="COMPLETED payouts")
     processing_payouts: Decimal = Field(description="Requested but not yet confirmed")
     min_payout_amount: Decimal
-    recent_transactions: list[EarningsTransaction] = Field(default_factory=list)
+    recent_transactions: list[EarningsTransaction] = Field(
+        default_factory=list,
+        description="The latest 10; GET /vendor/earnings/transactions has them all",
+    )
+
+
+class VendorEarningsDay(BaseModel):
+    """GET /vendor/earnings/days — one Dhaka day with any delivered order."""
+
+    date: date
+    orders: int = Field(description="Orders delivered that day")
+    gross_sales: Decimal
+    commission: Decimal
+    earnings: Decimal = Field(description="gross_sales - commission")
 
 
 class PayoutOut(BaseModel):

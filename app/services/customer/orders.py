@@ -264,7 +264,7 @@ async def place_order(
         delivery_contact_phone=address.contact_phone,
         special_instructions=body.special_instructions,
         scheduled_for=scheduled_for,
-        # The 60s vendor timeout the arq worker sweeps. A scheduled order is
+        # The vendor accept timeout the arq worker sweeps. A scheduled order is
         # not on the clock yet — the countdown starts when the kitchen is
         # asked, not when the customer books.
         auto_decline_at=None

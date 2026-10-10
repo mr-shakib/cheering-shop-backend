@@ -301,7 +301,7 @@ refused at a closed restaurant (409, "… is closed right now"); with
 opening hours. When the cart's `restaurant_is_open` is false, hide Place Order
 for now and open the Schedule Order sheet instead.
 
-A scheduled order has **no 60-second vendor countdown**: the timer starts when
+A scheduled order has **no vendor accept countdown**: the timer starts when
 the kitchen is asked, not when the customer books.
 
 ---
@@ -353,6 +353,10 @@ best-effort, so a socket is an optimisation rather than a source of truth.
 
 `POST /orders/{id}/cancel` works **only while PENDING**. After the vendor
 accepts, food is being cooked and the answer is a 409.
+
+A restaurant that doesn't accept within 15 minutes loses the order: it becomes
+`CANCELLED` with `cancellation_reason: "Not accepted in time"`, a paid order is
+marked `REFUNDED`, and the customer gets a push ("Order #61 was declined").
 
 `GET`/`POST /orders/{id}/messages` is the Message screen. The order *is* the
 thread: opening it marks the counterparty's messages read, and the channel

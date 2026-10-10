@@ -22,6 +22,7 @@ from app.schemas.vendor.finance import (
     EarningsTransaction,
     PayoutOut,
     VendorEarnings,
+    VendorEarningsDay,
 )
 from app.schemas.vendor.insights import (
     AnalyticsDay,
@@ -49,6 +50,7 @@ from app.schemas.vendor.orders import (
     VendorOrderDetail,
     VendorOrderItemAddOnOut,
     VendorOrderItemOut,
+    VendorOrderRider,
     VendorOrderSummary,
 )
 from app.schemas.vendor.promotions import (
@@ -80,6 +82,7 @@ __all__ = [
     # orders
     "VendorOrderItemAddOnOut",
     "VendorOrderItemOut",
+    "VendorOrderRider",
     "VendorOrderSummary",
     "VendorOrderDetail",
     "HandoffResult",
@@ -98,6 +101,7 @@ __all__ = [
     # finance
     "EarningsTransaction",
     "VendorEarnings",
+    "VendorEarningsDay",
     "PayoutOut",
     # promotions
     "PromotionDay",

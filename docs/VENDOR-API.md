@@ -497,8 +497,19 @@ Two things worth knowing about the tabs:
 
 Rows carry an `item_count` but **not the line items**. Fetch
 `GET /vendor/orders/{id}` when the vendor opens an order — that returns every
-line with its chosen variant, add-ons and notes, plus the delivery address and
-the customer's contact number.
+line with its chosen variant, add-ons and notes, plus `special_instructions`.
+
+Every row does carry who and where, so a card needs no second call:
+
+| Field | What it is |
+|---|---|
+| `customer_name` | The customer's account name |
+| `customer_phone` | The order's delivery contact — the recipient's number when someone orders for another person |
+| `delivery_address_text` | Where it is going |
+| `rider` | `null` until a rider accepts the order, then `{ id, full_name, phone, avatar_url, vehicle_type, rating_avg }` |
+
+The same row shape comes back from `accept`, `reject` and `ready`, so the card
+can be redrawn from the response.
 
 Every row also carries `seconds_to_auto_decline`, which is non-null only while
 the order is `PENDING`. Drive your countdown from it rather than from a local
@@ -508,8 +519,8 @@ timer, so a backgrounded app resumes with the right number.
 
 `WS /ws/vendor/live?token=<access_token>` streams your restaurant's feed, so the
 tablet learns about an order when it is placed rather than when it next polls.
-That matters: the accept window is 60 seconds, and half of it can be gone before
-a poll fires.
+That matters: the accept window is 15 minutes, and a new order should ring the
+tablet the moment it arrives, not at the next poll.
 
 For when the app is closed or the screen is off, register the device with
 `POST /users/me/devices` ([APP-SHARED-API.md](APP-SHARED-API.md) §2). Each new
@@ -547,14 +558,18 @@ Illegal jumps are rejected with `409` and the response lists what is actually
 allowed from the current state. Trust that over any state machine you keep
 client-side.
 
-### Accept — you have **60 seconds**
+### Accept — you have **900 seconds** (15 minutes)
 
 ```http
 POST /vendor/orders/{id}/accept
 ```
 
-An order left `PENDING` past its `auto_decline_at` is declined automatically.
-Accepting clears the timer.
+An order left `PENDING` past its `auto_decline_at` is declined automatically,
+within 30 seconds of its countdown reaching zero: it becomes `CANCELLED` with
+`cancelled_by: "SYSTEM"` and `cancellation_reason: "Not accepted in time"`, a
+paid order is marked `REFUNDED`, and both you and the customer get a push.
+Accepting clears the timer. An accept that arrives after the order has been
+declined gets `409`.
 
 ### Reject
 
@@ -581,7 +596,10 @@ POST /vendor/orders/{id}/ready
 ```
 
 `PREPARING → READY`. The response now carries **`handoff_code`** — the 4-digit
-code the handoff screen displays. See below.
+code the handoff screen displays. See below. It also carries `rider`, which is
+`null` if no rider has accepted the order yet; in that case riders are reminded,
+and the rider appears on the order (and over `WS /ws/vendor/live`) when one
+accepts.
 
 ---
 
@@ -613,7 +631,8 @@ response and show that one.
 to every rider on shift, during the cooking window so they have time to reach
 you, and the first rider to accept it carries it. If nobody has taken it when
 you mark it `ready`, riders are reminded. The handoff needs a rider (`409`
-until one accepts). There is no vendor endpoint to pick or change a rider; an
+until one accepts). Who took it is the `rider` object on the order: name, phone,
+photo, vehicle and rating. There is no vendor endpoint to pick or change a rider; an
 operator does that from the admin side when something goes wrong.
 
 > Displaying the code to the vendor is a deliberate interim posture: with no
@@ -747,7 +766,9 @@ All require a `VENDOR` bearer token unless noted.
 | GET | `/vendor/dashboard` | vendor | Home + Overview in one call |
 | GET | `/vendor/performance` | vendor | Acceptance / on-time rates |
 | GET | `/vendor/reports/csv` | vendor | CSV download (text/csv, not JSON) |
-| GET | `/vendor/earnings` | vendor | Balance + recent credits |
+| GET | `/vendor/earnings` | vendor | Balance, period and lifetime totals, recent credits |
+| GET | `/vendor/earnings/transactions` | vendor | Every credit, paginated |
+| GET | `/vendor/earnings/days` | vendor | Earnings per day |
 | GET | `/vendor/payouts` | vendor | Payout history |
 | POST | `/vendor/payouts` | vendor | Withdraw money |
 | GET | `/vendor/hours` | vendor | Business hours |
@@ -853,8 +874,40 @@ lifetime delivered earnings (item_total − commission, per order)
 ```
 
 A payout still PROCESSING is already deducted — money on its way out cannot be
-withdrawn twice. `recent_transactions` lists the latest per-order credits for
-the Earnings screen.
+withdrawn twice.
+
+The same call carries the totals for the screen's tiles:
+
+| Field | What it is |
+|---|---|
+| `today`, `this_week`, `this_month` | Earned on orders delivered in that period (Dhaka time; the week starts Monday) |
+| `delivered_orders` | Lifetime count of delivered orders |
+| `gross_sales` | Lifetime item totals of those orders |
+| `total_commission` | Lifetime commission on them |
+| `lifetime_earnings` | `gross_sales − total_commission` |
+| `total_withdrawn` | Completed payouts |
+| `processing_payouts` | Requested, not yet confirmed |
+| `recent_transactions` | The latest 10 credits |
+
+### The full history
+
+```http
+GET /vendor/earnings/transactions?limit=20&offset=0
+GET /vendor/earnings/transactions?date_from=2026-10-01&date_to=2026-10-10
+```
+
+Every credit, newest first: one per delivered order, with `order_number`,
+`gross_sales` (the order's item total), `commission`, `amount` (what you earned),
+`payment_method` and `delivered_at`. All time unless you pass a window; dates
+are Dhaka days, inclusive at both ends, and either bound may be sent alone.
+
+```http
+GET /vendor/earnings/days?limit=30
+```
+
+One row per Dhaka day with a delivered order, newest first: `date`, `orders`,
+`gross_sales`, `commission`, `earnings`. Days with nothing delivered are left
+out.
 
 ### Withdraw
 
@@ -1016,8 +1069,8 @@ Be aware of these when planning screens:
 1. **A dropped socket is silent.** `WS /ws/vendor/live` pushes orders and
    status changes (§5), but publishing is best-effort — a Redis outage must not
    fail an order that is already placed. Keep a polling fallback on
-   `GET /vendor/orders?status=ACTIVE`, and mind the 60-second accept window when
-   choosing its interval.
+   `GET /vendor/orders?status=ACTIVE` every 15–30 seconds, so a new order still
+   rings promptly when a frame is missed.
 2. **You still see the handoff code.** Riders now have their own API
    ([RIDER-API.md](RIDER-API.md)) and read the same code from their job screen,
    which is what makes typing it back proof of presence. Your copy of the field

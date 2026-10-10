@@ -20,6 +20,8 @@ Decisions worth knowing before reading:
 * **Rejection refunds, it does not rebook.** See `reject_order`.
 """
 
+import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 import structlog
@@ -35,12 +37,14 @@ from app.core.security import generate_rider_pin, hash_rider_pin, verify_rider_p
 from app.models.enums import ORDER_TRANSITIONS, ActorType, OrderStatus
 from app.models.order import Order, OrderItem, OrderStatusHistory
 from app.models.restaurant import Restaurant
+from app.models.rider import RiderProfile
 from app.models.user import User
 from app.schemas.vendor import (
     HandoffResult,
     VendorOrderDetail,
     VendorOrderItemAddOnOut,
     VendorOrderItemOut,
+    VendorOrderRider,
     VendorOrderSummary,
 )
 
@@ -78,17 +82,28 @@ VENDOR_CANCELLABLE = (OrderStatus.PENDING, OrderStatus.PREPARING)
 
 
 async def _get_order(
-    db: AsyncSession, restaurant: Restaurant, order_id, *, with_items: bool = False
+    db: AsyncSession,
+    restaurant: Restaurant,
+    order_id,
+    *,
+    with_items: bool = False,
+    for_update: bool = False,
 ) -> Order:
     """Fetch one order, scoped to this restaurant.
 
     The `restaurant_id` predicate is the authorisation check. Another vendor's
     order id resolves to 404 rather than 403 — a vendor should not be able to
     confirm that an order exists at all.
+
+    `for_update` is for the moves that race the auto-decline sweep: the row
+    lock makes an accept that lands as the window closes wait for the sweep,
+    then read CANCELLED and refuse, instead of writing PREPARING over it.
     """
     stmt = select(Order).where(Order.id == order_id, Order.restaurant_id == restaurant.id)
     if with_items:
         stmt = stmt.options(selectinload(Order.items).selectinload(OrderItem.add_ons))
+    if for_update:
+        stmt = stmt.with_for_update(of=Order)
     result = await db.execute(stmt)
     order = result.scalar_one_or_none()
     if order is None:
@@ -106,7 +121,12 @@ def _seconds_to_auto_decline(order: Order) -> int | None:
     return max(0, int((deadline - datetime.now(UTC)).total_seconds()))
 
 
-def to_summary(order: Order, item_count: int = 0) -> VendorOrderSummary:
+def to_summary(
+    order: Order,
+    item_count: int = 0,
+    customer: User | None = None,
+    rider: VendorOrderRider | None = None,
+) -> VendorOrderSummary:
     return VendorOrderSummary(
         id=str(order.id),
         restaurant_id=str(order.restaurant_id),
@@ -128,11 +148,80 @@ def to_summary(order: Order, item_count: int = 0) -> VendorOrderSummary:
         cancelled_at=order.cancelled_at,
         auto_decline_at=order.auto_decline_at,
         seconds_to_auto_decline=_seconds_to_auto_decline(order),
+        customer_name=customer.full_name if customer else None,
+        # The order's own contact, not the account's. A customer ordering for
+        # someone else puts the recipient's number on the order.
+        customer_phone=order.delivery_contact_phone,
+        delivery_address_text=order.delivery_address_text,
+        rider=rider,
     )
 
 
+async def _riders(
+    db: AsyncSession, rider_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, VendorOrderRider]:
+    """The riders on these orders, keyed by id. The phone is the account's:
+    the kitchen calls the rider who is late, the way the rider's job screen
+    carries the restaurant's number."""
+    wanted = set(rider_ids)
+    if not wanted:
+        return {}
+    rows = await db.execute(
+        select(User, RiderProfile)
+        .outerjoin(RiderProfile, RiderProfile.user_id == User.id)
+        .where(User.id.in_(wanted))
+    )
+    return {
+        user.id: VendorOrderRider(
+            id=str(user.id),
+            full_name=user.full_name,
+            phone=user.phone,
+            avatar_url=user.avatar_url,
+            vehicle_type=profile.vehicle_type if profile else None,
+            rating_avg=float(profile.rating_avg) if profile else None,
+        )
+        for user, profile in rows.all()
+    }
+
+
+async def summaries(db: AsyncSession, orders: list[Order]) -> list[VendorOrderSummary]:
+    """Queue rows with their line counts, customers and riders — three queries
+    however many orders, rather than three per row."""
+    if not orders:
+        return []
+    # One grouped query for the line counts rather than loading every line item
+    # of every order just to sum them.
+    counts_result = await db.execute(
+        select(OrderItem.order_id, func.coalesce(func.sum(OrderItem.quantity), 0))
+        .where(OrderItem.order_id.in_([o.id for o in orders]))
+        .group_by(OrderItem.order_id)
+    )
+    counts = {row[0]: int(row[1]) for row in counts_result.all()}
+    customers_result = await db.execute(
+        select(User).where(User.id.in_({o.customer_id for o in orders}))
+    )
+    customers = {u.id: u for u in customers_result.scalars().all()}
+    riders = await _riders(db, (o.rider_id for o in orders if o.rider_id))
+    return [
+        to_summary(
+            o,
+            counts.get(o.id, 0),
+            customers.get(o.customer_id),
+            riders.get(o.rider_id) if o.rider_id else None,
+        )
+        for o in orders
+    ]
+
+
+async def _summary(db: AsyncSession, order: Order) -> VendorOrderSummary:
+    return (await summaries(db, [order]))[0]
+
+
 def to_detail(
-    order: Order, customer: User | None, handoff_code: str | None = None
+    order: Order,
+    customer: User | None,
+    handoff_code: str | None = None,
+    rider: VendorOrderRider | None = None,
 ) -> VendorOrderDetail:
     """Requires `items` (and their `add_ons`) to be eagerly loaded."""
     items = [
@@ -156,13 +245,10 @@ def to_detail(
         for line in sorted(order.items, key=lambda i: i.item_name)
     ]
     return VendorOrderDetail(
-        **to_summary(order, item_count=sum(line.quantity for line in order.items)).model_dump(),
+        **to_summary(
+            order, sum(line.quantity for line in order.items), customer, rider
+        ).model_dump(),
         items=items,
-        customer_name=customer.full_name if customer else None,
-        # The order's own contact, not the account's. A customer ordering for
-        # someone else puts the recipient's number on the order.
-        customer_phone=order.delivery_contact_phone,
-        delivery_address_text=order.delivery_address_text,
         special_instructions=order.special_instructions,
         cancellation_reason=order.cancellation_reason,
         cancelled_by=str(order.cancelled_by) if order.cancelled_by else None,
@@ -223,7 +309,7 @@ async def accept_order(
     order stops being a candidate the moment either half stops being true. No
     task handle to track, and a worker restart cannot resurrect the timeout.
     """
-    order = await _get_order(db, restaurant, order_id)
+    order = await _get_order(db, restaurant, order_id, for_update=True)
     await _transition(db, order, OrderStatus.PREPARING, actor)
     order.accepted_at = datetime.now(UTC)
     order.auto_decline_at = None
@@ -233,7 +319,7 @@ async def accept_order(
     # available rider once this commits (services.rider.offers), during the
     # cooking window so whoever accepts has time to reach the restaurant.
     log.info("order_accepted", order_id=str(order.id), restaurant_id=str(restaurant.id))
-    return to_summary(order)
+    return await _summary(db, order)
 
 
 async def reject_order(
@@ -257,7 +343,7 @@ async def reject_order(
     `payment_status` becomes REFUNDED for money actually taken; an unpaid COD
     order stays PENDING because there is nothing to return.
     """
-    order = await _get_order(db, restaurant, order_id)
+    order = await _get_order(db, restaurant, order_id, for_update=True)
 
     current = OrderStatus(str(order.status))
     if current not in VENDOR_CANCELLABLE:
@@ -286,7 +372,7 @@ async def reject_order(
         reason=reason,
         refunded=str(order.payment_status) == "REFUNDED",
     )
-    return to_summary(order)
+    return await _summary(db, order)
 
 
 async def mark_ready(
@@ -341,7 +427,7 @@ async def mark_ready(
         order_id=str(order.id),
         restaurant_id=str(restaurant.id),
     )
-    return to_summary(order), pin
+    return await _summary(db, order), pin
 
 
 async def handoff_order(
@@ -417,6 +503,68 @@ async def handoff_order(
 
 
 # ---------------------------------------------------------------------------
+# Auto-decline
+# ---------------------------------------------------------------------------
+
+AUTO_DECLINE_REASON = "Not accepted in time"
+
+
+async def auto_decline_due(db: AsyncSession, now: datetime) -> list[Order]:
+    """Cancel every order the kitchen left PENDING past its `auto_decline_at`.
+
+    Run by the worker's sweep over the partial index `ix_orders_auto_decline`.
+    SKIP LOCKED passes over an order a vendor is accepting right now; that
+    accept wins, and a missed row is simply found again on the next tick.
+
+    Cancelled by SYSTEM and refunded like a rejection: a paid order the
+    kitchen never took must not keep the customer's money. Returns the
+    orders it cancelled so the caller can announce them after the commit.
+    """
+    result = await db.execute(
+        select(Order)
+        .where(
+            Order.status == OrderStatus.PENDING.value,
+            Order.auto_decline_at.is_not(None),
+            Order.auto_decline_at <= now,
+        )
+        .order_by(Order.auto_decline_at)
+        .with_for_update(skip_locked=True)
+    )
+    orders = list(result.scalars().all())
+    for order in orders:
+        db.add(
+            OrderStatusHistory(
+                order_id=order.id,
+                from_status=OrderStatus.PENDING.value,
+                to_status=OrderStatus.CANCELLED.value,
+                actor=ActorType.SYSTEM.value,
+                actor_id=None,
+                note=AUTO_DECLINE_REASON,
+            )
+        )
+        order.status = OrderStatus.CANCELLED.value
+        order.cancelled_at = now
+        order.cancelled_by = ActorType.SYSTEM.value
+        order.cancellation_reason = AUTO_DECLINE_REASON
+        order.auto_decline_at = None
+        order.updated_at = now
+        if str(order.payment_status) == "PAID":
+            order.payment_status = "REFUNDED"
+            order.refunded_at = now
+            order.refund_reason = AUTO_DECLINE_REASON
+    await db.flush()
+
+    for order in orders:
+        log.info(
+            "order_auto_declined",
+            order_id=str(order.id),
+            restaurant_id=str(order.restaurant_id),
+            refunded=str(order.payment_status) == "REFUNDED",
+        )
+    return orders
+
+
+# ---------------------------------------------------------------------------
 # Queue
 # ---------------------------------------------------------------------------
 
@@ -478,19 +626,7 @@ async def list_orders(
         .offset(offset)
     )
     orders = list(result.scalars().all())
-    if not orders:
-        return [], total
-
-    # One grouped query for the line counts rather than loading every line item
-    # of every order just to sum them.
-    counts_result = await db.execute(
-        select(OrderItem.order_id, func.coalesce(func.sum(OrderItem.quantity), 0))
-        .where(OrderItem.order_id.in_([o.id for o in orders]))
-        .group_by(OrderItem.order_id)
-    )
-    counts = {row[0]: int(row[1]) for row in counts_result.all()}
-
-    return [to_summary(o, counts.get(o.id, 0)) for o in orders], total
+    return await summaries(db, orders), total
 
 
 async def get_order_detail(db: AsyncSession, restaurant: Restaurant, order_id) -> VendorOrderDetail:
@@ -501,6 +637,7 @@ async def get_order_detail(db: AsyncSession, restaurant: Restaurant, order_id) -
     """
     order = await _get_order(db, restaurant, order_id, with_items=True)
     customer = await db.get(User, order.customer_id)
+    riders = await _riders(db, [order.rider_id] if order.rider_id else [])
 
     # The handoff screen re-displays the code while the order is READY. Once
     # picked up (or if issuance predates the cipher column) there is nothing
@@ -508,6 +645,7 @@ async def get_order_detail(db: AsyncSession, restaurant: Restaurant, order_id) -
     handoff_code = None
     if str(order.status) == OrderStatus.READY and order.rider_pin_cipher:
         handoff_code = decrypt_secret(order.rider_pin_cipher)
-    return to_detail(order, customer, handoff_code)
+    rider = riders.get(order.rider_id) if order.rider_id else None
+    return to_detail(order, customer, handoff_code, rider)
 
 
