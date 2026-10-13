@@ -203,9 +203,5 @@ async def accept_offer(order_id: uuid.UUID, rider: RiderUser, db: DbSession):
     was cancelled, or you already carry the maximum number of orders."""
     job = await rider_offer_service.accept(db, rider, order_id)
     await db.commit()
-    await rider_offer_service.announce_taken(order_id, rider.id)
-    await realtime.publish(
-        realtime.order_channel(str(order_id)),
-        {"type": "order.rider_assigned", "order_id": str(order_id)},
-    )
+    await rider_offer_service.announce_taken(db, order_id, rider.id)
     return ok(job.model_dump())

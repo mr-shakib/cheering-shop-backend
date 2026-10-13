@@ -1,9 +1,14 @@
 """WebSocket channels — spec endpoints #33 and #38.
 
 Authentication note: browsers cannot set an `Authorization` header on a
-WebSocket handshake, so the token arrives as a query parameter or in the first
-message frame. It is validated BEFORE `accept()`, so an unauthenticated peer
-never reaches an open socket.
+WebSocket handshake, so the token arrives as the `token` query parameter. It is
+validated BEFORE `accept()`, so an unauthenticated peer never reaches an open
+socket. A close before `accept()` reaches the client as an HTTP 403 on the
+handshake (the ASGI rule), so the close codes and reasons below are for our
+logs; the client only sees that the connection was refused.
+
+The vendor feed also carries `order.rider_assigned` and `chat.message`, so a
+kitchen tablet hears who is coming and what the customer wrote without polling.
 """
 
 import asyncio

@@ -536,9 +536,13 @@ Frames:
 
 | `type` | When |
 |---|---|
-| `order.placed` | A customer placed an order with you. Carries the full order |
-| `order.status` | An order moved — accept, reject, ready, handoff, delivered |
+| `order.placed` | A customer placed an order with you. Carries an order summary; items come from `GET /vendor/orders/{id}` |
+| `order.status` | An order moved — accept, reject, ready, handoff, delivered, cancelled |
+| `order.rider_assigned` | A rider accepted one of your orders, or support assigned one. `GET /vendor/orders/{id}` now has `rider` |
+| `chat.message` | Someone on one of your orders sent a chat message |
 | `ping` | Keepalive every 25s. An idle socket through a proxy dies inside a minute |
+
+Every frame is listed with its fields in [WEBSOCKET-API.md](WEBSOCKET-API.md).
 
 Keep polling as a fallback. Publishing is best-effort by design: an order must
 still be placed when Redis is unreachable, so a missed frame is possible and a

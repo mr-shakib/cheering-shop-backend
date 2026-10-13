@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 from typing import Any
 
 import structlog
@@ -23,6 +24,16 @@ import structlog
 from app.core.redis import get_redis
 
 log = structlog.get_logger()
+
+
+def _encode(value: Any) -> str:
+    """What `json` cannot spell on its own. Datetimes go out as ISO 8601, like
+    every REST response; `str()` puts a space where the `T` belongs, which
+    JavaScript's `Date` does not reliably parse. Everything else (Decimal money,
+    UUIDs) is its string form, as in the REST API."""
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    return str(value)
 
 
 def vendor_channel(restaurant_id: str) -> str:
@@ -46,7 +57,7 @@ async def publish(channel: str, payload: dict[str, Any]) -> bool:
     """
     try:
         client = get_redis()
-        await client.publish(channel, json.dumps(payload, default=str))
+        await client.publish(channel, json.dumps(payload, default=_encode))
         return True
     except Exception as exc:  # pragma: no cover - depends on Redis being down
         log.warning("realtime_publish_failed", channel=channel, error=str(exc))
@@ -100,14 +111,41 @@ async def publish_order_status(
     screen, and nothing takes it off again.
     """
     event = {"type": "order.status", "order_id": order_id, "status": status, **extra}
-    await publish(vendor_channel(restaurant_id), event)
-    await publish(order_channel(order_id), event)
+    await _publish_both(order_id, restaurant_id, event)
+
+
+async def publish_rider_assigned(order_id: str, restaurant_id: str, **extra: Any) -> None:
+    """A rider now carries the order. The kitchen learns someone is coming for
+    the food and the customer's map has a rider to follow. Same two audiences
+    as a status change, and the same rule: after the commit.
+
+    No rider id goes out: the customer's channel never carries another party's
+    user id. Both screens fetch the rider's name and photo from their own order
+    endpoint."""
+    event = {"type": "order.rider_assigned", "order_id": order_id, **extra}
+    await _publish_both(order_id, restaurant_id, event)
+
+
+async def publish_chat_message(order_id: str, restaurant_id: str, message: dict) -> bool:
+    """A chat message, to every party on the order: the customer and rider on
+    the order's channel, the vendor on their restaurant's feed. Returns whether
+    both went out."""
+    event = {"type": "chat.message", "message": message}
+    return await _publish_both(order_id, restaurant_id, event)
+
+
+async def _publish_both(order_id: str, restaurant_id: str, event: dict[str, Any]) -> bool:
+    vendor = await publish(vendor_channel(restaurant_id), event)
+    order = await publish(order_channel(order_id), event)
+    return vendor and order
 
 
 __all__ = [
     "order_channel",
     "publish",
+    "publish_chat_message",
     "publish_order_status",
+    "publish_rider_assigned",
     "rider_offers_channel",
     "subscribe",
     "vendor_channel",

@@ -414,3 +414,93 @@ async def test_a_lifecycle_change_reaches_both_the_vendor_and_the_customer(
         realtime.order_channel(order_id),
         realtime.vendor_channel(str(kitchen.restaurant.id)),
     }
+
+
+async def _frames_during(channels, action) -> list[tuple[str, dict]]:
+    """Every (channel, frame) published on `channels` while `action` ran. The
+    handlers publish before they respond, so the frames are already waiting
+    when `action` returns."""
+    import json
+
+    from app.core.redis import get_redis
+
+    pubsub = get_redis().pubsub()
+    await pubsub.subscribe(*channels)
+    for _ in channels:
+        await pubsub.get_message(timeout=1)  # subscribe confirmations
+    await action()
+    frames = []
+    while (message := await pubsub.get_message(timeout=0.5)) is not None:
+        if message.get("type") == "message":
+            frames.append((message["channel"], json.loads(message["data"])))
+    await pubsub.aclose()
+    return frames
+
+
+def _both_channels(order_id, kitchen):
+    from app.services import realtime
+
+    return [realtime.order_channel(order_id), realtime.vendor_channel(str(kitchen.restaurant.id))]
+
+
+async def test_a_rider_accepting_tells_the_kitchen_and_the_customer(
+    client, kitchen, shopper, riders
+):
+    """The kitchen learns someone is coming for the food; the customer's map
+    gets a rider to follow. Neither is handed the rider's user id."""
+    rider = await riders()
+    order_id = await _place_and_accept(client, kitchen, shopper)
+    channels = _both_channels(order_id, kitchen)
+
+    async def accept():
+        r = await client.post(f"{V1}/rider/offers/{order_id}/accept", headers=_headers(rider))
+        assert r.status_code == 200, r.text
+
+    frames = await _frames_during(channels, accept)
+    assigned = [(ch, f) for ch, f in frames if f["type"] == "order.rider_assigned"]
+    assert {ch for ch, _ in assigned} == set(channels)
+    for _, frame in assigned:
+        assert frame["order_id"] == order_id
+        assert isinstance(frame["order_number"], int)
+        assert "rider_id" not in frame
+
+
+async def test_an_operator_assignment_is_announced_like_an_accept(
+    client, kitchen, shopper, riders, admin_token
+):
+    await riders(name="Picked by support")
+    order_id = await _place_and_accept(client, kitchen, shopper)
+    channels = _both_channels(order_id, kitchen)
+
+    async def assign():
+        await _operator_pick(client, admin_token, order_id)
+
+    frames = await _frames_during(channels, assign)
+    assert {ch for ch, f in frames if f["type"] == "order.rider_assigned"} == set(channels)
+
+
+async def test_a_chat_message_reaches_the_kitchen_tablet_too(client, kitchen, shopper):
+    """Every party on the order hears it live, and the frame does not claim to
+    be "mine" for whoever happens to read it."""
+    order_id = await _place_and_accept(client, kitchen, shopper)
+    channels = _both_channels(order_id, kitchen)
+
+    async def send():
+        r = await client.post(
+            f"{V1}/orders/{order_id}/messages",
+            json={"body": "Extra napkins please"},
+            headers=shopper.headers,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["data"]["delivered_over_websocket"] is True
+
+    frames = await _frames_during(channels, send)
+    chat = [(ch, f) for ch, f in frames if f["type"] == "chat.message"]
+    assert {ch for ch, _ in chat} == set(channels)
+    message = chat[0][1]["message"]
+    assert message["sender_role"] == "CUSTOMER"
+    assert message["body"] == "Extra napkins please"
+    assert "is_mine" not in message
+    # ISO 8601, like the REST API — not str(datetime), which puts a space
+    # where the "T" belongs.
+    assert "T" in message["created_at"]

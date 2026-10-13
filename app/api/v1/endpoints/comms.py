@@ -6,9 +6,11 @@ Spec endpoints #34–35, plus the Message screen, which the spec never covered.
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, status
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, CustomerUser, DbSession
 from app.core.responses import ok
+from app.models.order import Order
 from app.schemas.requests import ChatMessageRequest, ReviewCreateRequest
 from app.services import chat_service, order_push, realtime, review_service
 
@@ -83,10 +85,11 @@ async def send_message(
     sent = await chat_service.send_message(db, user, str(order_id), body)
     await db.commit()
     # Best-effort live delivery; the REST response is the source of truth and
-    # the client renders from it either way.
-    sent.delivered_over_websocket = await realtime.publish(
-        realtime.order_channel(str(order_id)),
-        {"type": "chat.message", "message": sent.message.model_dump()},
+    # the client renders from it either way. `is_mine` stays out of the frame:
+    # it was worked out for the sender, and every party on the order reads it.
+    restaurant_id = await db.scalar(select(Order.restaurant_id).where(Order.id == order_id))
+    sent.delivered_over_websocket = await realtime.publish_chat_message(
+        str(order_id), str(restaurant_id), sent.message.model_dump(exclude={"is_mine"})
     )
     background.add_task(order_push.chat_message, str(order_id), str(user.id), sent.message.body)
     return ok(sent.model_dump())

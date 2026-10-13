@@ -476,8 +476,9 @@ async def assign_rider(
     """
     order, rider = await dispatch_service.assign_to_order(db, order_id, body.rider_id)
     await db.commit()
-    # If it was still on offer, take it off every rider's screen.
-    await rider_offer_service.announce_taken(order.id, rider.id)
+    # If it was still on offer, take it off every rider's screen; and the
+    # kitchen and the customer hear who is coming, as when a rider accepts.
+    await rider_offer_service.announce_taken(db, order.id, rider.id)
 
     user, profile = await rider_roster_service.get_rider(db, rider.id)
     in_flight = await dispatch_service.count_in_flight(db, rider.id)

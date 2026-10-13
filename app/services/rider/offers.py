@@ -240,9 +240,25 @@ async def announce(db: AsyncSession, order_id: uuid.UUID, *, reason: str = "new"
         return 0
 
 
-async def announce_taken(order_id: uuid.UUID, rider_id: uuid.UUID) -> None:
-    """Take the card off every other rider's screen."""
+async def announce_taken(db: AsyncSession, order_id: uuid.UUID, rider_id: uuid.UUID) -> None:
+    """Take the card off every other rider's screen, and tell the kitchen and
+    the customer a rider is coming. Call after the commit. Never raises: the
+    order is already assigned, and a failed announcement must not turn that
+    into an error response."""
     await realtime.publish(
         realtime.rider_offers_channel(),
         {"type": "offer.taken", "order_id": str(order_id), "rider_id": str(rider_id)},
     )
+    try:
+        row = (
+            await db.execute(
+                select(Order.restaurant_id, Order.order_number).where(Order.id == order_id)
+            )
+        ).first()
+    except Exception as exc:  # pragma: no cover - best effort by design
+        log.warning("rider_assigned_announce_failed", order_id=str(order_id), error=str(exc))
+        return
+    if row is not None:
+        await realtime.publish_rider_assigned(
+            str(order_id), str(row.restaurant_id), order_number=row.order_number
+        )
