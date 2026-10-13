@@ -81,11 +81,11 @@ def main() -> int:
 
     # ------------------------------------------------------------ error shape
     section("Error contract")
-    r = client.get(f"{API}/restaurants")
-    check("unimplemented route returns 501", r.status_code == 501, f"got {r.status_code}")
+    r = client.get(f"{API}/no-such-route")
+    check("unknown route returns 404", r.status_code == 404, f"got {r.status_code}")
     check(
-        "501 body uses the error envelope",
-        r.json().get("error", {}).get("code") == "NOT_IMPLEMENTED",
+        "404 body uses the error envelope",
+        r.json().get("error", {}).get("code") == "NOT_FOUND",
         r.text[:200],
     )
 
