@@ -116,6 +116,17 @@ async def privacy_policy() -> FileResponse:
     return FileResponse(_PRIVACY_POLICY, media_type="text/html; charset=utf-8")
 
 
+_DELETE_ACCOUNT = Path(__file__).parent / "static" / "legal" / "delete-account.html"
+
+
+# The "Data deletion" URL in the Play Console's Data safety form: how to delete
+# an account with or without the app, and what is kept. A route for the same
+# reason as /privacy.
+@app.get("/account/delete", include_in_schema=False)
+async def delete_account_page() -> FileResponse:
+    return FileResponse(_DELETE_ACCOUNT, media_type="text/html; charset=utf-8")
+
+
 @app.get("/health", tags=["System"], summary="Liveness probe")
 async def health() -> dict:
     """Cheap and dependency-free — answers "is the process up", nothing more."""

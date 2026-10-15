@@ -83,13 +83,16 @@ CREATE TABLE users (
     is_phone_verified      boolean     NOT NULL DEFAULT false,
     is_active              boolean     NOT NULL DEFAULT true,
     last_login_at          timestamptz,
+    deleted_at             timestamptz,                             -- DELETE /users/me; row kept, PII wiped
 
     created_at             timestamptz NOT NULL DEFAULT now(),
     updated_at             timestamptz NOT NULL DEFAULT now(),
 
     -- An account must be reachable by at least one identifier; /auth/otp/send
     -- accepts either, and the provisional-user upsert needs a key to match on.
-    CONSTRAINT ck_users_identifier CHECK (email IS NOT NULL OR phone IS NOT NULL),
+    -- A deleted account has had both wiped.
+    CONSTRAINT ck_users_identifier
+        CHECK (email IS NOT NULL OR phone IS NOT NULL OR deleted_at IS NOT NULL),
     -- 2FA cannot be "on" with no secret to verify against.
     CONSTRAINT ck_users_2fa_secret CHECK (NOT is_2fa_enabled OR totp_secret IS NOT NULL),
 

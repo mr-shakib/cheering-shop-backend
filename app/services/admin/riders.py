@@ -79,7 +79,10 @@ async def list_riders(
     BLOCKED (account blocked). Omitted means everyone."""
     load = in_flight_counts()
     n = func.coalesce(load.c.n, 0)
-    conditions: list[ColumnElement[bool]] = [User.role == UserRole.RIDER.value]
+    conditions: list[ColumnElement[bool]] = [
+        User.role == UserRole.RIDER.value,
+        User.deleted_at.is_(None),
+    ]
     if online_only:
         conditions.append(RiderProfile.is_online.is_(True))
     if q and q.strip():

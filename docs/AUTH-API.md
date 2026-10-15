@@ -591,6 +591,57 @@ without a password at all.
 offer to unlink it without first walking the user through setting a password,
 or you will lock them out of their own account.
 
+### Delete account
+
+**Required for Google Play.** Every app that lets people create an account
+(customer, vendor and rider) must offer this from inside the app, usually at
+the bottom of the Profile or Settings screen.
+
+```http
+DELETE /api/v1/users/me
+Authorization: Bearer <access_token>
+
+{ "password": "MyPassword1!" }
+```
+
+```json
+{ "success": true,
+  "data": { "message": "Your account has been deleted",
+            "deleted_at": "2026-10-15T08:12:44.120391+00:00" } }
+```
+
+- **Password:** send it when `GET /users/me/security` says
+  `has_password: true`. Google and code sign-in accounts have none: send `{}`
+  (or no body). If your HTTP client cannot send a body with `DELETE`, the
+  password-less case still works without one.
+- **Permanent and immediate.** There is no undo and no grace period, so ask
+  the user to confirm first and say what is lost.
+- **What happens:** email, phone, name, photo, password, addresses,
+  favourites, cart, saved devices, biometric keys and the Google link are
+  deleted, and every session ends. The email and phone can sign up again,
+  but as a brand-new account. Order history, payouts, reviews and support
+  tickets are kept for accounting, with nothing left on them that identifies
+  the user. A vendor's store is closed and removed from the app. A rider's
+  documents and payout details are deleted.
+- **Afterwards:** clear stored tokens and go to the sign-in screen. Any call
+  still made with the old access token gets `401 ACCOUNT_DELETED`.
+
+| Situation | Response | `error.code` |
+|---|---|---|
+| Password missing when the account has one | `400` | `VALIDATION_FAILED` |
+| Password wrong | `401` | `INVALID_CREDENTIALS` |
+| Administrator account | `403` | `FORBIDDEN` |
+| An order is still under way (not yet delivered or cancelled); `details` lists them, e.g. `["Order #1042"]` | `409` | `ACCOUNT_HAS_ACTIVE_ORDERS` |
+| Vendor or rider still has earnings to be paid, or a withdrawal processing; `details` gives the amounts | `409` | `ACCOUNT_HAS_BALANCE` |
+| Too many wrong passwords (10 per 15 minutes) | `429` | `RATE_LIMITED` |
+
+Show the two `409` messages as they are: they tell the user what to do
+(finish or cancel the order; withdraw the balance or contact support).
+
+People who no longer have the app can request deletion on the web at
+`https://api.cheeringshop.online/account/delete`. That is the URL to enter
+under **Data safety → Data deletion** in the Play Console.
+
 ---
 
 ## 7. Two-factor authentication
@@ -687,9 +738,12 @@ key and clears any lockout. That is the recovery path for a device locked after
 | 401 | `UNAUTHORIZED` | Missing/invalid token | Refresh, then log in |
 | 401 | `TOKEN_EXPIRED` | Access token aged out | Refresh and retry once |
 | 401 | `INVALID_CREDENTIALS` | Wrong password / signature | Generic "incorrect" message |
+| 401 | `ACCOUNT_DELETED` | The account was deleted | Clear tokens, go to sign-in |
 | 403 | `FORBIDDEN` | Wrong role, or device locked | Explain, don't retry |
 | 404 | `NOT_FOUND` | No such resource | — |
 | 409 | `CONFLICT` | Phone taken, 2FA already on | Show a specific message |
+| 409 | `ACCOUNT_HAS_ACTIVE_ORDERS` | Can't delete: an order is under way | Show the message and `details` |
+| 409 | `ACCOUNT_HAS_BALANCE` | Can't delete: earnings still owed | Show the message and `details` |
 | 429 | `RATE_LIMITED` | Too many attempts | Back off using `Retry-After` |
 | 500 | `INTERNAL_ERROR` | Server fault | Generic error + the `X-Request-ID` |
 | 501 | `NOT_IMPLEMENTED` | Endpoint not built yet | Feature-flag it off |
@@ -721,6 +775,7 @@ key and clears any lockout. That is the recovery path for a device locked after
 | GET | `/users/me/security` | ✓ | 2FA / biometric state |
 | PUT | `/users/me/profile` | ✓ | Name, phone, avatar |
 | POST | `/users/me/password` | ✓ | Set or change password |
+| DELETE | `/users/me` | ✓ | Delete my account (Google Play requirement) |
 | POST | `/auth/register/vendor` | — | Register a vendor + restaurant (fast path) |
 | POST | `/vendor/applications` | — | Submit a partner application |
 | GET | `/vendor/applications/{no}` | — | Application status (`?email=` required) |

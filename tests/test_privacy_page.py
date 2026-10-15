@@ -45,3 +45,24 @@ def test_privacy_policy_csp_allows_inline_style_but_no_script():
 
 def test_privacy_policy_is_not_in_the_api_schema():
     assert "/privacy" not in app.openapi()["paths"]
+
+
+def test_account_deletion_page_is_served_with_the_legal_page_csp():
+    # The Play Console's "Data deletion" URL. Google requires it to name the
+    # app, give the steps, and say what is deleted and what is kept.
+    r = _client().get("/account/delete", follow_redirects=False)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["content-security-policy"] == (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    )
+    assert "<script" not in r.text
+    html = " ".join(r.text.split())
+    assert "Delete your Cheering Shop account" in html
+    assert "support@cheeringshop.online" in html
+    assert "What is deleted" in html and "What is kept" in html
+    assert "/account/delete" not in app.openapi()["paths"]
+
+
+def test_privacy_policy_links_to_the_account_deletion_page():
+    assert 'href="/account/delete"' in _client().get("/privacy").text

@@ -101,6 +101,13 @@ EXTENDED_ENDPOINTS: list[tuple[str, str, str]] = [
         "reveal whether the profile changed since the token was issued.",
     ),
     (
+        "DELETE",
+        "/users/me",
+        "Google Play requires any app that lets people create an account to "
+        "let them delete it from inside the app. The spec has no deletion "
+        "endpoint at all.",
+    ),
+    (
         "POST",
         "/auth/biometrics/challenge",
         "Spec #7/#8 enrol and un-enrol a device key but define no endpoint "
@@ -1179,6 +1186,7 @@ PREFIX = "/api/v1"
 INFRA_PATHS = {
     "/admin",  # the static admin console mount — not an API endpoint
     "/privacy",  # public privacy policy, required by Google's OAuth consent screen
+    "/account/delete",  # how to delete an account; the Play Console's Data deletion URL
     "/health",
     "/health/ready",
     "/docs",

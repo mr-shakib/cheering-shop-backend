@@ -56,6 +56,10 @@ class User(Base, UUIDPrimaryKey, TimestampMixin):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # [EXTENDED] Set by DELETE /users/me (migration 0014). The row outlives the
+    # account because orders reference it; everything personal on it is wiped
+    # when this is stamped. See services/account_deletion.py.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     addresses: Mapped[list["Address"]] = relationship(back_populates="user", lazy="raise")  # noqa: F821
     restaurant: Mapped["Restaurant | None"] = relationship(  # noqa: F821
@@ -63,7 +67,11 @@ class User(Base, UUIDPrimaryKey, TimestampMixin):
     )
 
     __table_args__ = (
-        CheckConstraint("email IS NOT NULL OR phone IS NOT NULL", name="ck_users_identifier"),
+        # A deleted account keeps neither; every live one needs at least one.
+        CheckConstraint(
+            "email IS NOT NULL OR phone IS NOT NULL OR deleted_at IS NOT NULL",
+            name="ck_users_identifier",
+        ),
         CheckConstraint(
             "NOT is_2fa_enabled OR totp_secret IS NOT NULL", name="ck_users_2fa_secret"
         ),

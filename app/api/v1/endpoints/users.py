@@ -3,10 +3,12 @@
 from fastapi import APIRouter, Request
 
 from app.api.deps import CurrentUser, DbSession
+from app.core import rate_limit
 from app.core.client import client_ip
+from app.core.config import settings
 from app.core.responses import ok
-from app.schemas.requests import ChangePasswordRequest, ProfileUpdateRequest
-from app.services import auth_service, token_service
+from app.schemas.requests import AccountDeleteRequest, ChangePasswordRequest, ProfileUpdateRequest
+from app.services import account_deletion, auth_service, token_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -20,6 +22,38 @@ async def get_me(user: CurrentUser):
     whether the profile changed since the token was issued.
     """
     return ok(auth_service.to_profile(user).model_dump())
+
+
+@router.delete("/me", summary="Delete my account [EXTENDED]")
+async def delete_me(user: CurrentUser, db: DbSession, body: AccountDeleteRequest | None = None):
+    """**[EXTENDED]** — Google Play requires in-app account deletion.
+
+    Permanent and immediate. Send `{"password": "..."}` when the account has a
+    password (`GET /users/me/security` → `has_password`); otherwise send `{}`
+    or no body.
+
+    The email and phone are wiped and can register again as a new account.
+    Orders, payouts, reviews, order chat and support tickets are kept, no
+    longer linked to anything that identifies the person. Every session ends:
+    the next call with this access token gets 401 `ACCOUNT_DELETED`.
+
+    * 401 `INVALID_CREDENTIALS` — wrong password
+    * 403 — an administrator account
+    * 409 `ACCOUNT_HAS_ACTIVE_ORDERS` — an order is still under way;
+      `details` lists them
+    * 409 `ACCOUNT_HAS_BALANCE` — a vendor or rider still has earnings to be
+      paid or a withdrawal processing
+    """
+    await rate_limit.hit(
+        rate_limit.account_delete_key(str(user.id)),
+        limit=settings.LOGIN_MAX_ATTEMPTS,
+        window_seconds=settings.LOGIN_WINDOW_SECONDS,
+    )
+    deleted_at = await account_deletion.delete_account(
+        db, user, body.password if body else None
+    )
+    await db.commit()
+    return ok({"message": "Your account has been deleted", "deleted_at": deleted_at.isoformat()})
 
 
 @router.get("/me/security", summary="Get 2FA & biometrics state")

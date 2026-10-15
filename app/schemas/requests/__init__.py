@@ -99,6 +99,7 @@ from app.schemas.requests.riders import (
     RiderUpdateRequest,
 )
 from app.schemas.requests.users import (
+    AccountDeleteRequest,
     AddressCreateRequest,
     ChangePasswordRequest,
     PresignedUrlRequest,
@@ -163,6 +164,7 @@ __all__ = [
     # users
     "ProfileUpdateRequest",
     "ChangePasswordRequest",
+    "AccountDeleteRequest",
     "AddressCreateRequest",
     "PresignedUrlRequest",
     # commerce

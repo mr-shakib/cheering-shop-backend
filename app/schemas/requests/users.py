@@ -40,6 +40,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class AccountDeleteRequest(BaseModel):
+    """DELETE /users/me — [EXTENDED].
+
+    The password is required when the account has one, for the same reason
+    as above. Google and code sign-in accounts have none and send `{}`.
+    """
+
+    password: str | None = Field(
+        default=None, max_length=128, description="Required when the account has a password"
+    )
+
+
 class AddressCreateRequest(BaseModel):
     """POST /users/me/addresses"""
 

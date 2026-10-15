@@ -127,10 +127,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # so the obvious "set then remove" spelling raises AttributeError and turns
     # every docs request into a 500.
     CSP_EXEMPT_PATHS = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
-    # The privacy policy is one self-contained document: its only styling is an
-    # inline <style>, and it has no scripts, images or requests. Allowing inline
+    # The privacy policy and the account-deletion page are self-contained
+    # documents: their only styling is an inline <style>, and they have no
+    # scripts, images or requests. Allowing inline
     # style adds nothing an attacker can use when no script can ever run.
-    LEGAL_PAGE_PATHS = frozenset({"/privacy"})
+    LEGAL_PAGE_PATHS = frozenset({"/privacy", "/account/delete"})
     LEGAL_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 
     @staticmethod

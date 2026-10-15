@@ -13,6 +13,7 @@ import-path migration.
 """
 
 from app.services import (
+    account_deletion,
     auth_service,
     banners,
     category_service,
@@ -61,6 +62,7 @@ from app.services.vendor import promotions as vendor_promotion_service
 from app.services.vendor import storefront as vendor_service
 
 __all__ = [
+    "account_deletion",
     "account_service",
     "admin_account_service",
     "admin_ad_service",

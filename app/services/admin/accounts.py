@@ -74,9 +74,14 @@ async def list_customers(
     q: str | None = None,
     status: str | None = None,
 ) -> tuple[list[AdminCustomerRow], int]:
-    """Newest sign-ups first. `status` is ACTIVE or BLOCKED."""
+    """Newest sign-ups first. `status` is ACTIVE or BLOCKED. Deleted accounts
+    are left out: nothing about them is left to show. Their orders still open
+    by id."""
     stats = _order_stats()
-    conditions: list[ColumnElement[bool]] = [User.role == UserRole.CUSTOMER.value]
+    conditions: list[ColumnElement[bool]] = [
+        User.role == UserRole.CUSTOMER.value,
+        User.deleted_at.is_(None),
+    ]
     if status:
         wanted = status.strip().upper()
         if wanted not in {"ACTIVE", "BLOCKED"}:
@@ -148,6 +153,8 @@ async def set_status(
     user = await db.get(User, user_id, with_for_update=True)
     if user is None:
         raise NotFoundError("No account with that id")
+    if user.deleted_at is not None:
+        raise ConflictError("This account was deleted by its owner")
     role = str(user.role)
     if role not in _BLOCKABLE:
         if role == UserRole.VENDOR:

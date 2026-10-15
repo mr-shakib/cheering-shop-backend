@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
+from app.core.errors import ErrorCode, ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import decode_token
 from app.models.enums import UserRole
 from app.models.restaurant import Restaurant
@@ -41,6 +41,10 @@ async def get_current_user(
     user = await db.get(User, uuid.UUID(user_id))
     if user is None:
         raise UnauthorizedError("User no longer exists")
+    if user.deleted_at is not None:
+        # Before the is_active check: a deleted account is also inactive, and
+        # "deactivated" would tell its owner the wrong thing.
+        raise UnauthorizedError("This account has been deleted", code=ErrorCode.ACCOUNT_DELETED)
     if not user.is_active:
         raise ForbiddenError("This account has been deactivated")
     return user

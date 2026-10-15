@@ -67,6 +67,12 @@ def otp_verify_key(identifier: str) -> str:
     return f"rl:otpverify:{identifier}"
 
 
+def account_delete_key(user_id: str) -> str:
+    """DELETE /users/me checks a password, so it must not become a way for a
+    stolen access token to guess one."""
+    return f"rl:accountdelete:{user_id}"
+
+
 def google_authorize_key(ip: str) -> str:
     """Per source IP: /auth/google/authorize takes no credentials, so there is
     no identifier to key on. Each hit writes a Redis entry, so the ceiling is
